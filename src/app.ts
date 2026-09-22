@@ -86,8 +86,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       currency: config.currency,
       plans: platform.plans().map((plan) => ({
         ...plan,
-        displayPremium: formatAmount(plan.premium, config.currency),
-        displayCoverage: formatAmount(plan.coverage, config.currency),
+        displayRate: `${(plan.rateBps / 100).toFixed(2).replace(".", ",")}%`,
       })),
     });
   });
@@ -205,15 +204,16 @@ export function createApp(config: AppConfig = loadConfig()): Express {
 
   app.post("/api/policies", async (req: Request, res: Response) => {
     const body = req.body ?? {};
-    if (!body.planId || !body.holderName || !body.email) {
-      res.status(400).json({ error: "planId, holderName y email son requeridos" });
+    if (!body.holderName || !body.email || !body.cardLabel || body.cupo === undefined) {
+      res.status(400).json({ error: "holderName, email, cardLabel y cupo son requeridos" });
       return;
     }
     try {
       const result = await platform.subscribe({
-        planId: String(body.planId),
         holderName: String(body.holderName),
         email: String(body.email),
+        cardLabel: String(body.cardLabel),
+        cupo: Number(body.cupo),
         gateway: asGateway(body.gateway, config.defaultGateway),
       });
       res.status(201).json(withPublishableKey(result, config));

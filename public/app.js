@@ -37,8 +37,8 @@ const NAV = [
       { route: "overview", label: "Inicio", icon: "home", title: "Inicio", sub: "Cuentas, cobros y pólizas del día" },
       { route: "accounts", label: "Cuentas", icon: "wallet", title: "Cuentas", sub: "Saldos de clientes" },
       { route: "cobros", label: "Cobros", icon: "file", title: "Cobros", sub: "Pagos que no son una póliza" },
-      { route: "plans", label: "Planes", icon: "layers", title: "Planes", sub: "Productos de seguro" },
-      { route: "policies", label: "Pólizas", icon: "shield", title: "Pólizas", sub: "Titulares con cobertura" },
+      { route: "plans", label: "Crédito TC", icon: "layers", title: "Crédito de la TC", sub: "La póliza cubre el cupo de la tarjeta" },
+      { route: "policies", label: "Pólizas", icon: "shield", title: "Pólizas", sub: "Seguro del crédito de cada tarjeta" },
       { route: "claims", label: "Siniestros", icon: "zap", title: "Siniestros", sub: "Pagos a beneficiarios" },
     ],
   },
@@ -341,33 +341,29 @@ function viewCobros() {
 }
 
 function viewPlans() {
-  const cards = state.plans
-    .map((p, i) => {
-      const featured = i === 1;
-      const feats = [
-        `Cobertura hasta ${p.displayCoverage}`,
-        "Contratación 100% digital",
-        "Dispersión de siniestros en 1 clic",
-      ];
-      return `
-      <div class="plan ${featured ? "featured" : ""}">
-        ${featured ? '<span class="ribbon">Recomendado</span>' : ""}
-        <h3>${p.name}</h3>
-        <p class="plan-desc">${p.description}</p>
-        <div class="price"><b>${p.displayPremium}</b><span>/mes</span></div>
-        <div class="coverage">Cobertura hasta ${p.displayCoverage}</div>
-        <ul class="features">${feats.map((f) => `<li>${icon("check")}${f}</li>`).join("")}</ul>
-        <button class="btn btn-primary btn-block" data-plan="${p.id}">${icon("plus")} Contratar</button>
-      </div>`;
-    })
-    .join("");
-  return `<div class="plans">${cards}</div>`;
+  const product = state.plans[0];
+  const rate = product ? product.displayRate : "0,60%";
+  return `<div class="plans">
+    <div class="plan featured">
+      <span class="ribbon">Crédito TC</span>
+      <h3>Póliza del crédito</h3>
+      <p class="plan-desc">Cubre el cupo de una tarjeta de crédito. La prima es ${rate} de ese crédito y se cobra por pagos.</p>
+      <div class="price"><b>${rate}</b><span>del cupo</span></div>
+      <div class="coverage">El monto asegurado es el crédito de la tarjeta</div>
+      <ul class="features">
+        <li>${icon("check")} Una póliza por tarjeta</li>
+        <li>${icon("check")} El siniestro no puede pasar el cupo</li>
+        <li>${icon("check")} La prima entra al libro de pagos</li>
+      </ul>
+      <button class="btn btn-primary btn-block" data-credito>${icon("plus")} Asegurar un crédito</button>
+    </div>
+  </div>`;
 }
 
 function viewPolicies() {
   const rows = state.overview.policies;
   if (!rows.length) {
-    return `<div class="card"><div class="card-body"><div class="empty">${icon("shield")}<div>No hay pólizas todavía. Ve a <a href="#/plans">Planes</a> para contratar una.</div></div></div></div>`;
+    return `<div class="card"><div class="card-body"><div class="empty">${icon("shield")}<div>No hay pólizas de crédito. Asegura el cupo de una tarjeta en <a href="#/plans">Crédito TC</a>.</div></div></div></div>`;
   }
   const list = rows
     .map((p) => {
@@ -377,7 +373,7 @@ function viewPolicies() {
         <div class="avatar">${initials(p.holderName)}</div>
         <div>
           <div class="who">${p.holderName}</div>
-          <div class="meta">${(state.plans.find((plan) => plan.id === p.planId) || {}).name || "Plan"}</div>
+          <div class="meta">${p.cardLabel || "Tarjeta"} · crédito ${money(p.cupo || p.coverage)}</div>
         </div>
         <div class="push">
           <span class="pill ${pending ? "amber" : ""}">${pending ? "Pago pendiente" : "Al día"}</span>
@@ -470,9 +466,8 @@ function wireView(r) {
     if (open) open.onclick = () => openCobroModal();
   }
   if (r === "plans") {
-    document.querySelectorAll("[data-plan]").forEach((btn) => {
-      btn.onclick = () => openSubscribeModal(state.plans.find((p) => p.id === btn.dataset.plan));
-    });
+    const btn = document.querySelector("[data-credito]");
+    if (btn) btn.onclick = () => openSubscribeModal();
   }
   if (r === "policies") {
     document.querySelectorAll("[data-claim]").forEach((btn) => {
@@ -675,14 +670,17 @@ function openCobroModal() {
   };
 }
 
-function openSubscribeModal(plan) {
-  if (!plan) return;
+function openSubscribeModal() {
+  const rate = (state.plans[0] && state.plans[0].rateBps) || 60;
   mountModal(`
     <div class="modal">
-      <div class="modal-head"><h3>Contratar ${plan.name}</h3><p>Se cobrará la prima de ${plan.displayPremium}/mes vía ${gatewayLabel(selectedGateway())}.</p></div>
+      <div class="modal-head"><h3>Asegurar crédito de tarjeta</h3><p>La prima es el ${rate / 100}% del cupo y se cobra por ${gatewayLabel(selectedGateway())}.</p></div>
       <div class="modal-body">
-        <div class="field"><label>Nombre del titular</label><input id="m-name" value="Constructora Andes SpA" /></div>
-        <div class="field"><label>Email</label><input id="m-email" type="email" value="ops@andes.cl" /></div>
+        <div class="field"><label>Titular</label><input id="m-name" value="Ana Díaz" /></div>
+        <div class="field"><label>Email</label><input id="m-email" type="email" value="ana@demo.cl" /></div>
+        <div class="field"><label>Tarjeta</label><input id="m-card" value="Visa •••• 4242" /></div>
+        <div class="field"><label>Crédito de la tarjeta</label><input id="m-cupo" type="number" value="1500000" />
+          <div class="hint" id="m-prima">Prima ${money(Math.round((1500000 * rate) / 10000))}</div></div>
         <div class="field"><label>Pasarela</label>
           <select id="m-gateway">${state.gateways.map((g) => `<option value="${g.name}" ${g.name === selectedGateway() ? "selected" : ""}>${g.label} · ${g.configured ? "live" : "demo"}</option>`).join("")}</select>
         </div>
@@ -693,6 +691,11 @@ function openSubscribeModal(plan) {
       </div>
     </div>`);
   const root = document.getElementById("modal-root");
+  const cupoInput = document.getElementById("m-cupo");
+  cupoInput.oninput = () => {
+    const prima = Math.round((Number(cupoInput.value) * rate) / 10000);
+    document.getElementById("m-prima").textContent = prima > 0 ? `Prima ${money(prima)}` : "Ingresa el crédito de la tarjeta";
+  };
   root.querySelector("[data-cancel]").onclick = closeModal;
   root.querySelector("[data-confirm]").onclick = async (e) => {
     const btn = e.currentTarget;
@@ -703,14 +706,15 @@ function openSubscribeModal(plan) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          planId: plan.id,
           holderName: document.getElementById("m-name").value || "Cliente",
           email: document.getElementById("m-email").value || "cliente@demo.cl",
+          cardLabel: document.getElementById("m-card").value || "Tarjeta",
+          cupo: Number(document.getElementById("m-cupo").value),
           gateway: document.getElementById("m-gateway").value,
         }),
       });
       if (result.charge.clientSecret && result.charge.publishableKey) {
-        await mountEmbeddedCheckout(result, plan);
+        await mountEmbeddedCheckout(result, { name: "Crédito " + (document.getElementById("m-card").value || "TC") });
         return;
       }
       if (result.charge.mode === "live" && result.charge.redirectUrl) {
@@ -756,7 +760,7 @@ function openClaimModal(policy) {
       <div class="modal-head"><h3>Dispersar siniestro</h3><p>Payout desde el float al beneficiario · póliza ${policy.id}.</p></div>
       <div class="modal-body">
         <div class="field"><label>Monto del siniestro</label><input id="c-amount" type="number" placeholder="Ej: 20000" />
-          <div class="hint">Cobertura máxima: ${money(policy.coverage)}</div></div>
+          <div class="hint">Crédito asegurado: ${money(policy.cupo || policy.coverage)}</div></div>
         <div class="field"><label>Beneficiario (RUT o cuenta)</label><input id="c-benef" value="12.345.678-9" /></div>
         <div class="field"><label>Pasarela de dispersión</label>
           <select id="c-gateway">${state.gateways.map((g) => `<option value="${g.name}" ${g.name === selectedGateway() ? "selected" : ""}>${g.label} · ${g.configured ? "live" : "demo"}</option>`).join("")}</select>

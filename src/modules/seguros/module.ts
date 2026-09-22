@@ -4,12 +4,15 @@ import { PlatformError } from "../../errors.js";
 import type { Account } from "../../payments/ledger.js";
 import type { Payments } from "../../payments/service.js";
 import type { ChargeResult, PayoutResult } from "../../gateways/types.js";
-import { findPlan, PLANS, type Claim, type InsurancePlan, type Policy } from "./catalog.js";
+import { CREDITO_TC, PLANS, premiumForCupo, type Claim, type InsurancePlan, type Policy } from "./catalog.js";
 
 export interface SubscribeInput {
-  planId: string;
   holderName: string;
   email: string;
+  /** Tarjeta cuyo crédito queda asegurado. */
+  cardLabel: string;
+  /** Cupo / crédito de la tarjeta, en la moneda de la plataforma. */
+  cupo: number;
   gateway: GatewayName;
 }
 
@@ -56,8 +59,15 @@ export class SegurosModule {
   }
 
   holdPremium(input: Omit<SubscribeInput, "gateway">): { account: Account; policy: Policy } {
-    const plan = findPlan(input.planId);
-    if (!plan) throw new PlatformError(`Plan desconocido: ${input.planId}`, 404);
+    const cardLabel = input.cardLabel.trim();
+    if (!input.holderName.trim() || !input.email.trim() || !cardLabel) {
+      throw new PlatformError("holderName, email y la tarjeta son requeridos", 400);
+    }
+    if (!Number.isFinite(input.cupo) || input.cupo <= 0) {
+      throw new PlatformError("El crédito de la tarjeta debe ser positivo", 400);
+    }
+    const premium = premiumForCupo(input.cupo);
+    if (premium <= 0) throw new PlatformError("El crédito de la tarjeta es demasiado bajo", 400);
 
     const account = this.payments.ledger.createAccount({
       name: input.holderName,
@@ -66,11 +76,13 @@ export class SegurosModule {
     });
     const policy: Policy = {
       id: `pol_${randomUUID().slice(0, 8)}`,
-      planId: plan.id,
+      planId: CREDITO_TC.id,
       accountId: account.id,
       holderName: input.holderName,
-      premium: plan.premium,
-      coverage: plan.coverage,
+      cardLabel,
+      cupo: input.cupo,
+      premium,
+      coverage: input.cupo,
       status: "pending_payment",
       createdAt: new Date().toISOString(),
     };
@@ -78,16 +90,14 @@ export class SegurosModule {
     const movement = this.payments.openCollect({
       module: MODULE,
       reference: policy.id,
-      amount: plan.premium,
-      description: `Prima ${plan.name}`,
+      amount: premium,
+      description: `Prima crédito ${cardLabel}`,
     });
     policy.paymentId = movement.id;
     return { account, policy };
   }
 
   async subscribe(input: SubscribeInput): Promise<{ account: Account; policy: Policy; charge: ChargeResult }> {
-    const plan = findPlan(input.planId);
-    if (!plan) throw new PlatformError(`Plan desconocido: ${input.planId}`, 404);
     const { account, policy } = this.holdPremium(input);
     try {
       const charge = await this.payments.chargeOpen(MODULE, policy.id, input.gateway, input.email);
@@ -109,7 +119,7 @@ export class SegurosModule {
     if (policy.status !== "active") throw new PlatformError("La póliza no está activa", 409);
     if (input.amount <= 0) throw new PlatformError("El monto del siniestro debe ser positivo", 400);
     if (input.amount > policy.coverage) {
-      throw new PlatformError("El monto supera la cobertura de la póliza", 422);
+      throw new PlatformError("El monto supera el crédito asegurado de la tarjeta", 422);
     }
 
     const claimId = `clm_${randomUUID().slice(0, 8)}`;

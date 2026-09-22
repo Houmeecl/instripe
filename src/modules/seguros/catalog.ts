@@ -2,10 +2,8 @@ export interface InsurancePlan {
   id: string;
   name: string;
   description: string;
-  /** Monthly premium in the smallest currency unit of the platform currency. */
-  premium: number;
-  /** Max coverage / payout ceiling in the smallest currency unit. */
-  coverage: number;
+  /** Premium as basis points of the card credit (cupo). 60 = 0,60%. */
+  rateBps: number;
 }
 
 export interface Policy {
@@ -13,7 +11,12 @@ export interface Policy {
   planId: string;
   accountId: string;
   holderName: string;
+  /** Card the credit belongs to, e.g. "Visa •••• 4242". */
+  cardLabel: string;
+  /** Credit limit insured by this policy, in the platform currency. */
+  cupo: number;
   premium: number;
+  /** Insured amount. For this product it is the card credit itself. */
   coverage: number;
   status: "pending_payment" | "active" | "lapsed";
   /** Payment recorded by the payments core (`pay_…`). */
@@ -35,30 +38,21 @@ export interface Claim {
   createdAt: string;
 }
 
-export const PLANS: InsurancePlan[] = [
-  {
-    id: "salud-basico",
-    name: "Salud Básico",
-    description: "Cobertura ambulatoria esencial para trabajadores independientes.",
-    premium: 9000,
-    coverage: 1500000,
-  },
-  {
-    id: "hogar-pro",
-    name: "Hogar Pro",
-    description: "Protección de hogar contra siniestros e incendios.",
-    premium: 19000,
-    coverage: 8000000,
-  },
-  {
-    id: "pyme-total",
-    name: "Pyme Total",
-    description: "Responsabilidad civil y continuidad para pequeñas empresas.",
-    premium: 49000,
-    coverage: 25000000,
-  },
-];
+/** The only seguros product: a policy on a credit card's credit line. */
+export const CREDITO_TC: InsurancePlan = {
+  id: "credito-tc",
+  name: "Crédito de tarjeta",
+  description: "Póliza sobre el crédito (cupo) de una tarjeta de crédito.",
+  rateBps: 60,
+};
+
+export const PLANS: InsurancePlan[] = [CREDITO_TC];
 
 export function findPlan(id: string): InsurancePlan | undefined {
   return PLANS.find((plan) => plan.id === id);
+}
+
+/** Monthly premium: 0,60% of the insured card credit. */
+export function premiumForCupo(cupo: number): number {
+  return Math.round((cupo * CREDITO_TC.rateBps) / 10_000);
 }

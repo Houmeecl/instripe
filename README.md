@@ -72,7 +72,7 @@ Copia `.env.example` a `.env` (opcional). El servidor lo carga al arrancar y no 
 - `GET /api/gateways` — pasarelas disponibles y cuál es la predeterminada.
 - `GET /api/plans` — planes de seguro con montos formateados.
 - `GET /api/overview` — saldo del float, pólizas y siniestros.
-- `POST /api/policies` — contratar póliza (cobra prima): `{ planId, holderName, email, gateway }`.
+- `POST /api/policies` — póliza del crédito de una TC: `{ holderName, email, cardLabel, cupo, gateway }`. La prima es el 0,60% del cupo.
   Con Stripe live y llave publicable, la respuesta trae `charge.clientSecret` y la póliza queda en `pending_payment` hasta que el pago se confirma.
 - `GET /api/checkout/sessions/:id` — estado de una sesión de Checkout; si está pagada, activa la póliza (idempotente).
 - `POST /api/claims` — dispersar siniestro: `{ policyId, amount, beneficiary, gateway }`.

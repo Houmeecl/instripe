@@ -8,6 +8,17 @@ function app(env: NodeJS.ProcessEnv = { PORT: "3000", CURRENCY: "clp" }) {
   return createApp(loadConfig(env));
 }
 
+function creditPolicy(overrides: Record<string, unknown> = {}) {
+  return {
+    holderName: "Ana Díaz",
+    email: "ana@demo.cl",
+    cardLabel: "Visa •••• 4242",
+    cupo: 1_500_000,
+    gateway: "chile",
+    ...overrides,
+  };
+}
+
 describe("instripe BaaS platform", () => {
   it("reports health in demo mode with CLP and Chile default gateway", async () => {
     const res = await request(app()).get("/health");
@@ -26,23 +37,25 @@ describe("instripe BaaS platform", () => {
     expect(names).toEqual(["chile", "stripe"]);
   });
 
-  it("lists insurance plans with CLP-formatted premiums", async () => {
+  it("lists the credit-card credit policy", async () => {
     const res = await request(app()).get("/api/plans");
     expect(res.status).toBe(200);
-    expect(res.body.plans).toHaveLength(3);
-    expect(res.body.plans[0].id).toBe("salud-basico");
-    // CLP is zero-decimal: 9000 -> $9.000 (no cents)
-    expect(res.body.plans[0].displayPremium).toContain("9.000");
-    expect(res.body.plans[0].displayPremium).not.toContain(",00");
+    expect(res.body.plans).toHaveLength(1);
+    expect(res.body.plans[0].id).toBe("credito-tc");
+    expect(res.body.plans[0].rateBps).toBe(60);
+    expect(res.body.plans[0].displayRate).toBe("0,60%");
   });
 
   it("subscribes to a plan via the Chile gateway and credits the float", async () => {
     const server = app();
     const res = await request(server)
       .post("/api/policies")
-      .send({ planId: "salud-basico", holderName: "Ana Díaz", email: "ana@demo.cl", gateway: "chile" });
+      .send(creditPolicy());
     expect(res.status).toBe(201);
     expect(res.body.policy.status).toBe("active");
+    expect(res.body.policy.cardLabel).toBe("Visa •••• 4242");
+    expect(res.body.policy.cupo).toBe(1_500_000);
+    expect(res.body.policy.premium).toBe(9000);
     expect(res.body.charge.gateway).toBe("chile");
     expect(res.body.charge.mode).toBe("demo");
 
@@ -62,7 +75,7 @@ describe("instripe BaaS platform", () => {
     const server = app();
     const res = await request(server)
       .post("/api/policies")
-      .send({ planId: "pyme-total", holderName: "Bkr SpA", email: "ops@bkr.cl", gateway: "stripe" });
+      .send(creditPolicy({ holderName: "Bkr SpA", email: "ops@bkr.cl", gateway: "stripe" }));
     expect(res.status).toBe(201);
     expect(res.body.policy.status).toBe("active");
     expect(res.body.charge.gateway).toBe("stripe");
@@ -70,14 +83,14 @@ describe("instripe BaaS platform", () => {
     expect(res.body.charge.redirectUrl).toContain("charge=");
 
     const overview = await request(server).get("/api/overview");
-    expect(overview.body.float.balance).toBe(49000);
+    expect(overview.body.float.balance).toBe(9000);
   });
 
   it("disperses a claim payout and debits the float (dispersión de fondos)", async () => {
     const server = app();
     const sub = await request(server)
       .post("/api/policies")
-      .send({ planId: "pyme-total", holderName: "Bkr SpA", email: "ops@bkr.cl", gateway: "chile" });
+      .send(creditPolicy({ holderName: "Bkr SpA", email: "ops@bkr.cl", cupo: 5_000_000 }));
     const policyId = sub.body.policy.id;
 
     const claim = await request(server)
@@ -86,28 +99,28 @@ describe("instripe BaaS platform", () => {
     expect(claim.status).toBe(201);
     expect(claim.body.claim.status).toBe("paid");
     expect(claim.body.payout.gateway).toBe("chile");
-    // float was 49000 (premium) - 20000 (payout) = 29000
-    expect(claim.body.floatBalance).toBe(29000);
+    // premium is 0,60% of 5.000.000 = 30.000; payout 20.000 leaves 10.000
+    expect(claim.body.floatBalance).toBe(10000);
   });
 
   it("rejects a claim above coverage", async () => {
     const server = app();
     const sub = await request(server)
       .post("/api/policies")
-      .send({ planId: "salud-basico", holderName: "Ana", email: "ana@demo.cl" });
+      .send(creditPolicy({ holderName: "Ana", email: "ana@demo.cl" }));
     const res = await request(server)
       .post("/api/claims")
       .send({ policyId: sub.body.policy.id, amount: 99999999, beneficiary: "x" });
     expect(res.status).toBe(422);
-    expect(res.body.error).toContain("cobertura");
+    expect(res.body.error).toContain("crédito");
   });
 
   it("rejects a claim when the float has insufficient funds", async () => {
     const server = app();
     const sub = await request(server)
       .post("/api/policies")
-      .send({ planId: "salud-basico", holderName: "Ana", email: "ana@demo.cl" });
-    // coverage is 1.500.000 but float only holds one 9.000 premium
+      .send(creditPolicy({ holderName: "Ana", email: "ana@demo.cl" }));
+    // insured credit is 1.500.000 but the wallet only holds the 9.000 premium
     const res = await request(server)
       .post("/api/claims")
       .send({ policyId: sub.body.policy.id, amount: 500000, beneficiary: "x" });
@@ -116,7 +129,7 @@ describe("instripe BaaS platform", () => {
   });
 
   it("validates required fields", async () => {
-    const res = await request(app()).post("/api/policies").send({ planId: "salud-basico" });
+    const res = await request(app()).post("/api/policies").send({ holderName: "Ana" });
     expect(res.status).toBe(400);
   });
 
@@ -126,9 +139,10 @@ describe("instripe BaaS platform", () => {
     expect(policy).toBeUndefined();
 
     const { policy: created } = platform.holdPremium({
-      planId: "salud-basico",
       holderName: "Ana Díaz",
       email: "ana@demo.cl",
+      cardLabel: "Visa •••• 4242",
+      cupo: 1_500_000,
     });
     expect(created.status).toBe("pending_payment");
     expect(platform.floatAccount.balance).toBe(0);
@@ -146,9 +160,10 @@ describe("instripe BaaS platform", () => {
   it("rejects a claim on a policy that is still awaiting payment", async () => {
     const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp" }));
     const { policy: created } = platform.holdPremium({
-      planId: "salud-basico",
       holderName: "Ana Díaz",
       email: "ana@demo.cl",
+      cardLabel: "Visa •••• 4242",
+      cupo: 1_500_000,
     });
     await expect(
       platform.fileClaim({
