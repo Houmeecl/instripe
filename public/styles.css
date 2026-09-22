@@ -138,6 +138,12 @@ body {
   padding-top: 16px;
 }
 
+.processor {
+  margin: 10px 4px 0;
+  font-size: 11px;
+  color: #7c93ad;
+}
+
 .env-chip {
   display: flex;
   align-items: center;

@@ -6,6 +6,7 @@ import { ConnectModule } from "./modules/connect/module.js";
 import { CuentasModule } from "./modules/cuentas/module.js";
 import { DisenoModule } from "./modules/diseno/module.js";
 import { SegurosModule, type ClaimInput, type SubscribeInput } from "./modules/seguros/module.js";
+import { RegistroModule } from "./modules/registro/module.js";
 import { TarjetasModule } from "./modules/tarjetas/module.js";
 import { TreasuryModule } from "./modules/treasury/module.js";
 import type { Account } from "./payments/ledger.js";
@@ -27,6 +28,7 @@ export class Platform {
   readonly tarjetas: TarjetasModule;
   readonly diseno: DisenoModule;
   readonly apps: AppsModule;
+  readonly registro: RegistroModule;
 
   constructor(config: AppConfig) {
     this.payments = new Payments(config);
@@ -38,10 +40,11 @@ export class Platform {
     this.tarjetas = new TarjetasModule(this.payments, config);
     this.diseno = new DisenoModule(this.payments, this.connect, config);
     this.apps = new AppsModule(config.appManifestPath);
+    this.registro = new RegistroModule(this.cuentas);
   }
 
   listModules() {
-    return [this.cuentas, this.cobros, this.seguros, this.connect, this.treasury, this.tarjetas, this.diseno, this.apps].map((mod) => ({
+    return [this.cuentas, this.cobros, this.seguros, this.connect, this.treasury, this.tarjetas, this.diseno, this.apps, this.registro].map((mod) => ({
       id: mod.id,
       label: mod.label,
       connected: true as const,

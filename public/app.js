@@ -63,13 +63,13 @@ const NAV = [
     ],
   },
   {
-    group: "Stripe",
+    group: "Finanzas",
     items: [
-      { route: "connect", label: "Connect", icon: "arrow", title: "Connect", sub: "Cuentas conectadas de la plataforma" },
-      { route: "treasury", label: "Treasury", icon: "wallet", title: "Treasury", sub: "Cuentas financieras. El abono entra por pagos" },
+      { route: "connect", label: "Comercios", icon: "arrow", title: "Comercios", sub: "Cuentas de comercios de la plataforma" },
+      { route: "treasury", label: "Caja", icon: "wallet", title: "Caja", sub: "Cuentas financieras. El abono entra por pagos" },
       { route: "cards", label: "Tarjetas", icon: "card", title: "Tarjetas", sub: "Tarjetas emitidas y su cupo" },
-      { route: "design", label: "Diseño", icon: "layers", title: "Diseño", sub: "Personalización de la tarjeta y de Checkout" },
-      { route: "apps", label: "App", icon: "file", title: "App", sub: "Manifest de la Stripe App" },
+      { route: "design", label: "Diseño", icon: "layers", title: "Diseño", sub: "Personalización de la tarjeta y del pago" },
+      { route: "apps", label: "App", icon: "file", title: "App", sub: "Manifest de la aplicación" },
     ],
   },
   {
@@ -556,8 +556,8 @@ function viewCards() {
 
 function viewDesign() {
   const d = state.design || {
-    displayName: "instripe",
-    buttonColor: "#635bff",
+    displayName: "Proveedor Regional",
+    buttonColor: "#c4622d",
     backgroundColor: "#f5f7fb",
     borderStyle: "rounded",
     carrierTitle: "Tu tarjeta",
@@ -598,7 +598,7 @@ function viewApps() {
   const m = state.appManifest;
   const pretty = m ? JSON.stringify(m, null, 2) : "";
   return `<div class="card">
-    <div class="card-head"><h3>Stripe App</h3></div>
+    <div class="card-head"><h3>App</h3></div>
     <div class="card-body">
       <div class="field"><label>Nombre</label><input id="app-name" value="${escapeAttr(m ? m.name : "Instripe")}" /></div>
       <button class="btn btn-primary" data-create-app>${icon("plus")} Crear app</button>
@@ -972,7 +972,7 @@ async function mountEmbeddedCheckout(result, plan) {
     <div class="modal wide">
       <div class="modal-head">
         <h3>Pagar ${plan.name}</h3>
-        <p>Checkout de Stripe. El movimiento queda liquidado en pagos cuando el pago se confirma.</p>
+        <p>Pago embebido. El movimiento queda liquidado cuando el pago se confirma.</p>
       </div>
       <div class="modal-body"><div id="embedded-checkout"></div></div>
       <div class="modal-foot">

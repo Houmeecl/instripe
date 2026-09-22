@@ -23,8 +23,8 @@ export class DisenoModule {
   readonly id = "diseno";
   readonly label = "Diseño";
   private design: CardDesign = {
-    displayName: "instripe",
-    buttonColor: "#635bff",
+    displayName: "Proveedor Regional",
+    buttonColor: "#c4622d",
     backgroundColor: "#f5f7fb",
     borderStyle: "rounded",
     carrierTitle: "Tu tarjeta",

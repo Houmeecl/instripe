@@ -131,6 +131,18 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     });
   });
 
+  app.get("/api/registro", (_req: Request, res: Response) => {
+    const balances = new Map(platform.cuentas.list().map((account) => [account.id, account.balance]));
+    res.json({
+      domain: "proveedorregional.cl",
+      members: platform.registro.list().map((member) => ({
+        ...member,
+        balance: balances.get(member.accountId) ?? 0,
+        displayBalance: formatAmount(balances.get(member.accountId) ?? 0, config.currency),
+      })),
+    });
+  });
+
   app.get("/api/cuentas", (_req: Request, res: Response) => {
     res.json({ accounts: platform.cuentas.list() });
   });
@@ -406,7 +418,14 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
   });
 
-  app.use(express.static(path.join(__dirname, "..", "public")));
+  const publicDir = path.join(__dirname, "..", "public");
+  app.get("/aplicacion", (_req: Request, res: Response) => {
+    res.sendFile(path.join(publicDir, "aplicacion.html"));
+  });
+  app.get("/operacion", (_req: Request, res: Response) => {
+    res.sendFile(path.join(publicDir, "operacion.html"));
+  });
+  app.use(express.static(publicDir));
 
   return app;
 }

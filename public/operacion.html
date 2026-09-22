@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proveedor Regional · Operación</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">Proveedor <span>Regional</span></span>
+          <span class="brand-sub">Operación</span>
+        </div>
+        <nav class="nav" id="nav"></nav>
+        <div class="sidebar-foot">
+          <div class="env-chip" id="env-chip">
+            <span class="dot"></span><span id="env-chip-text">Sandbox</span>
+          </div>
+          <p class="processor">Procesador de pagos: Stripe</p>
+        </div>
+      </aside>
+
+      <div class="main">
+        <header class="topbar">
+          <div class="page-heading">
+            <h1 id="page-title">Resumen</h1>
+            <p id="page-subtitle" class="page-sub">Vista general de la plataforma</p>
+          </div>
+          <div class="topbar-actions">
+            <label class="gw-select">
+              <span>Pasarela</span>
+              <select id="gateway"></select>
+            </label>
+            <span id="mode-badge" class="badge">…</span>
+          </div>
+        </header>
+
+        <main class="content" id="view"><div class="skeleton-page"></div></main>
+      </div>
+    </div>
+
+    <div id="modal-root"></div>
+    <div id="toast" class="toast" hidden></div>
+    <script src="/app.js"></script>
+  </body>
+</html>

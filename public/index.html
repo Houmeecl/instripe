@@ -3,51 +3,62 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>instripe · Plataforma</title>
+    <title>Proveedor Regional</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,680&family=Outfit:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/landing.css" />
   </head>
   <body>
-    <div class="app">
-      <aside class="sidebar">
-        <div class="brand">
-          <span class="brand-mark">in<span>stripe</span></span>
-          <span class="brand-sub">Plataforma</span>
+    <header class="site-head">
+      <a class="logo" href="/">Proveedor <em>Regional</em></a>
+      <nav>
+        <a href="#producto">Producto</a>
+        <a href="#aplicacion">Aplicación</a>
+        <a href="/operacion">Operación</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <p class="eyebrow">proveedorregional.cl</p>
+        <h1>Cuentas, cobros y crédito para proveedores de la región.</h1>
+        <p class="lede">
+          La aplicación ya tiene comercios y titulares preinscritos. Entras, los ves y operas desde ahí.
+        </p>
+        <a class="cta" href="#aplicacion">Abrir la aplicación</a>
+      </section>
+
+      <section class="product" id="producto">
+        <article>
+          <h2>Cuentas</h2>
+          <p>Cada preinscrito tiene una cuenta propia. El saldo parte en cero hasta que entra un abono.</p>
+        </article>
+        <article>
+          <h2>Cobros</h2>
+          <p>Un cobro se le pide a un pagador y queda en el libro de la plataforma.</p>
+        </article>
+        <article>
+          <h2>Crédito</h2>
+          <p>La póliza cubre el cupo de la tarjeta del titular, no un plan inventado.</p>
+        </article>
+      </section>
+
+      <section class="embed" id="aplicacion">
+        <div class="embed-copy">
+          <h2>Aplicación</h2>
+          <p>Taller Sur, Oficina Norte y Ana Díaz ya están preinscritos.</p>
         </div>
-        <nav class="nav" id="nav"></nav>
-        <div class="sidebar-foot">
-          <div class="env-chip" id="env-chip">
-            <span class="dot"></span><span id="env-chip-text">Sandbox</span>
-          </div>
-        </div>
-      </aside>
+        <iframe src="/aplicacion" title="Aplicación de Proveedor Regional"></iframe>
+      </section>
+    </main>
 
-      <div class="main">
-        <header class="topbar">
-          <div class="page-heading">
-            <h1 id="page-title">Resumen</h1>
-            <p id="page-subtitle" class="page-sub">Vista general de la plataforma</p>
-          </div>
-          <div class="topbar-actions">
-            <label class="gw-select">
-              <span>Pasarela</span>
-              <select id="gateway"></select>
-            </label>
-            <span id="mode-badge" class="badge">…</span>
-          </div>
-        </header>
-
-        <main class="content" id="view"><div class="skeleton-page"></div></main>
-      </div>
-    </div>
-
-    <div id="modal-root"></div>
-    <div id="toast" class="toast" hidden></div>
-    <script src="/app.js"></script>
+    <footer class="site-foot">
+      <span>proveedorregional.cl</span>
+      <span>Procesador de pagos: Stripe</span>
+    </footer>
   </body>
 </html>

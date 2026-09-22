@@ -68,6 +68,7 @@ describe("instripe BaaS platform", () => {
       "connect",
       "cuentas",
       "diseno",
+      "registro",
       "seguros",
       "tarjetas",
       "treasury",
@@ -339,5 +340,28 @@ describe("instripe BaaS platform", () => {
       .send({ id: "evt_x", type: "checkout.session.completed" });
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("signature verification failed");
+  });
+
+  it("serves the landing with an embedded app of pre-registered members", async () => {
+    const server = app();
+    const landing = await request(server).get("/");
+    expect(landing.status).toBe(200);
+    expect(landing.text).toContain("Proveedor Regional");
+    expect(landing.text).toContain('src="/aplicacion"');
+    expect(landing.text).toContain("Procesador de pagos");
+
+    const embedded = await request(server).get("/aplicacion");
+    expect(embedded.status).toBe(200);
+    expect(embedded.text).toContain("Preinscritos");
+
+    const registro = await request(server).get("/api/registro");
+    expect(registro.status).toBe(200);
+    expect(registro.body.domain).toBe("proveedorregional.cl");
+    expect(registro.body.members.map((member: { email: string }) => member.email).sort()).toEqual([
+      "ana@proveedorregional.cl",
+      "caja@taller.cl",
+      "pago@norte.cl",
+    ]);
+    expect(registro.body.members.every((member: { status: string }) => member.status === "preinscrito")).toBe(true);
   });
 });
