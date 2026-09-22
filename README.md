@@ -34,7 +34,7 @@ npm run dev      # http://localhost:3000
 
 ## Configuración
 
-Copia `.env.example` a `.env` (opcional). Todo tiene valores por defecto seguros:
+Copia `.env.example` a `.env` (opcional). El servidor lo carga al arrancar y no pisa variables que ya vengan del entorno. Todo tiene valores por defecto seguros:
 
 | Variable                      | Default                 | Descripción                                             |
 | ----------------------------- | ----------------------- | ------------------------------------------------------- |

@@ -537,8 +537,13 @@ code.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
   backdrop-filter: blur(3px);
   display: grid;
   place-items: center;
+  overflow: auto;
+  padding: 28px 16px 40px;
   z-index: 50;
   animation: fade 0.15s ease;
+}
+.overlay:has(.modal.wide) {
+  place-items: start center;
 }
 .modal {
   width: min(460px, calc(100vw - 40px));
@@ -552,7 +557,7 @@ code.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
   width: min(560px, calc(100vw - 32px));
   overflow: visible;
 }
-#embedded-checkout { min-height: 320px; }
+#embedded-checkout { min-height: 640px; }
 .modal-head { padding: 20px 22px 6px; }
 .modal-head h3 { margin: 0; font-size: 18px; }
 .modal-head p { margin: 6px 0 0; color: var(--muted); font-size: 13.5px; }
