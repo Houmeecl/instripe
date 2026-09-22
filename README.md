@@ -42,6 +42,8 @@ Copia `.env.example` a `.env` (opcional). Todo tiene valores por defecto seguros
 | `CURRENCY`                    | `clp`                   | Moneda base (Chile). Soporta monedas sin decimales.     |
 | `DEFAULT_GATEWAY`             | `chile`                 | Pasarela por defecto (`chile` o `stripe`).              |
 | `STRIPE_SECRET_KEY`           | _(vacío)_               | Si está presente, Stripe usa su API real.               |
+| `STRIPE_PUBLISHABLE_KEY`      | _(vacío)_               | `pk_test_…`. Monta Checkout embebido en el portal.      |
+| `STRIPE_WEBHOOK_SECRET`       | _(vacío)_               | `whsec_…` de `stripe listen`. Activa la póliza al pagar.|
 | `CHILE_GATEWAY_API_KEY`       | _(vacío)_               | Credencial de la pasarela chilena (modo live).          |
 | `CHILE_GATEWAY_COMMERCE_CODE` | _(vacío)_               | Código de comercio de la pasarela chilena.              |
 | `PUBLIC_BASE_URL`             | `http://localhost:3000` | Base para URLs de retorno/redirección.                  |
@@ -64,8 +66,10 @@ Copia `.env.example` a `.env` (opcional). Todo tiene valores por defecto seguros
 - `GET /api/plans` — planes de seguro con montos formateados.
 - `GET /api/overview` — saldo del float, pólizas y siniestros.
 - `POST /api/policies` — contratar póliza (cobra prima): `{ planId, holderName, email, gateway }`.
+  Con Stripe live y llave publicable, la respuesta trae `charge.clientSecret` y la póliza queda en `pending_payment` hasta que el pago se confirma.
+- `GET /api/checkout/sessions/:id` — estado de una sesión de Checkout; si está pagada, activa la póliza (idempotente).
 - `POST /api/claims` — dispersar siniestro: `{ policyId, amount, beneficiary, gateway }`.
-- `POST /webhooks/stripe` — webhook de Stripe con verificación de firma (fulfillment).
+- `POST /webhooks/stripe` — webhook de Stripe con verificación de firma. `checkout.session.completed` acredita el float y activa la póliza.
 - `GET /api/stripe/events` — últimos eventos de webhook recibidos.
 
 ## Stripe (modo live con sandbox de prueba)
@@ -82,9 +86,16 @@ stripe listen --forward-to localhost:3000/webhooks/stripe
 stripe trigger checkout.session.completed # dispara un evento de prueba
 ```
 
-Con `STRIPE_SECRET_KEY` definido, contratar una póliza vía la pasarela `stripe`
-crea una **sesión real de Stripe Checkout** (`cs_test_...`). En producción, mueve
-las llaves a los Secrets del entorno en lugar de `.env`.
+Con `STRIPE_SECRET_KEY` y `STRIPE_PUBLISHABLE_KEY`, contratar una póliza vía la
+pasarela `stripe` abre **Checkout embebido** en el portal (Stripe.js). La póliza
+queda en `pending_payment` y el float no se acredita hasta
+`checkout.session.completed` (webhook) o hasta que el retorno consulta
+`GET /api/checkout/sessions/:id` con `payment_status=paid`. Ambas vías son
+idempotentes. Sin llave publicable, Stripe usa Checkout alojado (redirect).
+
+En producción, mueve las llaves a los Secrets del entorno en lugar de `.env`.
+La llave secreta no debe commitearse. Si se pegó en un chat, rótala en el
+Dashboard de Stripe.
 
 ## Producción / próximos pasos
 

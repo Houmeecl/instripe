@@ -49,11 +49,16 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       }
 
       platform.recordWebhookEvent(event.id, event.type);
+      let fulfilled = false;
       if (event.type === "checkout.session.completed") {
         const session = event.data.object as Stripe.Checkout.Session;
-        console.log(`[stripe] checkout.session.completed ${session.id} (${session.amount_total} ${session.currency})`);
+        const policyId = session.metadata?.policyId ?? session.client_reference_id ?? undefined;
+        fulfilled = platform.fulfillCheckout(policyId, session.id).fulfilled;
+        console.log(
+          `[stripe] checkout.session.completed ${session.id} policy=${policyId ?? "-"} fulfilled=${fulfilled}`,
+        );
       }
-      res.json({ received: true, type: event.type });
+      res.json({ received: true, type: event.type, fulfilled });
     },
   );
 
@@ -116,7 +121,39 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         email: String(body.email),
         gateway: asGateway(body.gateway, config.defaultGateway),
       });
-      res.status(201).json(result);
+      res.status(201).json({
+        ...result,
+        charge: {
+          ...result.charge,
+          publishableKey: result.charge.clientSecret ? config.stripePublishableKey : undefined,
+        },
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/checkout/sessions/:id", async (req: Request, res: Response) => {
+    if (!config.stripeSecretKey) {
+      res.status(409).json({ error: "Stripe no está configurado" });
+      return;
+    }
+    const sessionId = String(req.params.id);
+    try {
+      const stripe = new Stripe(config.stripeSecretKey);
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      const policyId = session.metadata?.policyId ?? session.client_reference_id ?? undefined;
+      const paid = session.status === "complete" && session.payment_status === "paid";
+      const fulfillment = paid
+        ? platform.fulfillCheckout(policyId, session.id)
+        : { fulfilled: false, policyId };
+      res.json({
+        id: session.id,
+        status: session.status,
+        paymentStatus: session.payment_status,
+        policyId: fulfillment.policyId ?? policyId ?? null,
+        fulfilled: fulfillment.fulfilled,
+      });
     } catch (error) {
       handleError(error, res);
     }

@@ -34,6 +34,11 @@ export interface SubscribeResult {
   charge: ChargeResult;
 }
 
+export interface FulfillResult {
+  fulfilled: boolean;
+  policyId?: string;
+}
+
 export interface ClaimInput {
   policyId: string;
   amount: number;
@@ -110,23 +115,51 @@ export class Platform {
       throw new PlatformError(`Plan desconocido: ${input.planId}`, 404);
     }
     const gateway = this.gateways.get(input.gateway);
+    // Live Stripe collects the premium asynchronously. The policy stays pending
+    // until Checkout reports the payment (webhook or session retrieve).
+    const deferFulfillment = gateway.name === "stripe" && gateway.configured;
+    const { account, policy } = this.holdPremium(input);
+
+    let charge: ChargeResult;
+    try {
+      charge = await gateway.charge({
+        amount: plan.premium,
+        currency: this.config.currency,
+        description: `Prima ${plan.name}`,
+        customerEmail: input.email,
+        successUrl: `${this.config.publicBaseUrl}/?paid=1&plan=${plan.id}`,
+        cancelUrl: `${this.config.publicBaseUrl}/?canceled=1`,
+        returnUrl: `${this.config.publicBaseUrl}/?session_id={CHECKOUT_SESSION_ID}`,
+        metadata: { policyId: policy.id, planId: plan.id },
+      });
+    } catch (error) {
+      this.policies.delete(policy.id);
+      throw error;
+    }
+
+    if (deferFulfillment) {
+      policy.checkoutSessionId = charge.chargeId;
+    } else {
+      this.fulfillCheckout(policy.id, charge.chargeId);
+    }
+
+    return { account, policy, charge };
+  }
+
+  /**
+   * Record a policy that has not collected its premium yet. Live Stripe uses
+   * this until Checkout confirms payment.
+   */
+  holdPremium(input: Omit<SubscribeInput, "gateway">): { account: Account; policy: Policy } {
+    const plan = findPlan(input.planId);
+    if (!plan) {
+      throw new PlatformError(`Plan desconocido: ${input.planId}`, 404);
+    }
     const account = this.ledger.createAccount({
       name: input.holderName,
       email: input.email,
       currency: this.config.currency,
     });
-
-    const charge = await gateway.charge({
-      amount: plan.premium,
-      currency: this.config.currency,
-      description: `Prima ${plan.name}`,
-      customerEmail: input.email,
-      successUrl: `${this.config.publicBaseUrl}/success?plan=${plan.id}`,
-      cancelUrl: `${this.config.publicBaseUrl}/?canceled=1`,
-    });
-
-    this.ledger.post("credit", this.float.id, plan.premium, `Prima póliza ${plan.name} (${charge.chargeId})`);
-
     const policy: Policy = {
       id: `pol_${randomUUID().slice(0, 8)}`,
       planId: plan.id,
@@ -134,18 +167,47 @@ export class Platform {
       holderName: input.holderName,
       premium: plan.premium,
       coverage: plan.coverage,
-      status: "active",
+      status: "pending_payment",
       createdAt: new Date().toISOString(),
     };
     this.policies.set(policy.id, policy);
+    return { account, policy };
+  }
 
-    return { account, policy, charge };
+  /**
+   * Activate a pending policy and credit the insurer float. Safe to call more
+   * than once for the same Checkout session.
+   */
+  fulfillCheckout(policyId: string | null | undefined, sessionId: string): FulfillResult {
+    if (!policyId) return { fulfilled: false };
+    const policy = this.policies.get(policyId);
+    if (!policy || policy.status !== "pending_payment") {
+      return { fulfilled: false, policyId };
+    }
+    this.creditPremium(policy, sessionId);
+    policy.status = "active";
+    policy.checkoutSessionId = sessionId;
+    return { fulfilled: true, policyId };
+  }
+
+  private creditPremium(policy: Policy, reference: string): void {
+    const plan = findPlan(policy.planId);
+    const label = plan?.name ?? policy.planId;
+    this.ledger.post(
+      "credit",
+      this.float.id,
+      policy.premium,
+      `Prima póliza ${label} (${reference})`,
+    );
   }
 
   async fileClaim(input: ClaimInput): Promise<ClaimResult> {
     const policy = this.policies.get(input.policyId);
     if (!policy) {
       throw new PlatformError(`Póliza desconocida: ${input.policyId}`, 404);
+    }
+    if (policy.status === "pending_payment") {
+      throw new PlatformError("La póliza espera la confirmación del pago", 409);
     }
     if (policy.status !== "active") {
       throw new PlatformError("La póliza no está activa", 409);

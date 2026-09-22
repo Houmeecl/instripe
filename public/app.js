@@ -96,11 +96,29 @@ async function boot() {
     const plans = await api("/api/plans");
     state.plans = plans.plans;
     await refresh();
+    await confirmReturnedCheckout();
   } catch (err) {
     toast("Error al iniciar: " + err.message, "error");
   }
   window.addEventListener("hashchange", route);
   route();
+}
+
+async function confirmReturnedCheckout() {
+  const sessionId = new URLSearchParams(location.search).get("session_id");
+  if (!sessionId || sessionId.includes("{")) return;
+  try {
+    const session = await api(`/api/checkout/sessions/${encodeURIComponent(sessionId)}`);
+    history.replaceState({}, "", `${location.pathname}#/policies`);
+    await refresh();
+    if (session.paymentStatus === "paid") {
+      toast(`Pago confirmado. Póliza ${session.policyId || ""} activa.`);
+    } else {
+      toast("El pago todavía no está confirmado.", "error");
+    }
+  } catch (err) {
+    toast(err.message, "error");
+  }
 }
 
 function renderNav() {
@@ -177,7 +195,7 @@ const VIEWS = {
 
 function viewOverview() {
   const o = state.overview;
-  const activePolicies = o.policies.length;
+  const activePolicies = o.policies.filter((p) => p.status === "active").length;
   const kpi = `
     <div class="grid-kpi">
       <div class="kpi">
@@ -261,8 +279,9 @@ function viewPolicies() {
     return `<div class="card"><div class="card-body"><div class="empty">${icon("shield")}<div>No hay pólizas todavía. Ve a <a href="#/plans">Planes</a> para contratar una.</div></div></div></div>`;
   }
   const list = rows
-    .map(
-      (p) => `
+    .map((p) => {
+      const pending = p.status === "pending_payment";
+      return `
       <div class="row">
         <div class="avatar">${initials(p.holderName)}</div>
         <div>
@@ -270,11 +289,15 @@ function viewPolicies() {
           <div class="meta"><code class="mono">${p.id}</code> · plan ${p.planId}</div>
         </div>
         <div class="push">
-          <span class="pill">${p.status}</span>
-          <button class="btn btn-ghost btn-sm" data-claim="${p.id}">${icon("zap")} Dispersar siniestro</button>
+          <span class="pill ${pending ? "amber" : ""}">${pending ? "pago pendiente" : p.status}</span>
+          ${
+            pending
+              ? `<span class="meta">Esperando Stripe</span>`
+              : `<button class="btn btn-ghost btn-sm" data-claim="${p.id}">${icon("zap")} Dispersar siniestro</button>`
+          }
         </div>
-      </div>`,
-    )
+      </div>`;
+    })
     .join("");
   return `<div class="card"><div class="card-head"><h3>Pólizas (${rows.length})</h3><a class="btn btn-primary btn-sm" href="#/plans">${icon("plus")} Nueva</a></div><div class="card-body flush"><div class="rowlist">${list}</div></div></div>`;
 }
@@ -351,7 +374,22 @@ function wireView(r) {
 
 /* ---------------- modals ---------------- */
 function closeModal() {
+  if (window.__instripeCheckout) {
+    window.__instripeCheckout.destroy();
+    window.__instripeCheckout = null;
+  }
   document.getElementById("modal-root").innerHTML = "";
+}
+
+function loadStripeJs() {
+  if (window.Stripe) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://js.stripe.com/v3/";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("No se pudo cargar Stripe.js"));
+    document.head.appendChild(script);
+  });
 }
 
 function mountModal(html) {
@@ -396,6 +434,14 @@ function openSubscribeModal(plan) {
           gateway: document.getElementById("m-gateway").value,
         }),
       });
+      if (result.charge.clientSecret && result.charge.publishableKey) {
+        await mountEmbeddedCheckout(result, plan);
+        return;
+      }
+      if (result.charge.mode === "live" && result.charge.redirectUrl) {
+        window.location.assign(result.charge.redirectUrl);
+        return;
+      }
       closeModal();
       await refresh();
       route();
@@ -406,6 +452,26 @@ function openSubscribeModal(plan) {
       toast(err.message, "error");
     }
   };
+}
+
+async function mountEmbeddedCheckout(result, plan) {
+  mountModal(`
+    <div class="modal wide">
+      <div class="modal-head">
+        <h3>Pagar ${plan.name}</h3>
+        <p>Checkout de Stripe dentro del portal. La póliza <code class="mono">${result.policy.id}</code> queda activa cuando el pago se confirma.</p>
+      </div>
+      <div class="modal-body"><div id="embedded-checkout"></div></div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-cancel>Cerrar</button>
+      </div>
+    </div>`);
+  document.getElementById("modal-root").querySelector("[data-cancel]").onclick = closeModal;
+  await loadStripeJs();
+  const stripe = window.Stripe(result.charge.publishableKey);
+  const checkout = await stripe.initEmbeddedCheckout({ clientSecret: result.charge.clientSecret });
+  window.__instripeCheckout = checkout;
+  checkout.mount("#embedded-checkout");
 }
 
 function openClaimModal(policy) {

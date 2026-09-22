@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
+import { Platform } from "../src/platform.js";
 
 function app(env: NodeJS.ProcessEnv = { PORT: "3000", CURRENCY: "clp" }) {
   return createApp(loadConfig(env));
@@ -50,13 +51,19 @@ describe("instripe BaaS platform", () => {
     expect(overview.body.policies).toHaveLength(1);
   });
 
-  it("subscribes via Stripe gateway in demo mode", async () => {
-    const res = await request(app())
+  it("subscribes via Stripe gateway in demo mode and activates immediately", async () => {
+    const server = app();
+    const res = await request(server)
       .post("/api/policies")
       .send({ planId: "pyme-total", holderName: "Bkr SpA", email: "ops@bkr.cl", gateway: "stripe" });
     expect(res.status).toBe(201);
+    expect(res.body.policy.status).toBe("active");
     expect(res.body.charge.gateway).toBe("stripe");
+    expect(res.body.charge.clientSecret).toBeUndefined();
     expect(res.body.charge.redirectUrl).toContain("charge=");
+
+    const overview = await request(server).get("/api/overview");
+    expect(overview.body.float.balance).toBe(49000);
   });
 
   it("disperses a claim payout and debits the float (dispersión de fondos)", async () => {
@@ -106,6 +113,51 @@ describe("instripe BaaS platform", () => {
     expect(res.status).toBe(400);
   });
 
+  it("keeps the float unchanged until a pending Stripe policy is fulfilled, once", () => {
+    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp" }));
+    const policy = platform.listPolicies()[0];
+    expect(policy).toBeUndefined();
+
+    const { policy: created } = platform.holdPremium({
+      planId: "salud-basico",
+      holderName: "Ana Díaz",
+      email: "ana@demo.cl",
+    });
+    expect(created.status).toBe("pending_payment");
+    expect(platform.floatAccount.balance).toBe(0);
+
+    const first = platform.fulfillCheckout(created.id, "cs_test_1");
+    expect(first.fulfilled).toBe(true);
+    expect(platform.floatAccount.balance).toBe(9000);
+    expect(platform.listPolicies()[0]?.status).toBe("active");
+
+    const second = platform.fulfillCheckout(created.id, "cs_test_1");
+    expect(second.fulfilled).toBe(false);
+    expect(platform.floatAccount.balance).toBe(9000);
+  });
+
+  it("rejects a claim on a policy that is still awaiting payment", async () => {
+    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp" }));
+    const { policy: created } = platform.holdPremium({
+      planId: "salud-basico",
+      holderName: "Ana Díaz",
+      email: "ana@demo.cl",
+    });
+    await expect(
+      platform.fileClaim({
+        policyId: created.id,
+        amount: 1000,
+        beneficiary: "12.345.678-9",
+        gateway: "chile",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("returns 409 when retrieving a checkout session without Stripe", async () => {
+    const res = await request(app()).get("/api/checkout/sessions/cs_test_missing");
+    expect(res.status).toBe(409);
+  });
+
   it("accepts a Stripe webhook (demo fallback) and records the event", async () => {
     const server = app();
     const payload = { id: "evt_test_123", type: "checkout.session.completed", data: { object: { id: "cs_test_1", amount_total: 49000, currency: "clp" } } };
@@ -114,7 +166,7 @@ describe("instripe BaaS platform", () => {
       .set("Content-Type", "application/json")
       .send(payload);
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ received: true, type: "checkout.session.completed" });
+    expect(res.body).toMatchObject({ received: true, type: "checkout.session.completed", fulfilled: false });
 
     const events = await request(server).get("/api/stripe/events");
     expect(events.body.events[0]).toMatchObject({ id: "evt_test_123", type: "checkout.session.completed" });

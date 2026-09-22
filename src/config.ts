@@ -7,6 +7,8 @@ export interface AppConfig {
   publicBaseUrl: string;
   defaultGateway: GatewayName;
   stripeSecretKey: string | undefined;
+  /** Publishable key (pk_test_/pk_live_). Safe to send to the browser. */
+  stripePublishableKey: string | undefined;
   stripeWebhookSecret: string | undefined;
   /** Credentials for the Chilean gateway (Webpay/Khipu/Flow-style). Demo when unset. */
   chile: {
@@ -25,6 +27,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     publicBaseUrl: env.PUBLIC_BASE_URL ?? `http://localhost:${port}`,
     defaultGateway,
     stripeSecretKey: env.STRIPE_SECRET_KEY?.trim() || undefined,
+    stripePublishableKey: env.STRIPE_PUBLISHABLE_KEY?.trim() || undefined,
     stripeWebhookSecret: env.STRIPE_WEBHOOK_SECRET?.trim() || undefined,
     chile: {
       apiKey: env.CHILE_GATEWAY_API_KEY?.trim() || undefined,

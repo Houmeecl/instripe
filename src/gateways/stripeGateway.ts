@@ -29,9 +29,13 @@ export class StripeGateway implements PaymentGateway {
 
   async charge(req: ChargeRequest): Promise<ChargeResult> {
     if (this.client) {
+      const embedded = Boolean(this.config.stripePublishableKey);
       const session = await this.client.checkout.sessions.create({
         mode: "payment",
+        ui_mode: embedded ? "embedded" : "hosted",
         customer_email: req.customerEmail,
+        client_reference_id: req.metadata?.policyId,
+        metadata: req.metadata,
         line_items: [
           {
             quantity: 1,
@@ -42,14 +46,16 @@ export class StripeGateway implements PaymentGateway {
             },
           },
         ],
-        success_url: req.successUrl,
-        cancel_url: req.cancelUrl,
+        ...(embedded
+          ? { return_url: req.returnUrl ?? req.successUrl }
+          : { success_url: req.successUrl, cancel_url: req.cancelUrl }),
       });
       return {
         gateway: this.name,
         mode: "live",
         chargeId: session.id,
-        redirectUrl: session.url ?? req.successUrl,
+        redirectUrl: session.url ?? req.returnUrl ?? req.successUrl,
+        clientSecret: session.client_secret ?? undefined,
         amount: req.amount,
         currency: req.currency,
       };

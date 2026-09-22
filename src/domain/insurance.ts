@@ -15,7 +15,9 @@ export interface Policy {
   holderName: string;
   premium: number;
   coverage: number;
-  status: "active" | "lapsed";
+  status: "pending_payment" | "active" | "lapsed";
+  /** Stripe Checkout session that collects the premium, when applicable. */
+  checkoutSessionId?: string;
   createdAt: string;
 }
 

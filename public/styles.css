@@ -548,6 +548,11 @@ code.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
   overflow: hidden;
   animation: pop 0.16s ease;
 }
+.modal.wide {
+  width: min(560px, calc(100vw - 32px));
+  overflow: visible;
+}
+#embedded-checkout { min-height: 320px; }
 .modal-head { padding: 20px 22px 6px; }
 .modal-head h3 { margin: 0; font-size: 18px; }
 .modal-head p { margin: 6px 0 0; color: var(--muted); font-size: 13.5px; }

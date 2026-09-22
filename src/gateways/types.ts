@@ -7,6 +7,9 @@ export interface ChargeRequest {
   customerEmail: string;
   successUrl: string;
   cancelUrl: string;
+  /** Stripe replaces `{CHECKOUT_SESSION_ID}` when using embedded Checkout. */
+  returnUrl?: string;
+  metadata?: Record<string, string>;
 }
 
 export interface ChargeResult {
@@ -15,6 +18,8 @@ export interface ChargeResult {
   chargeId: string;
   /** Redirect URL for hosted checkout / redirect-based gateways. */
   redirectUrl: string;
+  /** Present when Stripe Checkout runs embedded in the portal. */
+  clientSecret?: string;
   amount: number;
   currency: string;
 }
