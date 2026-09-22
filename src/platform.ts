@@ -58,6 +58,7 @@ export class Platform {
   private readonly float: Account;
   private readonly policies = new Map<string, Policy>();
   private readonly claims: Claim[] = [];
+  private readonly webhookEvents: { id: string; type: string; receivedAt: string }[] = [];
 
   constructor(private readonly config: AppConfig) {
     this.gateways = new GatewayRegistry(config);
@@ -90,6 +91,17 @@ export class Platform {
 
   listClaims(): Claim[] {
     return [...this.claims];
+  }
+
+  recordWebhookEvent(id: string, type: string): void {
+    this.webhookEvents.unshift({ id, type, receivedAt: new Date().toISOString() });
+    if (this.webhookEvents.length > 20) {
+      this.webhookEvents.length = 20;
+    }
+  }
+
+  listWebhookEvents() {
+    return [...this.webhookEvents];
   }
 
   async subscribe(input: SubscribeInput): Promise<SubscribeResult> {

@@ -1,4 +1,5 @@
 import express, { type Express, type Request, type Response } from "express";
+import Stripe from "stripe";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, isStripeConfigured, isChileConfigured, type AppConfig, type GatewayName } from "./config.js";
@@ -14,6 +15,48 @@ function asGateway(value: unknown, fallback: GatewayName): GatewayName {
 export function createApp(config: AppConfig = loadConfig()): Express {
   const app = express();
   const platform = new Platform(config);
+
+  // Stripe webhooks need the raw body for signature verification, so this
+  // route is registered before the JSON body parser.
+  app.post(
+    "/webhooks/stripe",
+    express.raw({ type: "application/json" }),
+    (req: Request, res: Response) => {
+      const signature = req.headers["stripe-signature"];
+      let event: Stripe.Event;
+
+      if (config.stripeSecretKey && config.stripeWebhookSecret && signature) {
+        try {
+          const stripe = new Stripe(config.stripeSecretKey);
+          event = stripe.webhooks.constructEvent(
+            req.body as Buffer,
+            signature as string,
+            config.stripeWebhookSecret,
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "invalid signature";
+          res.status(400).json({ error: `Webhook signature verification failed: ${message}` });
+          return;
+        }
+      } else {
+        // Demo fallback when no webhook secret is configured.
+        try {
+          event = JSON.parse((req.body as Buffer).toString("utf8")) as Stripe.Event;
+        } catch {
+          res.status(400).json({ error: "invalid payload" });
+          return;
+        }
+      }
+
+      platform.recordWebhookEvent(event.id, event.type);
+      if (event.type === "checkout.session.completed") {
+        const session = event.data.object as Stripe.Checkout.Session;
+        console.log(`[stripe] checkout.session.completed ${session.id} (${session.amount_total} ${session.currency})`);
+      }
+      res.json({ received: true, type: event.type });
+    },
+  );
+
   app.use(express.json());
 
   app.get("/health", (_req: Request, res: Response) => {
@@ -22,6 +65,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       currency: config.currency,
       defaultGateway: config.defaultGateway,
       stripeConfigured: isStripeConfigured(config),
+      stripeWebhookConfigured: Boolean(config.stripeWebhookSecret),
       chileConfigured: isChileConfigured(config),
       time: new Date().toISOString(),
     });
@@ -40,6 +84,10 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         displayCoverage: formatAmount(plan.coverage, config.currency),
       })),
     });
+  });
+
+  app.get("/api/stripe/events", (_req: Request, res: Response) => {
+    res.json({ events: platform.listWebhookEvents() });
   });
 
   app.get("/api/overview", (_req: Request, res: Response) => {

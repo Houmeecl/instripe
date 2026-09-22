@@ -65,6 +65,26 @@ Copia `.env.example` a `.env` (opcional). Todo tiene valores por defecto seguros
 - `GET /api/overview` — saldo del float, pólizas y siniestros.
 - `POST /api/policies` — contratar póliza (cobra prima): `{ planId, holderName, email, gateway }`.
 - `POST /api/claims` — dispersar siniestro: `{ policyId, amount, beneficiary, gateway }`.
+- `POST /webhooks/stripe` — webhook de Stripe con verificación de firma (fulfillment).
+- `GET /api/stripe/events` — últimos eventos de webhook recibidos.
+
+## Stripe (modo live con sandbox de prueba)
+
+Puedes obtener llaves de prueba sin registrar cuenta (ver `https://docs.stripe.com/get-started`):
+
+```bash
+npm i -g @stripe/cli
+stripe sandbox create --from-git          # crea sandbox y guarda llaves de test
+# copia secret_key a STRIPE_SECRET_KEY en .env
+
+# Reenvía webhooks a la app y copia el whsec_... a STRIPE_WEBHOOK_SECRET:
+stripe listen --forward-to localhost:3000/webhooks/stripe
+stripe trigger checkout.session.completed # dispara un evento de prueba
+```
+
+Con `STRIPE_SECRET_KEY` definido, contratar una póliza vía la pasarela `stripe`
+crea una **sesión real de Stripe Checkout** (`cs_test_...`). En producción, mueve
+las llaves a los Secrets del entorno en lugar de `.env`.
 
 ## Producción / próximos pasos
 

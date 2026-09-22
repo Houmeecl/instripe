@@ -105,4 +105,29 @@ describe("instripe BaaS platform", () => {
     const res = await request(app()).post("/api/policies").send({ planId: "salud-basico" });
     expect(res.status).toBe(400);
   });
+
+  it("accepts a Stripe webhook (demo fallback) and records the event", async () => {
+    const server = app();
+    const payload = { id: "evt_test_123", type: "checkout.session.completed", data: { object: { id: "cs_test_1", amount_total: 49000, currency: "clp" } } };
+    const res = await request(server)
+      .post("/webhooks/stripe")
+      .set("Content-Type", "application/json")
+      .send(payload);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ received: true, type: "checkout.session.completed" });
+
+    const events = await request(server).get("/api/stripe/events");
+    expect(events.body.events[0]).toMatchObject({ id: "evt_test_123", type: "checkout.session.completed" });
+  });
+
+  it("rejects a signed webhook when the signature is invalid", async () => {
+    const server = app({ PORT: "3000", CURRENCY: "clp", STRIPE_SECRET_KEY: "rk_test_dummy", STRIPE_WEBHOOK_SECRET: "whsec_dummy" });
+    const res = await request(server)
+      .post("/webhooks/stripe")
+      .set("Content-Type", "application/json")
+      .set("stripe-signature", "t=123,v1=deadbeef")
+      .send({ id: "evt_x", type: "checkout.session.completed" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("signature verification failed");
+  });
 });
