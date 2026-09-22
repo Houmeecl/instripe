@@ -7,7 +7,7 @@ export interface ChargeRequest {
   customerEmail: string;
   successUrl: string;
   cancelUrl: string;
-  /** Stripe replaces `{CHECKOUT_SESSION_ID}` when using embedded Checkout. */
+  /** Stripe replaces `{CHECKOUT_SESSION_ID}` when ui_mode is embedded_page. */
   returnUrl?: string;
   metadata?: Record<string, string>;
 }

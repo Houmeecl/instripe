@@ -748,7 +748,10 @@ async function mountEmbeddedCheckout(result, plan) {
   document.getElementById("modal-root").querySelector("[data-cancel]").onclick = closeModal;
   await loadStripeJs();
   const stripe = window.Stripe(result.charge.publishableKey);
-  const checkout = await stripe.initEmbeddedCheckout({ clientSecret: result.charge.clientSecret });
+  const clientSecret = result.charge.clientSecret;
+  const checkout = await stripe.createEmbeddedCheckoutPage({
+    fetchClientSecret: async () => clientSecret,
+  });
   window.__instripeCheckout = checkout;
   checkout.mount("#embedded-checkout");
 }

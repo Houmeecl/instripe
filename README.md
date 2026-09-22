@@ -79,26 +79,28 @@ Copia `.env.example` a `.env` (opcional). El servidor lo carga al arrancar y no 
 - `POST /webhooks/stripe` — webhook de Stripe con verificación de firma. `checkout.session.completed` acredita el float y activa la póliza.
 - `GET /api/stripe/events` — últimos eventos de webhook recibidos.
 
-## Stripe (modo live con sandbox de prueba)
+## Stripe (entorno de desarrollo)
 
-Puedes obtener llaves de prueba sin registrar cuenta (ver `https://docs.stripe.com/get-started`):
+El SDK de servidor es `stripe` 22.6.0, el que indica la guía de Node en
+[docs.stripe.com/development](https://docs.stripe.com/development). Las llaves
+viven en el entorno, nunca en el código.
 
 ```bash
-npm i -g @stripe/cli
-stripe sandbox create --from-git          # crea sandbox y guarda llaves de test
-# copia secret_key a STRIPE_SECRET_KEY en .env
+npm install -g @stripe/cli@latest
+stripe login                              # o: stripe sandbox create --from-git
+# copia la secret key a STRIPE_SECRET_KEY y la publishable key a STRIPE_PUBLISHABLE_KEY
 
-# Reenvía webhooks a la app y copia el whsec_... a STRIPE_WEBHOOK_SECRET:
+# Reenvía los eventos del sandbox al webhook local y copia el whsec_…:
 stripe listen --forward-to localhost:3000/webhooks/stripe
-stripe trigger checkout.session.completed # dispara un evento de prueba
+stripe trigger checkout.session.completed
 ```
 
-Con `STRIPE_SECRET_KEY` y `STRIPE_PUBLISHABLE_KEY`, contratar una póliza vía la
-pasarela `stripe` abre **Checkout embebido** en el portal (Stripe.js). La póliza
-queda en `pending_payment` y el float no se acredita hasta
-`checkout.session.completed` (webhook) o hasta que el retorno consulta
-`GET /api/checkout/sessions/:id` con `payment_status=paid`. Ambas vías son
-idempotentes. Sin llave publicable, Stripe usa Checkout alojado (redirect).
+Con ambas llaves, un cobro por la pasarela `stripe` abre Checkout embebido
+(`ui_mode: embedded_page`, Stripe.js `createEmbeddedCheckoutPage`). El movimiento
+queda pendiente y el float no se acredita hasta `checkout.session.completed`
+(webhook) o hasta que el retorno consulta `GET /api/checkout/sessions/:id` con
+`payment_status=paid`. Ambas vías son idempotentes. Sin llave publicable, Stripe
+usa Checkout alojado (`hosted_page`).
 
 En producción, mueve las llaves a los Secrets del entorno en lugar de `.env`.
 La llave secreta no debe commitearse. Si se pegó en un chat, rótala en el

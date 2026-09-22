@@ -32,7 +32,7 @@ export class StripeGateway implements PaymentGateway {
       const embedded = Boolean(this.config.stripePublishableKey);
       const session = await this.client.checkout.sessions.create({
         mode: "payment",
-        ui_mode: embedded ? "embedded" : "hosted",
+        ui_mode: embedded ? "embedded_page" : "hosted_page",
         customer_email: req.customerEmail,
         client_reference_id: req.metadata?.policyId,
         metadata: req.metadata,
