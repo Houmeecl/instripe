@@ -2,7 +2,7 @@
   "name": "instripe",
   "version": "0.1.0",
   "private": true,
-  "description": "Minimal Stripe-style storefront demo (Node + TypeScript + Express).",
+  "description": "BaaS + insurtech payments infrastructure for Chile (Stripe + Chilean gateway, fund dispersion).",
   "type": "module",
   "engines": {
     "node": ">=20"

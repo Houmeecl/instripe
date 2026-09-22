@@ -1,20 +1,40 @@
+export type GatewayName = "stripe" | "chile";
+
 export interface AppConfig {
   port: number;
-  stripeSecretKey: string | undefined;
+  /** Base currency for the platform (Chile-first: CLP). */
   currency: string;
   publicBaseUrl: string;
+  defaultGateway: GatewayName;
+  stripeSecretKey: string | undefined;
+  /** Credentials for the Chilean gateway (Webpay/Khipu/Flow-style). Demo when unset. */
+  chile: {
+    apiKey: string | undefined;
+    commerceCode: string | undefined;
+  };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
-  const port = Number.parseInt(env.PORT ?? "3000", 10);
+  const parsedPort = Number.parseInt(env.PORT ?? "3000", 10);
+  const port = Number.isNaN(parsedPort) ? 3000 : parsedPort;
+  const defaultGateway: GatewayName = env.DEFAULT_GATEWAY === "stripe" ? "stripe" : "chile";
   return {
-    port: Number.isNaN(port) ? 3000 : port,
+    port,
+    currency: (env.CURRENCY ?? "clp").toLowerCase(),
+    publicBaseUrl: env.PUBLIC_BASE_URL ?? `http://localhost:${port}`,
+    defaultGateway,
     stripeSecretKey: env.STRIPE_SECRET_KEY?.trim() || undefined,
-    currency: (env.CURRENCY ?? "usd").toLowerCase(),
-    publicBaseUrl: env.PUBLIC_BASE_URL ?? `http://localhost:${env.PORT ?? "3000"}`,
+    chile: {
+      apiKey: env.CHILE_GATEWAY_API_KEY?.trim() || undefined,
+      commerceCode: env.CHILE_GATEWAY_COMMERCE_CODE?.trim() || undefined,
+    },
   };
 }
 
 export function isStripeConfigured(config: AppConfig): boolean {
   return Boolean(config.stripeSecretKey);
+}
+
+export function isChileConfigured(config: AppConfig): boolean {
+  return Boolean(config.chile.apiKey && config.chile.commerceCode);
 }

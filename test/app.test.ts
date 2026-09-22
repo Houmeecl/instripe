@@ -3,55 +3,106 @@ import request from "supertest";
 import { createApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 
-function demoApp() {
-  const config = loadConfig({ PORT: "3000", CURRENCY: "usd" });
-  return createApp(config);
+function app(env: NodeJS.ProcessEnv = { PORT: "3000", CURRENCY: "clp" }) {
+  return createApp(loadConfig(env));
 }
 
-describe("instripe app", () => {
-  it("reports health with stripe disabled in demo mode", async () => {
-    const res = await request(demoApp()).get("/health");
+describe("instripe BaaS platform", () => {
+  it("reports health in demo mode with CLP and Chile default gateway", async () => {
+    const res = await request(app()).get("/health");
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("ok");
+    expect(res.body.currency).toBe("clp");
+    expect(res.body.defaultGateway).toBe("chile");
     expect(res.body.stripeConfigured).toBe(false);
+    expect(res.body.chileConfigured).toBe(false);
   });
 
-  it("lists products with formatted amounts", async () => {
-    const res = await request(demoApp()).get("/api/products");
+  it("lists both gateways", async () => {
+    const res = await request(app()).get("/api/gateways");
     expect(res.status).toBe(200);
-    expect(res.body.products).toHaveLength(3);
-    expect(res.body.products[0]).toMatchObject({ id: "starter" });
-    expect(res.body.products[0].displayAmount).toBe("$9.00");
+    const names = res.body.gateways.map((g: { name: string }) => g.name).sort();
+    expect(names).toEqual(["chile", "stripe"]);
   });
 
-  it("creates a demo checkout session for a valid product", async () => {
-    const res = await request(demoApp())
-      .post("/api/checkout")
-      .send({ productId: "pro" });
+  it("lists insurance plans with CLP-formatted premiums", async () => {
+    const res = await request(app()).get("/api/plans");
+    expect(res.status).toBe(200);
+    expect(res.body.plans).toHaveLength(3);
+    expect(res.body.plans[0].id).toBe("salud-basico");
+    // CLP is zero-decimal: 9000 -> $9.000 (no cents)
+    expect(res.body.plans[0].displayPremium).toContain("9.000");
+    expect(res.body.plans[0].displayPremium).not.toContain(",00");
+  });
+
+  it("subscribes to a plan via the Chile gateway and credits the float", async () => {
+    const server = app();
+    const res = await request(server)
+      .post("/api/policies")
+      .send({ planId: "salud-basico", holderName: "Ana Díaz", email: "ana@demo.cl", gateway: "chile" });
     expect(res.status).toBe(201);
-    expect(res.body.mode).toBe("demo");
-    expect(res.body.product.id).toBe("pro");
-    expect(res.body.url).toContain("/success");
-    expect(res.body.url).toContain("demo=1");
+    expect(res.body.policy.status).toBe("active");
+    expect(res.body.charge.gateway).toBe("chile");
+    expect(res.body.charge.mode).toBe("demo");
+
+    const overview = await request(server).get("/api/overview");
+    expect(overview.body.float.balance).toBe(9000);
+    expect(overview.body.policies).toHaveLength(1);
   });
 
-  it("rejects checkout for an unknown product", async () => {
-    const res = await request(demoApp())
-      .post("/api/checkout")
-      .send({ productId: "does-not-exist" });
-    expect(res.status).toBe(404);
-    expect(res.body.error).toContain("Unknown product");
+  it("subscribes via Stripe gateway in demo mode", async () => {
+    const res = await request(app())
+      .post("/api/policies")
+      .send({ planId: "pyme-total", holderName: "Bkr SpA", email: "ops@bkr.cl", gateway: "stripe" });
+    expect(res.status).toBe(201);
+    expect(res.body.charge.gateway).toBe("stripe");
+    expect(res.body.charge.redirectUrl).toContain("charge=");
   });
 
-  it("requires a productId", async () => {
-    const res = await request(demoApp()).post("/api/checkout").send({});
+  it("disperses a claim payout and debits the float (dispersión de fondos)", async () => {
+    const server = app();
+    const sub = await request(server)
+      .post("/api/policies")
+      .send({ planId: "pyme-total", holderName: "Bkr SpA", email: "ops@bkr.cl", gateway: "chile" });
+    const policyId = sub.body.policy.id;
+
+    const claim = await request(server)
+      .post("/api/claims")
+      .send({ policyId, amount: 20000, beneficiary: "11.111.111-1", gateway: "chile" });
+    expect(claim.status).toBe(201);
+    expect(claim.body.claim.status).toBe("paid");
+    expect(claim.body.payout.gateway).toBe("chile");
+    // float was 49000 (premium) - 20000 (payout) = 29000
+    expect(claim.body.floatBalance).toBe(29000);
+  });
+
+  it("rejects a claim above coverage", async () => {
+    const server = app();
+    const sub = await request(server)
+      .post("/api/policies")
+      .send({ planId: "salud-basico", holderName: "Ana", email: "ana@demo.cl" });
+    const res = await request(server)
+      .post("/api/claims")
+      .send({ policyId: sub.body.policy.id, amount: 99999999, beneficiary: "x" });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("cobertura");
+  });
+
+  it("rejects a claim when the float has insufficient funds", async () => {
+    const server = app();
+    const sub = await request(server)
+      .post("/api/policies")
+      .send({ planId: "salud-basico", holderName: "Ana", email: "ana@demo.cl" });
+    // coverage is 1.500.000 but float only holds one 9.000 premium
+    const res = await request(server)
+      .post("/api/claims")
+      .send({ policyId: sub.body.policy.id, amount: 500000, beneficiary: "x" });
+    expect(res.status).toBe(502);
+    expect(res.body.error).toContain("Insufficient funds");
+  });
+
+  it("validates required fields", async () => {
+    const res = await request(app()).post("/api/policies").send({ planId: "salud-basico" });
     expect(res.status).toBe(400);
-  });
-
-  it("renders the success page", async () => {
-    const res = await request(demoApp()).get("/success?session_id=demo_123&demo=1");
-    expect(res.status).toBe(200);
-    expect(res.text).toContain("Payment complete");
-    expect(res.text).toContain("demo_123");
   });
 });

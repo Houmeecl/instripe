@@ -1,51 +1,75 @@
 # instripe
 
-A minimal Stripe-style storefront demo built with Node, TypeScript, and Express.
+Infraestructura de pagos **BaaS + Insurtech** para Chile, construida con Node,
+TypeScript y Express. Integra **Stripe** y una **pasarela chilena**
+(estilo Webpay/Khipu/Flow) tras una misma abstracción, gestiona **wallets y un
+libro mayor (BaaS)**, y realiza **dispersión de fondos** (payouts de siniestros).
 
-It serves a small product catalog and a checkout flow. When a `STRIPE_SECRET_KEY`
-is provided it creates real [Stripe Checkout](https://stripe.com/docs/payments/checkout)
-sessions; otherwise it runs in a self-contained **demo mode** so the full
-end-to-end flow works with no external credentials.
+Corre completamente en **modo demo** sin credenciales externas. Si defines las
+credenciales, cada pasarela usa su API real automáticamente.
 
-## Requirements
+## Arquitectura
 
-- Node.js >= 20 (developed on Node 22)
+- **Pasarelas de pago** (`src/gateways/`): interfaz `PaymentGateway` con
+  `charge` (cobro) y `payout` (dispersión). Adaptadores: `StripeGateway` y
+  `ChileGateway`, seleccionables en tiempo de ejecución.
+- **BaaS / libro mayor** (`src/domain/ledger.ts`): cuentas con saldo (wallet) y
+  asientos credit/debit. Un *float asegurador* concentra las primas.
+- **Insurtech** (`src/domain/insurance.ts`): planes, pólizas y siniestros.
+- **Plataforma** (`src/platform.ts`): orquesta cobro de prima → acredita float →
+  dispersa siniestro al beneficiario.
+- **API + panel** (`src/app.ts`, `public/`): REST y un dashboard.
+
+## Requisitos
+
+- Node.js >= 20 (desarrollado en Node 22)
 - npm
 
-## Getting started
+## Puesta en marcha
 
 ```bash
 npm install
-npm run dev      # start the dev server with hot reload on http://localhost:3000
+npm run dev      # http://localhost:3000
 ```
 
-Then open http://localhost:3000 and pick a plan to run through checkout.
+## Configuración
 
-## Configuration
+Copia `.env.example` a `.env` (opcional). Todo tiene valores por defecto seguros:
 
-Copy `.env.example` to `.env` (optional). All variables have safe defaults:
-
-| Variable            | Default                  | Description                                           |
-| ------------------- | ------------------------ | ----------------------------------------------------- |
-| `PORT`              | `3000`                   | Port the HTTP server listens on.                      |
-| `CURRENCY`          | `usd`                    | Currency for prices and checkout sessions.            |
-| `STRIPE_SECRET_KEY` | _(unset)_                | Stripe secret key. When set, live Checkout is used.   |
-| `PUBLIC_BASE_URL`   | `http://localhost:3000`  | Base URL used for Stripe success/cancel redirects.    |
+| Variable                      | Default                 | Descripción                                             |
+| ----------------------------- | ----------------------- | ------------------------------------------------------- |
+| `PORT`                        | `3000`                  | Puerto del servidor HTTP.                               |
+| `CURRENCY`                    | `clp`                   | Moneda base (Chile). Soporta monedas sin decimales.     |
+| `DEFAULT_GATEWAY`             | `chile`                 | Pasarela por defecto (`chile` o `stripe`).              |
+| `STRIPE_SECRET_KEY`           | _(vacío)_               | Si está presente, Stripe usa su API real.               |
+| `CHILE_GATEWAY_API_KEY`       | _(vacío)_               | Credencial de la pasarela chilena (modo live).          |
+| `CHILE_GATEWAY_COMMERCE_CODE` | _(vacío)_               | Código de comercio de la pasarela chilena.              |
+| `PUBLIC_BASE_URL`             | `http://localhost:3000` | Base para URLs de retorno/redirección.                  |
 
 ## Scripts
 
-| Command             | Description                                    |
-| ------------------- | ---------------------------------------------- |
-| `npm run dev`       | Start the dev server (hot reload via `tsx`).   |
-| `npm run build`     | Compile TypeScript to `dist/`.                 |
-| `npm start`         | Run the compiled server from `dist/`.          |
-| `npm run typecheck` | Type-check without emitting.                   |
-| `npm run lint`      | Lint with ESLint.                              |
-| `npm test`          | Run the Vitest test suite.                     |
+| Comando             | Descripción                              |
+| ------------------- | ---------------------------------------- |
+| `npm run dev`       | Servidor de desarrollo con recarga.      |
+| `npm run build`     | Compila TypeScript a `dist/`.            |
+| `npm start`         | Ejecuta el servidor compilado.           |
+| `npm run typecheck` | Verificación de tipos.                   |
+| `npm run lint`      | ESLint.                                  |
+| `npm test`          | Suite de pruebas (Vitest + Supertest).   |
 
 ## API
 
-- `GET /health` — service status and whether Stripe is configured.
-- `GET /api/products` — product catalog with formatted prices.
-- `POST /api/checkout` — create a checkout session (`{ "productId": "pro" }`).
-- `GET /success` — post-payment confirmation page.
+- `GET /health` — estado, moneda y pasarelas configuradas.
+- `GET /api/gateways` — pasarelas disponibles y cuál es la predeterminada.
+- `GET /api/plans` — planes de seguro con montos formateados.
+- `GET /api/overview` — saldo del float, pólizas y siniestros.
+- `POST /api/policies` — contratar póliza (cobra prima): `{ planId, holderName, email, gateway }`.
+- `POST /api/claims` — dispersar siniestro: `{ policyId, amount, beneficiary, gateway }`.
+
+## Producción / próximos pasos
+
+- Integración real: SDK de Transbank (Webpay Plus), Khipu o Flow para Chile, y
+  Stripe Connect para dispersión de fondos multi-cuenta.
+- Persistencia: reemplazar el libro mayor en memoria por Postgres.
+- Estas integraciones requieren credenciales y cuentas (se configuran como
+  secretos del entorno).

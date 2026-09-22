@@ -1,25 +1,56 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>instripe · Store</title>
+    <title>instripe · BaaS Insurtech</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <header class="topbar">
       <span class="logo">instripe</span>
-      <span id="mode-badge" class="badge">checking…</span>
+      <span class="tagline">BaaS · Insurtech · Dispersión de fondos</span>
+      <span class="spacer"></span>
+      <label class="gw">
+        Pasarela
+        <select id="gateway"></select>
+      </label>
+      <span id="mode-badge" class="badge">…</span>
     </header>
 
     <main>
-      <h1>Choose your plan</h1>
-      <p class="subtitle">A minimal Stripe-style checkout demo.</p>
-      <section id="products" class="grid" aria-live="polite">
-        <p class="loading">Loading products…</p>
+      <section class="stats">
+        <div class="stat">
+          <span class="stat-label">Float asegurador</span>
+          <span id="float-balance" class="stat-value">—</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Pólizas activas</span>
+          <span id="policy-count" class="stat-value">0</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Siniestros dispersados</span>
+          <span id="claim-count" class="stat-value">0</span>
+        </div>
       </section>
+
+      <h1>Planes de seguro</h1>
+      <p class="subtitle">Contrata una póliza: se cobra la prima vía la pasarela seleccionada y se acredita al float.</p>
+      <section id="plans" class="grid" aria-live="polite">
+        <p class="loading">Cargando planes…</p>
+      </section>
+
+      <h2>Pólizas y dispersión de siniestros</h2>
+      <p class="subtitle">Presenta un siniestro para dispersar fondos al beneficiario desde el float.</p>
+      <div id="policies" class="policies">
+        <p class="muted">Aún no hay pólizas. Contrata un plan para comenzar.</p>
+      </div>
+
+      <h2>Actividad reciente</h2>
+      <ul id="claims" class="claims"><li class="muted">Sin siniestros todavía.</li></ul>
     </main>
 
+    <div id="toast" class="toast" hidden></div>
     <script src="/app.js"></script>
   </body>
 </html>
