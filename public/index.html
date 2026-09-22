@@ -3,53 +3,50 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>instripe · BaaS Insurtech</title>
+    <title>instripe · Portal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <header class="topbar">
-      <span class="logo">instripe</span>
-      <span class="tagline">BaaS · Insurtech · Dispersión de fondos</span>
-      <span class="spacer"></span>
-      <label class="gw">
-        Pasarela
-        <select id="gateway"></select>
-      </label>
-      <span id="mode-badge" class="badge">…</span>
-    </header>
-
-    <main>
-      <section class="stats">
-        <div class="stat">
-          <span class="stat-label">Float asegurador</span>
-          <span id="float-balance" class="stat-value">—</span>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">in<span>stripe</span></span>
+          <span class="brand-sub">BaaS · Insurtech</span>
         </div>
-        <div class="stat">
-          <span class="stat-label">Pólizas activas</span>
-          <span id="policy-count" class="stat-value">0</span>
+        <nav class="nav" id="nav"></nav>
+        <div class="sidebar-foot">
+          <div class="env-chip" id="env-chip">
+            <span class="dot"></span><span id="env-chip-text">Sandbox</span>
+          </div>
         </div>
-        <div class="stat">
-          <span class="stat-label">Siniestros dispersados</span>
-          <span id="claim-count" class="stat-value">0</span>
-        </div>
-      </section>
+      </aside>
 
-      <h1>Planes de seguro</h1>
-      <p class="subtitle">Contrata una póliza: se cobra la prima vía la pasarela seleccionada y se acredita al float.</p>
-      <section id="plans" class="grid" aria-live="polite">
-        <p class="loading">Cargando planes…</p>
-      </section>
+      <div class="main">
+        <header class="topbar">
+          <div class="page-heading">
+            <h1 id="page-title">Resumen</h1>
+            <p id="page-subtitle" class="page-sub">Vista general de la plataforma</p>
+          </div>
+          <div class="topbar-actions">
+            <label class="gw-select">
+              <span>Pasarela</span>
+              <select id="gateway"></select>
+            </label>
+            <span id="mode-badge" class="badge">…</span>
+          </div>
+        </header>
 
-      <h2>Pólizas y dispersión de siniestros</h2>
-      <p class="subtitle">Presenta un siniestro para dispersar fondos al beneficiario desde el float.</p>
-      <div id="policies" class="policies">
-        <p class="muted">Aún no hay pólizas. Contrata un plan para comenzar.</p>
+        <main class="content" id="view"><div class="skeleton-page"></div></main>
       </div>
+    </div>
 
-      <h2>Actividad reciente</h2>
-      <ul id="claims" class="claims"><li class="muted">Sin siniestros todavía.</li></ul>
-    </main>
-
+    <div id="modal-root"></div>
     <div id="toast" class="toast" hidden></div>
     <script src="/app.js"></script>
   </body>

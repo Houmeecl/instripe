@@ -19,8 +19,10 @@ export default tseslint.config(
       globals: {
         window: "readonly",
         document: "readonly",
+        location: "readonly",
         fetch: "readonly",
         alert: "readonly",
+        Intl: "readonly",
         setTimeout: "readonly",
         clearTimeout: "readonly",
       },
