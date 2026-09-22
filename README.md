@@ -18,8 +18,12 @@ credenciales, cada pasarela usa su API real automáticamente.
   acredita o debita la wallet.
 - **Pasarelas** (`src/gateways/`): `PaymentGateway` con `charge` y `payout`.
   Adaptadores: `StripeGateway` y `ChileGateway`.
+- **Módulo Cuentas** (`src/modules/cuentas/`): wallets BaaS. Recarga y retiro
+  pasan por pagos.
+- **Módulo Cobros** (`src/modules/cobros/`): solicitudes de pago sueltas, sin póliza.
 - **Módulo Seguros** (`src/modules/seguros/`): planes, pólizas y siniestros.
-  Se conecta a pagos: la prima es un cobro y el siniestro es una dispersión.
+  La prima es un cobro y el siniestro es una dispersión.
+- El portal en `public/` es el **admin** que opera esos módulos.
 - **Composición** (`src/platform.ts`): arma pagos y le enchufa el módulo.
 - **API + panel** (`src/app.ts`, `public/`): REST y el portal.
 

@@ -27,6 +27,8 @@ const MODULE = "seguros";
  * every premium and every claim goes through the payments core.
  */
 export class SegurosModule {
+  readonly id = MODULE;
+  readonly label = "Seguros";
   private readonly policies = new Map<string, Policy>();
   private readonly claims: Claim[] = [];
 

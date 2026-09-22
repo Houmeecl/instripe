@@ -5,6 +5,8 @@ const state = {
   health: {},
   overview: { float: { balance: 0, displayBalance: "—" }, policies: [], claims: [], payments: [], modules: [] },
   plans: [],
+  accounts: [],
+  cobros: [],
   stripeEvents: [],
 };
 
@@ -32,8 +34,20 @@ const NAV = [
   {
     group: "Pagos",
     items: [
-      { route: "overview", label: "Resumen", icon: "home", title: "Pagos", sub: "Wallet, cobros y módulos conectados" },
-      { route: "payments", label: "Movimientos", icon: "card", title: "Movimientos", sub: "Cobros y dispersiones que pasan por la plataforma" },
+      { route: "overview", label: "Resumen", icon: "home", title: "Admin", sub: "Wallet de pagos y módulos conectados" },
+      { route: "payments", label: "Movimientos", icon: "card", title: "Movimientos", sub: "Todo lo que los módulos liquidan en pagos" },
+    ],
+  },
+  {
+    group: "Módulo cuentas",
+    items: [
+      { route: "accounts", label: "Cuentas", icon: "wallet", title: "Cuentas", sub: "Wallets BaaS · la recarga y el retiro pasan por pagos" },
+    ],
+  },
+  {
+    group: "Módulo cobros",
+    items: [
+      { route: "cobros", label: "Cobros", icon: "file", title: "Cobros", sub: "Solicitudes de pago sueltas, sin póliza" },
     ],
   },
   {
@@ -123,10 +137,12 @@ async function confirmReturnedCheckout() {
   if (!sessionId || sessionId.includes("{")) return;
   try {
     const session = await api(`/api/checkout/sessions/${encodeURIComponent(sessionId)}`);
-    history.replaceState({}, "", `${location.pathname}#/policies`);
+    const ref = session.reference || session.policyId || "";
+    const dest = ref.startsWith("top_") ? "#/accounts" : ref.startsWith("cob_") ? "#/cobros" : "#/policies";
+    history.replaceState({}, "", `${location.pathname}${dest}`);
     await refresh();
     if (session.paymentStatus === "paid") {
-      toast(`Pago confirmado. Póliza ${session.policyId || ""} activa.`);
+      toast(`Pago confirmado · ${ref || "movimiento"} liquidado en pagos.`);
     } else {
       toast("El pago todavía no está confirmado.", "error");
     }
@@ -175,6 +191,10 @@ function updateModeBadge() {
 
 async function refresh() {
   state.overview = await api("/api/overview");
+  const accounts = await api("/api/cuentas");
+  state.accounts = accounts.accounts || [];
+  const cobros = await api("/api/cobros");
+  state.cobros = cobros.cobros || [];
   try {
     const ev = await api("/api/stripe/events");
     state.stripeEvents = ev.events || [];
@@ -205,6 +225,8 @@ function route() {
 /* ---------------- views ---------------- */
 const VIEWS = {
   overview: viewOverview,
+  accounts: viewAccounts,
+  cobros: viewCobros,
   plans: viewPlans,
   policies: viewPolicies,
   claims: viewClaims,
@@ -213,7 +235,7 @@ const VIEWS = {
 
 function movementFeed(rows) {
   if (!rows.length) {
-    return `<div class="empty">${icon("inbox")}<div>Sin movimientos. El módulo de seguros deja aquí cada prima y cada siniestro.</div></div>`;
+    return `<div class="empty">${icon("inbox")}<div>Sin movimientos. Cuentas, cobros y seguros dejan aquí cada liquidación.</div></div>`;
   }
   return `<ul class="feed">${[...rows].reverse().map((p) => `
         <li>
@@ -252,14 +274,22 @@ function viewOverview() {
       </div>
     </div>`;
 
+  const moduleLinks = [
+    ["accounts", "wallet", "Cuentas", "Wallets y retiros"],
+    ["cobros", "file", "Cobros", "Cobros sin póliza"],
+    ["plans", "shield", "Seguros", "Primas y siniestros"],
+  ];
   const moduleCard = `
     <div class="card">
-      <div class="card-head"><h3>Módulos</h3></div>
+      <div class="card-head"><h3>Módulos del admin</h3></div>
       <div class="card-body">
-        <p class="plan-desc">Seguros no es el núcleo. Contrata una póliza y el cobro aparece en Movimientos.</p>
-        <button class="btn btn-primary btn-block" onclick="location.hash='#/plans'">${icon("shield")} Abrir módulo de seguros</button>
-        <div style="height:10px"></div>
-        <button class="btn btn-ghost btn-block" onclick="location.hash='#/payments'">${icon("card")} Ver movimientos</button>
+        <p class="plan-desc">Cada módulo opera solo. El dinero entra y sale por pagos.</p>
+        ${moduleLinks
+          .map(
+            ([route, ic, label, hint]) =>
+              `<a class="btn btn-ghost btn-block" href="#/${route}" style="margin-top:10px">${icon(ic)} ${label}<span class="meta" style="margin-left:auto">${hint}</span></a>`,
+          )
+          .join("")}
       </div>
     </div>`;
 
@@ -271,6 +301,56 @@ function viewOverview() {
       </div>
       ${moduleCard}
     </div>`;
+}
+
+function viewAccounts() {
+  const rows = state.accounts;
+  if (!rows.length) {
+    return `<div class="card"><div class="card-head"><h3>Cuentas</h3><button class="btn btn-primary btn-sm" data-open-account>${icon("plus")} Abrir cuenta</button></div><div class="card-body"><div class="empty">${icon("wallet")}<div>No hay wallets. Abre una cuenta y recárgala: el cobro queda en Movimientos.</div></div></div></div>`;
+  }
+  const list = rows
+    .map(
+      (a) => `
+      <div class="row">
+        <div class="avatar">${initials(a.name)}</div>
+        <div>
+          <div class="who">${a.name}</div>
+          <div class="meta"><code class="mono">${a.id}</code> · ${a.email}</div>
+        </div>
+        <div class="push">
+          <b>${money(a.balance)}</b>
+          <button class="btn btn-ghost btn-sm" data-fund="${a.id}">${icon("plus")} Recargar</button>
+          <button class="btn btn-ghost btn-sm" data-withdraw="${a.id}">${icon("zap")} Retirar</button>
+        </div>
+      </div>`,
+    )
+    .join("");
+  return `<div class="card"><div class="card-head"><h3>Cuentas (${rows.length})</h3><button class="btn btn-primary btn-sm" data-open-account>${icon("plus")} Abrir cuenta</button></div><div class="card-body flush"><div class="rowlist">${list}</div></div></div>`;
+}
+
+function viewCobros() {
+  const rows = state.cobros;
+  if (!rows.length) {
+    return `<div class="card"><div class="card-head"><h3>Cobros</h3><button class="btn btn-primary btn-sm" data-new-cobro>${icon("plus")} Nuevo cobro</button></div><div class="card-body"><div class="empty">${icon("file")}<div>Sin cobros. Un cobro no crea póliza: solo un movimiento en pagos.</div></div></div></div>`;
+  }
+  const list = rows
+    .map((c) => {
+      const pending = c.status === "pending_payment";
+      return `
+      <div class="row">
+        <div class="avatar">${initials(c.payerName)}</div>
+        <div>
+          <div class="who">${c.concept}</div>
+          <div class="meta">${c.payerName} · <code class="mono">${c.id}</code>${c.paymentId ? ` · pago <code class="mono">${c.paymentId}</code>` : ""}</div>
+        </div>
+        <div class="push">
+          <b>${money(c.amount)}</b>
+          <span class="pill ${pending ? "amber" : ""}">${pending ? "pago pendiente" : "pagado"}</span>
+        </div>
+      </div>`;
+    })
+    .join("");
+  return `<div class="card"><div class="card-head"><h3>Cobros (${rows.length})</h3><button class="btn btn-primary btn-sm" data-new-cobro>${icon("plus")} Nuevo cobro</button></div><div class="card-body flush"><div class="rowlist">${list}</div></div></div>`;
 }
 
 function viewPlans() {
@@ -390,6 +470,20 @@ function viewPayments() {
 
 /* ---------------- view wiring ---------------- */
 function wireView(r) {
+  if (r === "accounts") {
+    const open = document.querySelector("[data-open-account]");
+    if (open) open.onclick = () => openAccountModal();
+    document.querySelectorAll("[data-fund]").forEach((btn) => {
+      btn.onclick = () => openFundModal(state.accounts.find((a) => a.id === btn.dataset.fund));
+    });
+    document.querySelectorAll("[data-withdraw]").forEach((btn) => {
+      btn.onclick = () => openWithdrawModal(state.accounts.find((a) => a.id === btn.dataset.withdraw));
+    });
+  }
+  if (r === "cobros") {
+    const open = document.querySelector("[data-new-cobro]");
+    if (open) open.onclick = () => openCobroModal();
+  }
   if (r === "plans") {
     document.querySelectorAll("[data-plan]").forEach((btn) => {
       btn.onclick = () => openSubscribeModal(state.plans.find((p) => p.id === btn.dataset.plan));
@@ -428,6 +522,172 @@ function mountModal(html) {
   root.querySelector("[data-overlay]").addEventListener("click", (e) => {
     if (e.target.dataset.overlay !== undefined) closeModal();
   });
+}
+
+function openAccountModal() {
+  mountModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>Abrir cuenta</h3><p>Wallet del módulo de cuentas. Todavía no mueve dinero.</p></div>
+      <div class="modal-body">
+        <div class="field"><label>Nombre</label><input id="a-name" value="Taller Sur" /></div>
+        <div class="field"><label>Email</label><input id="a-email" type="email" value="caja@taller.cl" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-cancel>Cancelar</button>
+        <button class="btn btn-primary" data-confirm>${icon("plus")} Abrir</button>
+      </div>
+    </div>`);
+  const root = document.getElementById("modal-root");
+  root.querySelector("[data-cancel]").onclick = closeModal;
+  root.querySelector("[data-confirm]").onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      await api("/api/cuentas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: document.getElementById("a-name").value,
+          email: document.getElementById("a-email").value,
+        }),
+      });
+      closeModal();
+      await refresh();
+      route();
+      toast("Cuenta abierta");
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, "error");
+    }
+  };
+}
+
+function openFundModal(account) {
+  if (!account) return;
+  mountModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>Recargar ${account.name}</h3><p>El cobro entra por pagos y acredita esta wallet.</p></div>
+      <div class="modal-body">
+        <div class="field"><label>Monto</label><input id="f-amount" type="number" value="10000" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-cancel>Cancelar</button>
+        <button class="btn btn-primary" data-confirm>${icon("plus")} Recargar</button>
+      </div>
+    </div>`);
+  const root = document.getElementById("modal-root");
+  root.querySelector("[data-cancel]").onclick = closeModal;
+  root.querySelector("[data-confirm]").onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const result = await api(`/api/cuentas/${account.id}/recarga`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: Number(document.getElementById("f-amount").value), gateway: selectedGateway() }),
+      });
+      if (result.charge.clientSecret && result.charge.publishableKey) {
+        await mountEmbeddedCheckout(result, { name: "Recarga" });
+        return;
+      }
+      closeModal();
+      await refresh();
+      route();
+      toast(`Recarga liquidada · saldo ${money(result.account.balance)}`);
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, "error");
+    }
+  };
+}
+
+function openWithdrawModal(account) {
+  if (!account) return;
+  mountModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>Retirar de ${account.name}</h3><p>La dispersión sale por pagos. Saldo ${money(account.balance)}.</p></div>
+      <div class="modal-body">
+        <div class="field"><label>Monto</label><input id="w-amount" type="number" placeholder="Ej: 4000" /></div>
+        <div class="field"><label>Destino</label><input id="w-dest" value="12.345.678-9" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-cancel>Cancelar</button>
+        <button class="btn btn-primary" data-confirm>${icon("zap")} Retirar</button>
+      </div>
+    </div>`);
+  const root = document.getElementById("modal-root");
+  root.querySelector("[data-cancel]").onclick = closeModal;
+  root.querySelector("[data-confirm]").onclick = async (e) => {
+    const amount = Number(document.getElementById("w-amount").value);
+    if (!amount) return toast("Ingresa un monto", "error");
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const result = await api(`/api/cuentas/${account.id}/retiro`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount,
+          destination: document.getElementById("w-dest").value,
+          gateway: selectedGateway(),
+        }),
+      });
+      closeModal();
+      await refresh();
+      route();
+      toast(`Retiro dispersado · saldo ${money(result.account.balance)}`);
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, "error");
+    }
+  };
+}
+
+function openCobroModal() {
+  mountModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>Nuevo cobro</h3><p>No abre una póliza. Solo crea un movimiento en pagos.</p></div>
+      <div class="modal-body">
+        <div class="field"><label>Concepto</label><input id="b-concept" value="Mantención mensual" /></div>
+        <div class="field"><label>Pagador</label><input id="b-name" value="Oficina Norte" /></div>
+        <div class="field"><label>Email</label><input id="b-email" type="email" value="pago@norte.cl" /></div>
+        <div class="field"><label>Monto</label><input id="b-amount" type="number" value="15000" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-cancel>Cancelar</button>
+        <button class="btn btn-primary" data-confirm>${icon("check")} Cobrar</button>
+      </div>
+    </div>`);
+  const root = document.getElementById("modal-root");
+  root.querySelector("[data-cancel]").onclick = closeModal;
+  root.querySelector("[data-confirm]").onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const result = await api("/api/cobros", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          concept: document.getElementById("b-concept").value,
+          payerName: document.getElementById("b-name").value,
+          email: document.getElementById("b-email").value,
+          amount: Number(document.getElementById("b-amount").value),
+          gateway: selectedGateway(),
+        }),
+      });
+      if (result.charge.clientSecret && result.charge.publishableKey) {
+        await mountEmbeddedCheckout(result, { name: result.cobro.concept });
+        return;
+      }
+      closeModal();
+      await refresh();
+      route();
+      toast(`Cobro ${result.cobro.id} liquidado en pagos`);
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, "error");
+    }
+  };
 }
 
 function openSubscribeModal(plan) {
@@ -489,7 +749,7 @@ async function mountEmbeddedCheckout(result, plan) {
     <div class="modal wide">
       <div class="modal-head">
         <h3>Pagar ${plan.name}</h3>
-        <p>Checkout de Stripe dentro del portal. La póliza <code class="mono">${result.policy.id}</code> queda activa cuando el pago se confirma.</p>
+        <p>Checkout de Stripe. El movimiento queda liquidado en pagos cuando el pago se confirma.</p>
       </div>
       <div class="modal-body"><div id="embedded-checkout"></div></div>
       <div class="modal-foot">

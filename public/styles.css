@@ -431,6 +431,7 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  text-decoration: none;
   transition: background 0.15s ease, transform 0.05s ease, box-shadow 0.15s ease;
 }
 .btn:active { transform: translateY(1px); }

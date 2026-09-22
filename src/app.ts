@@ -105,7 +105,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         displayBalance: formatAmount(wallet.balance, config.currency),
       },
       payments: platform.listPayments(),
-      modules: [{ id: "seguros", label: "Seguros", connected: true }],
+      modules: platform.listModules(),
     });
   });
 
@@ -118,10 +118,89 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         displayBalance: formatAmount(floatAccount.balance, config.currency),
       },
       payments: platform.listPayments(),
-      modules: [{ id: "seguros", label: "Seguros", connected: true }],
+      modules: platform.listModules(),
       policies: platform.listPolicies(),
       claims: platform.listClaims(),
     });
+  });
+
+  app.get("/api/cuentas", (_req: Request, res: Response) => {
+    res.json({ accounts: platform.cuentas.list() });
+  });
+
+  app.post("/api/cuentas", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const account = platform.cuentas.open({
+        name: String(body.name ?? ""),
+        email: String(body.email ?? ""),
+      });
+      res.status(201).json({ account });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/cuentas/:id/recarga", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    if (body.amount === undefined) {
+      res.status(400).json({ error: "amount es requerido" });
+      return;
+    }
+    try {
+      const result = await platform.cuentas.fund({
+        accountId: String(req.params.id),
+        amount: Number(body.amount),
+        gateway: asGateway(body.gateway, config.defaultGateway),
+        email: body.email ? String(body.email) : undefined,
+      });
+      res.status(201).json(withPublishableKey(result, config));
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/cuentas/:id/retiro", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    if (body.amount === undefined || !body.destination) {
+      res.status(400).json({ error: "amount y destination son requeridos" });
+      return;
+    }
+    try {
+      const result = await platform.cuentas.withdraw({
+        accountId: String(req.params.id),
+        amount: Number(body.amount),
+        destination: String(body.destination),
+        gateway: asGateway(body.gateway, config.defaultGateway),
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/cobros", (_req: Request, res: Response) => {
+    res.json({ cobros: platform.cobros.list() });
+  });
+
+  app.post("/api/cobros", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    if (body.amount === undefined) {
+      res.status(400).json({ error: "amount es requerido" });
+      return;
+    }
+    try {
+      const result = await platform.cobros.create({
+        concept: String(body.concept ?? ""),
+        payerName: String(body.payerName ?? ""),
+        email: String(body.email ?? ""),
+        amount: Number(body.amount),
+        gateway: asGateway(body.gateway, config.defaultGateway),
+      });
+      res.status(201).json(withPublishableKey(result, config));
+    } catch (error) {
+      handleError(error, res);
+    }
   });
 
   app.post("/api/policies", async (req: Request, res: Response) => {
@@ -137,13 +216,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         email: String(body.email),
         gateway: asGateway(body.gateway, config.defaultGateway),
       });
-      res.status(201).json({
-        ...result,
-        charge: {
-          ...result.charge,
-          publishableKey: result.charge.clientSecret ? config.stripePublishableKey : undefined,
-        },
-      });
+      res.status(201).json(withPublishableKey(result, config));
     } catch (error) {
       handleError(error, res);
     }
@@ -169,6 +242,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         status: session.status,
         paymentStatus: session.payment_status,
         policyId: fulfillment.policyId ?? policyId ?? null,
+        reference: fulfillment.reference ?? policyId ?? null,
         fulfilled: fulfillment.fulfilled,
       });
     } catch (error) {
@@ -198,6 +272,19 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   app.use(express.static(path.join(__dirname, "..", "public")));
 
   return app;
+}
+
+function withPublishableKey<T extends { charge: { clientSecret?: string } }>(
+  result: T,
+  config: AppConfig,
+): T & { charge: T["charge"] & { publishableKey?: string } } {
+  return {
+    ...result,
+    charge: {
+      ...result.charge,
+      publishableKey: result.charge.clientSecret ? config.stripePublishableKey : undefined,
+    },
+  };
 }
 
 function handleError(error: unknown, res: Response): void {

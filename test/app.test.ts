@@ -49,7 +49,7 @@ describe("instripe BaaS platform", () => {
     const overview = await request(server).get("/api/overview");
     expect(overview.body.float.balance).toBe(9000);
     expect(overview.body.policies).toHaveLength(1);
-    expect(overview.body.modules[0].id).toBe("seguros");
+    expect(overview.body.modules.map((m: { id: string }) => m.id).sort()).toEqual(["cobros", "cuentas", "seguros"]);
     expect(overview.body.payments).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ module: "seguros", kind: "collect", status: "paid", reference: res.body.policy.id }),
@@ -177,6 +177,52 @@ describe("instripe BaaS platform", () => {
 
     const events = await request(server).get("/api/stripe/events");
     expect(events.body.events[0]).toMatchObject({ id: "evt_test_123", type: "checkout.session.completed" });
+  });
+
+  it("funds a BaaS account through payments and withdraws from that balance", async () => {
+    const server = app();
+    const opened = await request(server).post("/api/cuentas").send({ name: "Taller Sur", email: "caja@taller.cl" });
+    expect(opened.status).toBe(201);
+    const id = opened.body.account.id;
+
+    const fund = await request(server).post(`/api/cuentas/${id}/recarga`).send({ amount: 10000, gateway: "chile" });
+    expect(fund.status).toBe(201);
+    expect(fund.body.account.balance).toBe(10000);
+    expect(fund.body.topup.status).toBe("paid");
+
+    const withdraw = await request(server)
+      .post(`/api/cuentas/${id}/retiro`)
+      .send({ amount: 4000, destination: "12.345.678-9", gateway: "chile" });
+    expect(withdraw.status).toBe(201);
+    expect(withdraw.body.account.balance).toBe(6000);
+
+    const tooMuch = await request(server)
+      .post(`/api/cuentas/${id}/retiro`)
+      .send({ amount: 99999, destination: "12.345.678-9", gateway: "chile" });
+    expect(tooMuch.status).toBe(422);
+
+    const payments = await request(server).get("/api/payments");
+    const modules = payments.body.payments.map((p: { module: string }) => p.module);
+    expect(modules).toContain("cuentas");
+  });
+
+  it("collects a cobro through payments without creating a policy", async () => {
+    const server = app();
+    const res = await request(server).post("/api/cobros").send({
+      concept: "Mantención mensual",
+      payerName: "Oficina Norte",
+      email: "pago@norte.cl",
+      amount: 15000,
+      gateway: "chile",
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.cobro.status).toBe("paid");
+    expect(res.body.cobro.paymentId).toMatch(/^pay_/);
+
+    const overview = await request(server).get("/api/overview");
+    expect(overview.body.policies).toHaveLength(0);
+    expect(overview.body.float.balance).toBe(15000);
+    expect(overview.body.payments[0]).toMatchObject({ module: "cobros", kind: "collect", status: "paid" });
   });
 
   it("rejects a signed webhook when the signature is invalid", async () => {
