@@ -36,6 +36,17 @@ export class StripeGateway implements PaymentGateway {
         customer_email: req.customerEmail,
         client_reference_id: req.metadata?.reference ?? req.metadata?.policyId,
         metadata: req.metadata,
+        ...(req.branding
+          ? {
+              branding_settings: {
+                display_name: req.branding.displayName,
+                button_color: req.branding.buttonColor,
+                background_color: req.branding.backgroundColor,
+                border_style: req.branding.borderStyle,
+                font_family: "inter" as const,
+              },
+            }
+          : {}),
         line_items: [
           {
             quantity: 1,

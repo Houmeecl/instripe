@@ -10,6 +10,11 @@ Sobre ese núcleo corren tres módulos, y los tres liquidan en pagos:
 - **Cuentas**: wallets de clientes, recarga y retiro.
 - **Cobros**: un cobro suelto a un pagador.
 - **Seguros**: póliza del crédito de una tarjeta. La prima es un cobro y el siniestro es una dispersión.
+- **Connect**: cuentas conectadas. Un pago hacia ellas es una dispersión.
+- **Treasury**: cuentas financieras. El abono es un cobro. Si la cuenta Stripe no tiene Treasury, queda en demo.
+- **Tarjetas**: emisión virtual. El cupo es el crédito que el seguro puede cubrir. El PAN no pasa por este servidor.
+- **Diseño**: colores y texto de la tarjeta, aplicados al portal y a Checkout.
+- **App**: escribe `stripe-app.json`. Se sube con `stripe apps upload`.
 
 Corre completamente en **modo demo** sin credenciales externas. Si defines las
 credenciales, cada pasarela usa su API real automáticamente.

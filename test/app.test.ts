@@ -62,7 +62,16 @@ describe("instripe BaaS platform", () => {
     const overview = await request(server).get("/api/overview");
     expect(overview.body.float.balance).toBe(9000);
     expect(overview.body.policies).toHaveLength(1);
-    expect(overview.body.modules.map((m: { id: string }) => m.id).sort()).toEqual(["cobros", "cuentas", "seguros"]);
+    expect(overview.body.modules.map((m: { id: string }) => m.id).sort()).toEqual([
+      "apps",
+      "cobros",
+      "connect",
+      "cuentas",
+      "diseno",
+      "seguros",
+      "tarjetas",
+      "treasury",
+    ]);
     expect(overview.body.payments).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ module: "seguros", kind: "collect", status: "paid", reference: res.body.policy.id }),
@@ -252,6 +261,73 @@ describe("instripe BaaS platform", () => {
     expect(overview.body.policies).toHaveLength(0);
     expect(overview.body.float.balance).toBe(15000);
     expect(overview.body.payments[0]).toMatchObject({ module: "cobros", kind: "collect", status: "paid" });
+  });
+
+  it("opens Connect, Treasury, a card and an app without treating them as policies", async () => {
+    const manifestPath = `/tmp/instripe-app-${Date.now()}.json`;
+    const server = app({ PORT: "3000", CURRENCY: "clp", APP_MANIFEST_PATH: manifestPath });
+
+    const connect = await request(server).post("/api/connect").send({ businessName: "Taller Sur", email: "caja@taller.cl" });
+    expect(connect.status).toBe(201);
+    expect(connect.body.account.id).toMatch(/^con_/);
+    expect(connect.body.account.mode).toBe("demo");
+
+    const funded = await request(server).post("/api/cobros").send({
+      concept: "Fondo",
+      payerName: "Caja",
+      email: "caja@taller.cl",
+      amount: 20000,
+      gateway: "chile",
+    });
+    expect(funded.status).toBe(201);
+
+    const payout = await request(server).post(`/api/connect/${connect.body.account.id}/pago`).send({ amount: 5000, gateway: "chile" });
+    expect(payout.status).toBe(201);
+    expect(payout.body.payout.destination).toBe(connect.body.account.id);
+
+    const treasury = await request(server).post("/api/treasury").send({ nickname: "Caja principal" });
+    expect(treasury.status).toBe(201);
+    expect(treasury.body.account.mode).toBe("demo");
+    const abono = await request(server).post(`/api/treasury/${treasury.body.account.id}/abono`).send({ amount: 8000, gateway: "chile" });
+    expect(abono.status).toBe(201);
+
+    const card = await request(server).post("/api/tarjetas").send({
+      holderName: "Ana Díaz",
+      email: "ana@demo.cl",
+      phone: "+34910000000",
+      cupo: 1_500_000,
+    });
+    expect(card.status).toBe(201);
+    expect(card.body.card.last4).toHaveLength(4);
+    expect(card.body.card.cupo).toBe(1_500_000);
+    expect(card.body.card.number).toBeUndefined();
+
+    const design = await request(server).post("/api/diseno").send({
+      displayName: "instripe",
+      buttonColor: "#112233",
+      backgroundColor: "#f5f7fb",
+      borderStyle: "pill",
+      carrierTitle: "Tu tarjeta",
+      carrierBody: "Crédito de la plataforma",
+    });
+    expect(design.status).toBe(200);
+    expect(design.body.design.buttonColor).toBe("#112233");
+
+    const blocked = await request(server).post("/api/apps").send({ name: "Stripe Gratis" });
+    expect(blocked.status).toBe(400);
+
+    const created = await request(server).post("/api/apps").send({ name: "Instripe" });
+    expect(created.status).toBe(201);
+    expect(created.body.manifest.id).toBe("com.houmeecl.instripe");
+    expect(created.body.upload).toBe("stripe apps upload");
+
+    const overview = await request(server).get("/api/overview");
+    expect(overview.body.policies).toHaveLength(0);
+    expect(overview.body.connect).toHaveLength(1);
+    expect(overview.body.treasury[0].balance).toBe(8000);
+    expect(overview.body.cards).toHaveLength(1);
+    const modules = overview.body.payments.map((p: { module: string }) => p.module);
+    expect(modules).toEqual(expect.arrayContaining(["cobros", "connect", "treasury"]));
   });
 
   it("rejects a signed webhook when the signature is invalid", async () => {

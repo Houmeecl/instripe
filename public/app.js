@@ -7,6 +7,11 @@ const state = {
   plans: [],
   accounts: [],
   cobros: [],
+  connect: [],
+  treasury: [],
+  cards: [],
+  design: null,
+  appManifest: null,
   stripeEvents: [],
 };
 
@@ -34,7 +39,7 @@ const NAV = [
   {
     group: "Operación",
     items: [
-      { route: "overview", label: "Inicio", icon: "home", title: "Inicio", sub: "Cuentas, cobros y seguros del día" },
+      { route: "overview", label: "Inicio", icon: "home", title: "Inicio", sub: "Cuentas, cobros, seguros, Connect, Treasury y tarjetas" },
     ],
   },
   {
@@ -55,6 +60,16 @@ const NAV = [
       { route: "plans", label: "Crédito TC", icon: "layers", title: "Crédito de la TC", sub: "La póliza cubre el cupo de la tarjeta" },
       { route: "policies", label: "Pólizas", icon: "shield", title: "Pólizas", sub: "Seguro del crédito de cada tarjeta" },
       { route: "claims", label: "Siniestros", icon: "zap", title: "Siniestros", sub: "Pagos a beneficiarios" },
+    ],
+  },
+  {
+    group: "Stripe",
+    items: [
+      { route: "connect", label: "Connect", icon: "arrow", title: "Connect", sub: "Cuentas conectadas de la plataforma" },
+      { route: "treasury", label: "Treasury", icon: "wallet", title: "Treasury", sub: "Cuentas financieras. El abono entra por pagos" },
+      { route: "cards", label: "Tarjetas", icon: "card", title: "Tarjetas", sub: "Tarjetas emitidas y su cupo" },
+      { route: "design", label: "Diseño", icon: "layers", title: "Diseño", sub: "Personalización de la tarjeta y de Checkout" },
+      { route: "apps", label: "App", icon: "file", title: "App", sub: "Manifest de la Stripe App" },
     ],
   },
   {
@@ -92,6 +107,12 @@ function initials(name) {
 function selectedGateway() {
   const sel = document.getElementById("gateway");
   return (sel && sel.value) || state.defaultGateway;
+}
+
+function applyDesign(design) {
+  if (!design) return;
+  document.documentElement.style.setProperty("--indigo", design.buttonColor);
+  document.documentElement.style.setProperty("--bg", design.backgroundColor);
 }
 
 function gatewayLabel(name) {
@@ -150,9 +171,11 @@ async function confirmReturnedCheckout() {
         ? "#/accounts"
         : mod === "cobros" || ref.startsWith("cob_")
           ? "#/cobros"
-          : mod === "seguros" || ref.startsWith("pol_")
-            ? "#/policies"
-            : "#/overview";
+          : mod === "treasury" || ref.startsWith("tin_")
+            ? "#/treasury"
+            : mod === "seguros" || ref.startsWith("pol_")
+              ? "#/policies"
+              : "#/overview";
     history.replaceState({}, "", `${location.pathname}${dest}`);
     await refresh();
     if (session.paymentStatus === "paid") {
@@ -209,6 +232,12 @@ async function refresh() {
   state.accounts = accounts.accounts || [];
   const cobros = await api("/api/cobros");
   state.cobros = cobros.cobros || [];
+  state.connect = (await api("/api/connect")).accounts || [];
+  state.treasury = (await api("/api/treasury")).accounts || [];
+  state.cards = (await api("/api/tarjetas")).cards || [];
+  state.design = (await api("/api/diseno")).design;
+  state.appManifest = (await api("/api/apps")).manifest;
+  applyDesign(state.design);
   try {
     const ev = await api("/api/stripe/events");
     state.stripeEvents = ev.events || [];
@@ -244,6 +273,11 @@ const VIEWS = {
   plans: viewPlans,
   policies: viewPolicies,
   claims: viewClaims,
+  connect: viewConnect,
+  treasury: viewTreasury,
+  cards: viewCards,
+  design: viewDesign,
+  apps: viewApps,
   payments: viewPayments,
 };
 
@@ -253,6 +287,8 @@ function movementLabel(p) {
   if (p.module === "seguros") return "Prima";
   if (p.module === "cuentas" && p.kind === "disburse") return "Retiro";
   if (p.module === "cuentas") return "Recarga";
+  if (p.module === "treasury") return "Abono Treasury";
+  if (p.module === "connect") return "Pago Connect";
   return "Cobro";
 }
 
@@ -315,6 +351,9 @@ function viewOverview() {
           <a class="btn btn-ghost btn-block" href="#/accounts">${icon("wallet")} Cuentas</a>
           <a class="btn btn-ghost btn-block" href="#/cobros" style="margin-top:10px">${icon("file")} Cobros</a>
           <a class="btn btn-ghost btn-block" href="#/policies" style="margin-top:10px">${icon("shield")} Pólizas</a>
+          <a class="btn btn-ghost btn-block" href="#/connect" style="margin-top:10px">${icon("arrow")} Connect</a>
+          <a class="btn btn-ghost btn-block" href="#/treasury" style="margin-top:10px">${icon("wallet")} Treasury</a>
+          <a class="btn btn-ghost btn-block" href="#/cards" style="margin-top:10px">${icon("card")} Tarjetas</a>
         </div>
       </div>
     </div>`;
@@ -440,6 +479,142 @@ function viewClaims() {
   </div></div>`;
 }
 
+function viewConnect() {
+  const rows = state.connect;
+  if (!rows.length) {
+    return `<div class="card"><div class="card-head"><h3>Connect</h3><button class="btn btn-primary btn-sm" data-new-connect>${icon("plus")} Cuenta conectada</button></div><div class="card-body"><div class="empty">${icon("arrow")}<div>No hay cuentas conectadas.</div></div></div></div>`;
+  }
+  const list = rows
+    .map((a) => {
+      const pay = a.mode === "live" ? `<a class="btn btn-ghost btn-sm" href="${a.onboardingUrl || "#"}" target="_blank" rel="noreferrer">Onboarding</a>` : "";
+      return `
+      <div class="row">
+        <div class="avatar">${initials(a.businessName)}</div>
+        <div>
+          <div class="who">${a.businessName}</div>
+          <div class="meta">${a.email}${a.notice ? ` · ${a.notice}` : ""}</div>
+        </div>
+        <div class="push">
+          <span class="pill ${a.mode === "live" ? "" : "amber"}">${a.mode === "live" ? "live" : "demo"}</span>
+          ${pay}
+          <button class="btn btn-ghost btn-sm" data-connect-pay="${a.id}">${icon("zap")} Pagar</button>
+        </div>
+      </div>`;
+    })
+    .join("");
+  return `<div class="card"><div class="card-head"><h3>Connect (${rows.length})</h3><button class="btn btn-primary btn-sm" data-new-connect>${icon("plus")} Cuenta conectada</button></div><div class="card-body flush"><div class="rowlist">${list}</div></div></div>`;
+}
+
+function viewTreasury() {
+  const rows = state.treasury;
+  if (!rows.length) {
+    return `<div class="card"><div class="card-head"><h3>Treasury</h3><button class="btn btn-primary btn-sm" data-new-treasury>${icon("plus")} Cuenta financiera</button></div><div class="card-body"><div class="empty">${icon("wallet")}<div>No hay cuentas financieras. El abono se liquida en pagos.</div></div></div></div>`;
+  }
+  const list = rows
+    .map(
+      (a) => `
+      <div class="row">
+        <div class="avatar">${initials(a.nickname)}</div>
+        <div>
+          <div class="who">${a.nickname}</div>
+          <div class="meta">${a.mode === "live" ? "FinancialAccount" : "Demo"}${a.notice ? ` · ${a.notice}` : ""}</div>
+        </div>
+        <div class="push">
+          <b>${money(a.balance)}</b>
+          <button class="btn btn-ghost btn-sm" data-treasury-fund="${a.id}">${icon("plus")} Abonar</button>
+        </div>
+      </div>`,
+    )
+    .join("");
+  return `<div class="card"><div class="card-head"><h3>Treasury (${rows.length})</h3><button class="btn btn-primary btn-sm" data-new-treasury>${icon("plus")} Cuenta financiera</button></div><div class="card-body flush"><div class="rowlist">${list}</div></div></div>`;
+}
+
+function viewCards() {
+  const rows = state.cards;
+  if (!rows.length) {
+    return `<div class="card"><div class="card-head"><h3>Tarjetas</h3><button class="btn btn-primary btn-sm" data-new-card>${icon("plus")} Emitir tarjeta</button></div><div class="card-body"><div class="empty">${icon("card")}<div>No hay tarjetas emitidas. El cupo es el crédito que puede cubrir el seguro.</div></div></div></div>`;
+  }
+  const list = rows
+    .map((c) => {
+      const label = `${c.brand} •••• ${c.last4}`;
+      return `
+      <div class="row">
+        <div class="plastic">${label}</div>
+        <div>
+          <div class="who">${c.holderName}</div>
+          <div class="meta">cupo ${money(c.cupo)}${c.notice ? ` · ${c.notice}` : ""}</div>
+        </div>
+        <div class="push">
+          <span class="pill ${c.status === "active" ? "" : "amber"}">${c.status === "active" ? "activa" : "inactiva"}</span>
+          <button class="btn btn-ghost btn-sm" data-insure="${c.id}">${icon("shield")} Asegurar cupo</button>
+        </div>
+      </div>`;
+    })
+    .join("");
+  return `<div class="card"><div class="card-head"><h3>Tarjetas (${rows.length})</h3><button class="btn btn-primary btn-sm" data-new-card>${icon("plus")} Emitir tarjeta</button></div><div class="card-body flush"><div class="rowlist">${list}</div></div></div>`;
+}
+
+function viewDesign() {
+  const d = state.design || {
+    displayName: "instripe",
+    buttonColor: "#635bff",
+    backgroundColor: "#f5f7fb",
+    borderStyle: "rounded",
+    carrierTitle: "Tu tarjeta",
+    carrierBody: "Crédito de la plataforma",
+  };
+  return `<div class="cols">
+    <div class="card">
+      <div class="card-head"><h3>Personalización</h3></div>
+      <div class="card-body">
+        <div class="field"><label>Nombre en Checkout</label><input id="d-name" value="${escapeAttr(d.displayName)}" /></div>
+        <div class="field"><label>Color del botón</label><input id="d-button" value="${escapeAttr(d.buttonColor)}" /></div>
+        <div class="field"><label>Fondo</label><input id="d-bg" value="${escapeAttr(d.backgroundColor)}" /></div>
+        <div class="field"><label>Bordes</label>
+          <select id="d-border">
+            ${["rounded", "rectangular", "pill"].map((v) => `<option value="${v}" ${d.borderStyle === v ? "selected" : ""}>${v}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field"><label>Texto de la tarjeta</label><input id="d-title" value="${escapeAttr(d.carrierTitle)}" /></div>
+        <div class="field"><label>Detalle</label><input id="d-body" value="${escapeAttr(d.carrierBody)}" /></div>
+        <button class="btn btn-primary" data-save-design>${icon("check")} Guardar diseño</button>
+        <p class="hint">Checkout usa estos colores. Si hay cuentas Connect live, también se actualiza su branding.</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h3>Vista de la tarjeta</h3></div>
+      <div class="card-body">
+        <div class="plastic big" id="design-preview" style="background:${escapeAttr(d.buttonColor)}">
+          <b>${escapeAttr(d.carrierTitle)}</b>
+          <span>${escapeAttr(d.carrierBody)}</span>
+          <em>Visa •••• 4242</em>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function viewApps() {
+  const m = state.appManifest;
+  const pretty = m ? JSON.stringify(m, null, 2) : "";
+  return `<div class="card">
+    <div class="card-head"><h3>Stripe App</h3></div>
+    <div class="card-body">
+      <div class="field"><label>Nombre</label><input id="app-name" value="${escapeAttr(m ? m.name : "Instripe")}" /></div>
+      <button class="btn btn-primary" data-create-app>${icon("plus")} Crear app</button>
+      <p class="hint">Escribe <code class="mono">stripe-app.json</code>. Para subirla: <code class="mono">stripe apps upload</code>.</p>
+      <pre class="manifest">${pretty}</pre>
+    </div>
+  </div>`;
+}
+
+function escapeAttr(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
+}
+
 function viewPayments() {
   const h = state.health;
   const statusItem = (label, on, ic) => `
@@ -503,6 +678,35 @@ function wireView(r) {
     document.querySelectorAll("[data-claim]").forEach((btn) => {
       btn.onclick = () => openClaimModal(state.overview.policies.find((p) => p.id === btn.dataset.claim));
     });
+  }
+  if (r === "connect") {
+    const open = document.querySelector("[data-new-connect]");
+    if (open) open.onclick = () => openConnectModal();
+    document.querySelectorAll("[data-connect-pay]").forEach((btn) => {
+      btn.onclick = () => openConnectPayModal(state.connect.find((a) => a.id === btn.dataset.connectPay));
+    });
+  }
+  if (r === "treasury") {
+    const open = document.querySelector("[data-new-treasury]");
+    if (open) open.onclick = () => openTreasuryModal();
+    document.querySelectorAll("[data-treasury-fund]").forEach((btn) => {
+      btn.onclick = () => openTreasuryFundModal(state.treasury.find((a) => a.id === btn.dataset.treasuryFund));
+    });
+  }
+  if (r === "cards") {
+    const open = document.querySelector("[data-new-card]");
+    if (open) open.onclick = () => openCardModal();
+    document.querySelectorAll("[data-insure]").forEach((btn) => {
+      btn.onclick = () => insureCard(state.cards.find((c) => c.id === btn.dataset.insure));
+    });
+  }
+  if (r === "design") {
+    const save = document.querySelector("[data-save-design]");
+    if (save) save.onclick = () => saveDesign();
+  }
+  if (r === "apps") {
+    const create = document.querySelector("[data-create-app]");
+    if (create) create.onclick = () => createApp();
   }
 }
 
@@ -833,6 +1037,258 @@ function openClaimModal(policy) {
       toast(err.message, "error");
     }
   };
+}
+
+function openConnectModal() {
+  mountModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>Cuenta Connect</h3><p>Cuenta conectada Express. Un pago posterior sale por el libro de pagos.</p></div>
+      <div class="modal-body">
+        <div class="field"><label>Negocio</label><input id="k-name" value="Taller Sur" /></div>
+        <div class="field"><label>Email</label><input id="k-email" type="email" value="caja@taller.cl" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-cancel>Cancelar</button>
+        <button class="btn btn-primary" data-confirm>${icon("check")} Crear</button>
+      </div>
+    </div>`);
+  const root = document.getElementById("modal-root");
+  root.querySelector("[data-cancel]").onclick = closeModal;
+  root.querySelector("[data-confirm]").onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const result = await api("/api/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          businessName: document.getElementById("k-name").value,
+          email: document.getElementById("k-email").value,
+        }),
+      });
+      closeModal();
+      await refresh();
+      route();
+      toast(result.account.mode === "live" ? `Connect ${result.account.stripeAccountId} creado` : `Connect en demo${result.account.notice ? ": " + result.account.notice : ""}`);
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, "error");
+    }
+  };
+}
+
+function openConnectPayModal(account) {
+  if (!account) return;
+  mountModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>Pagar a ${account.businessName}</h3><p>Dispersa desde el dinero de la plataforma.</p></div>
+      <div class="modal-body">
+        <div class="field"><label>Monto</label><input id="k-amount" type="number" value="5000" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-cancel>Cancelar</button>
+        <button class="btn btn-primary" data-confirm>${icon("zap")} Pagar</button>
+      </div>
+    </div>`);
+  const root = document.getElementById("modal-root");
+  root.querySelector("[data-cancel]").onclick = closeModal;
+  root.querySelector("[data-confirm]").onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      await api(`/api/connect/${account.id}/pago`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: Number(document.getElementById("k-amount").value), gateway: selectedGateway() }),
+      });
+      closeModal();
+      await refresh();
+      route();
+      toast(`Pago enviado a ${account.businessName}`);
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, "error");
+    }
+  };
+}
+
+function openTreasuryModal() {
+  mountModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>Cuenta financiera</h3><p>Si Treasury no está activo en Stripe, la cuenta queda en demo y el abono igual entra a pagos.</p></div>
+      <div class="modal-body">
+        <div class="field"><label>Nombre</label><input id="t-name" value="Caja principal" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-cancel>Cancelar</button>
+        <button class="btn btn-primary" data-confirm>${icon("check")} Abrir</button>
+      </div>
+    </div>`);
+  const root = document.getElementById("modal-root");
+  root.querySelector("[data-cancel]").onclick = closeModal;
+  root.querySelector("[data-confirm]").onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const result = await api("/api/treasury", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nickname: document.getElementById("t-name").value }),
+      });
+      closeModal();
+      await refresh();
+      route();
+      toast(result.account.mode === "live" ? "Treasury live" : "Treasury en demo");
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, "error");
+    }
+  };
+}
+
+function openTreasuryFundModal(account) {
+  if (!account) return;
+  mountModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>Abonar ${account.nickname}</h3><p>El abono es un cobro del núcleo de pagos.</p></div>
+      <div class="modal-body">
+        <div class="field"><label>Monto</label><input id="t-amount" type="number" value="20000" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-cancel>Cancelar</button>
+        <button class="btn btn-primary" data-confirm>${icon("check")} Abonar</button>
+      </div>
+    </div>`);
+  const root = document.getElementById("modal-root");
+  root.querySelector("[data-cancel]").onclick = closeModal;
+  root.querySelector("[data-confirm]").onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const result = await api(`/api/treasury/${account.id}/abono`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: Number(document.getElementById("t-amount").value), gateway: "chile" }),
+      });
+      if (result.charge.clientSecret && result.charge.publishableKey) {
+        await mountEmbeddedCheckout(result, { name: "Abono " + account.nickname });
+        return;
+      }
+      closeModal();
+      await refresh();
+      route();
+      toast(`Abono liquidado en pagos`);
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, "error");
+    }
+  };
+}
+
+function openCardModal() {
+  mountModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>Emitir tarjeta</h3><p>Virtual. El número no pasa por este servidor. El cupo es el crédito asegurable.</p></div>
+      <div class="modal-body">
+        <div class="field"><label>Titular</label><input id="c-name" value="Ana Díaz" /></div>
+        <div class="field"><label>Email</label><input id="c-email" type="email" value="ana@demo.cl" /></div>
+        <div class="field"><label>Teléfono</label><input id="c-phone" value="+34910000000" /></div>
+        <div class="field"><label>Cupo</label><input id="c-cupo" type="number" value="1500000" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-cancel>Cancelar</button>
+        <button class="btn btn-primary" data-confirm>${icon("check")} Emitir</button>
+      </div>
+    </div>`);
+  const root = document.getElementById("modal-root");
+  root.querySelector("[data-cancel]").onclick = closeModal;
+  root.querySelector("[data-confirm]").onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const result = await api("/api/tarjetas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          holderName: document.getElementById("c-name").value,
+          email: document.getElementById("c-email").value,
+          phone: document.getElementById("c-phone").value,
+          cupo: Number(document.getElementById("c-cupo").value),
+        }),
+      });
+      closeModal();
+      await refresh();
+      route();
+      const card = result.card;
+      toast(`${card.brand} •••• ${card.last4} · ${card.mode}`);
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, "error");
+    }
+  };
+}
+
+async function insureCard(card) {
+  if (!card) return;
+  try {
+    const result = await api("/api/policies", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        holderName: card.holderName,
+        email: card.email,
+        cardLabel: `${card.brand} •••• ${card.last4}`,
+        cupo: card.cupo,
+        gateway: "chile",
+      }),
+    });
+    if (result.charge && result.charge.clientSecret && result.charge.publishableKey) {
+      await mountEmbeddedCheckout(result, { name: "Crédito " + card.brand });
+      return;
+    }
+    await refresh();
+    toast(`Póliza del cupo ${money(card.cupo)} activada`);
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function saveDesign() {
+  try {
+    const design = await api("/api/diseno", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        displayName: document.getElementById("d-name").value,
+        buttonColor: document.getElementById("d-button").value,
+        backgroundColor: document.getElementById("d-bg").value,
+        borderStyle: document.getElementById("d-border").value,
+        carrierTitle: document.getElementById("d-title").value,
+        carrierBody: document.getElementById("d-body").value,
+      }),
+    });
+    state.design = design.design;
+    applyDesign(state.design);
+    route();
+    toast("Diseño guardado");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function createApp() {
+  try {
+    const result = await api("/api/apps", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: document.getElementById("app-name").value }),
+    });
+    state.appManifest = result.manifest;
+    route();
+    toast(`App ${result.manifest.id} escrita en stripe-app.json`);
+  } catch (err) {
+    toast(err.message, "error");
+  }
 }
 
 document.addEventListener("keydown", (e) => {

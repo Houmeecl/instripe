@@ -15,6 +15,8 @@ export interface AppConfig {
     apiKey: string | undefined;
     commerceCode: string | undefined;
   };
+  /** Where `Crear app` writes the Stripe App manifest. */
+  appManifestPath: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -33,6 +35,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       apiKey: env.CHILE_GATEWAY_API_KEY?.trim() || undefined,
       commerceCode: env.CHILE_GATEWAY_COMMERCE_CODE?.trim() || undefined,
     },
+    appManifestPath: env.APP_MANIFEST_PATH?.trim() || "stripe-app.json",
   };
 }
 

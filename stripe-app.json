@@ -1,0 +1,20 @@
+{
+  "id": "com.houmeecl.instripe",
+  "version": "0.1.0",
+  "name": "Instripe",
+  "distribution_type": "private",
+  "sandbox_install_compatible": true,
+  "permissions": [
+    {
+      "permission": "customer_read",
+      "purpose": "Leer clientes para cuentas, cobros y tarjetas."
+    },
+    {
+      "permission": "balance_read",
+      "purpose": "Leer el saldo que liquida el núcleo de pagos."
+    }
+  ],
+  "ui_extension": {
+    "views": []
+  }
+}

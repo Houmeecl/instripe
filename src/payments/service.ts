@@ -28,6 +28,14 @@ export interface SettleResult {
   module?: string;
 }
 
+/** Appearance sent on Checkout Sessions. Product modules set it; payments does not interpret it. */
+export interface CheckoutBranding {
+  displayName: string;
+  buttonColor: string;
+  backgroundColor: string;
+  borderStyle: "rounded" | "rectangular" | "pill";
+}
+
 type SettledListener = (movement: MoneyMovement) => void;
 
 /**
@@ -42,6 +50,7 @@ export class Payments {
   private readonly byReference = new Map<string, string>();
   private readonly listeners: SettledListener[] = [];
   private readonly webhookEvents: { id: string; type: string; receivedAt: string }[] = [];
+  private branding: CheckoutBranding | undefined;
 
   constructor(private readonly config: AppConfig) {
     this.gateways = new GatewayRegistry(config);
@@ -58,6 +67,10 @@ export class Payments {
 
   onSettled(listener: SettledListener): void {
     this.listeners.push(listener);
+  }
+
+  setBranding(branding: CheckoutBranding): void {
+    this.branding = branding;
   }
 
   listGateways() {
@@ -116,6 +129,7 @@ export class Payments {
       cancelUrl: `${this.config.publicBaseUrl}/?canceled=1`,
       returnUrl: `${this.config.publicBaseUrl}/?session_id={CHECKOUT_SESSION_ID}`,
       metadata: { module, reference },
+      branding: this.branding,
     });
     movement.gateway = gateway.name;
     movement.mode = charge.mode;

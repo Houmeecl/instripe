@@ -10,6 +10,12 @@ export interface ChargeRequest {
   /** Stripe replaces `{CHECKOUT_SESSION_ID}` when ui_mode is embedded_page. */
   returnUrl?: string;
   metadata?: Record<string, string>;
+  branding?: {
+    displayName: string;
+    buttonColor: string;
+    backgroundColor: string;
+    borderStyle: "rounded" | "rectangular" | "pill";
+  };
 }
 
 export interface ChargeResult {

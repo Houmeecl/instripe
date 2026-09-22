@@ -123,6 +123,11 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       cobros: platform.cobros.list(),
       policies: platform.listPolicies(),
       claims: platform.listClaims(),
+      connect: platform.connect.list(),
+      treasury: platform.treasury.list(),
+      cards: platform.tarjetas.list(),
+      design: platform.diseno.current(),
+      app: platform.apps.current(),
     });
   });
 
@@ -200,6 +205,135 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         gateway: asGateway(body.gateway, config.defaultGateway),
       });
       res.status(201).json(withPublishableKey(result, config));
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/connect", (_req: Request, res: Response) => {
+    res.json({ accounts: platform.connect.list() });
+  });
+
+  app.post("/api/connect", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const account = await platform.connect.create({
+        businessName: String(body.businessName ?? ""),
+        email: String(body.email ?? ""),
+      });
+      res.status(201).json({ account });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/connect/:id/pago", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    if (body.amount === undefined) {
+      res.status(400).json({ error: "amount es requerido" });
+      return;
+    }
+    try {
+      const result = await platform.connect.payout({
+        accountId: String(req.params.id),
+        amount: Number(body.amount),
+        gateway: asGateway(body.gateway, config.defaultGateway),
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/treasury", (_req: Request, res: Response) => {
+    res.json({ accounts: platform.treasury.list() });
+  });
+
+  app.post("/api/treasury", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const account = await platform.treasury.open({
+        nickname: String(body.nickname ?? ""),
+        connectedId: body.connectedId ? String(body.connectedId) : undefined,
+      });
+      res.status(201).json({ account });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/treasury/:id/abono", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    if (body.amount === undefined) {
+      res.status(400).json({ error: "amount es requerido" });
+      return;
+    }
+    try {
+      const result = await platform.treasury.fund({
+        accountId: String(req.params.id),
+        amount: Number(body.amount),
+        gateway: asGateway(body.gateway, config.defaultGateway),
+        email: body.email ? String(body.email) : undefined,
+      });
+      res.status(201).json(withPublishableKey(result, config));
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/tarjetas", (_req: Request, res: Response) => {
+    res.json({ cards: platform.tarjetas.list() });
+  });
+
+  app.post("/api/tarjetas", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    if (body.cupo === undefined) {
+      res.status(400).json({ error: "cupo es requerido" });
+      return;
+    }
+    try {
+      const card = await platform.tarjetas.issue({
+        holderName: String(body.holderName ?? ""),
+        email: String(body.email ?? ""),
+        phone: String(body.phone ?? ""),
+        cupo: Number(body.cupo),
+      });
+      res.status(201).json({ card });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/diseno", (_req: Request, res: Response) => {
+    res.json({ design: platform.diseno.current() });
+  });
+
+  app.post("/api/diseno", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const design = await platform.diseno.save({
+        displayName: String(body.displayName ?? ""),
+        buttonColor: String(body.buttonColor ?? ""),
+        backgroundColor: String(body.backgroundColor ?? ""),
+        borderStyle: String(body.borderStyle ?? ""),
+        carrierTitle: String(body.carrierTitle ?? ""),
+        carrierBody: String(body.carrierBody ?? ""),
+      });
+      res.status(200).json({ design });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/apps", (_req: Request, res: Response) => {
+    res.json({ manifest: platform.apps.current() });
+  });
+
+  app.post("/api/apps", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const manifest = platform.apps.create({ name: String(body.name ?? "") });
+      res.status(201).json({ manifest, upload: "stripe apps upload" });
     } catch (error) {
       handleError(error, res);
     }

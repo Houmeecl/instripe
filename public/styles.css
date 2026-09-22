@@ -58,6 +58,7 @@ body {
   position: sticky;
   top: 0;
   height: 100vh;
+  overflow-y: auto;
 }
 
 .brand {
@@ -438,6 +439,35 @@ body {
 .btn:active { transform: translateY(1px); }
 .btn svg { width: 16px; height: 16px; stroke: currentColor; }
 
+.plastic {
+  min-width: 148px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--indigo), #241f66);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.plastic.big {
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: 16px;
+}
+.plastic.big span, .plastic.big em { font-weight: 500; font-style: normal; opacity: 0.9; font-size: 13px; }
+.manifest {
+  margin-top: 16px;
+  padding: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
 .btn-primary { background: var(--indigo); color: #fff; box-shadow: 0 6px 16px rgba(99, 91, 255, 0.28); }
 .btn-primary:hover { background: var(--indigo-600); }
 .btn-ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); }
