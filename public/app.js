@@ -3,7 +3,7 @@ const state = {
   defaultGateway: "chile",
   gateways: [],
   health: {},
-  overview: { float: { balance: 0, displayBalance: "—" }, policies: [], claims: [] },
+  overview: { float: { balance: 0, displayBalance: "—" }, policies: [], claims: [], payments: [], modules: [] },
   plans: [],
   stripeEvents: [],
 };
@@ -29,12 +29,26 @@ function icon(name) {
 }
 
 const NAV = [
-  { route: "overview", label: "Resumen", icon: "home", title: "Resumen", sub: "Vista general de la plataforma" },
-  { route: "plans", label: "Planes", icon: "layers", title: "Planes de seguro", sub: "Catálogo de productos y contratación" },
-  { route: "policies", label: "Pólizas", icon: "shield", title: "Pólizas", sub: "Pólizas activas y dispersión de siniestros" },
-  { route: "claims", label: "Siniestros", icon: "file", title: "Siniestros", sub: "Historial de dispersiones de fondos" },
-  { route: "payments", label: "Pagos", icon: "card", title: "Pagos y pasarelas", sub: "Estado de Stripe y la pasarela chilena" },
+  {
+    group: "Pagos",
+    items: [
+      { route: "overview", label: "Resumen", icon: "home", title: "Pagos", sub: "Wallet, cobros y módulos conectados" },
+      { route: "payments", label: "Movimientos", icon: "card", title: "Movimientos", sub: "Cobros y dispersiones que pasan por la plataforma" },
+    ],
+  },
+  {
+    group: "Módulo seguros",
+    items: [
+      { route: "plans", label: "Planes", icon: "layers", title: "Planes", sub: "Módulo de seguros · cobra la prima vía pagos" },
+      { route: "policies", label: "Pólizas", icon: "shield", title: "Pólizas", sub: "Cada póliza queda ligada a un movimiento de pago" },
+      { route: "claims", label: "Siniestros", icon: "file", title: "Siniestros", sub: "La dispersión sale por el núcleo de pagos" },
+    ],
+  },
 ];
+
+function navItems() {
+  return NAV.flatMap((group) => group.items);
+}
 
 /* ---------------- helpers ---------------- */
 function money(amount, currency = state.currency) {
@@ -124,7 +138,11 @@ async function confirmReturnedCheckout() {
 function renderNav() {
   const nav = document.getElementById("nav");
   nav.innerHTML = NAV.map(
-    (n) => `<a href="#/${n.route}" data-route="${n.route}">${icon(n.icon)}<span>${n.label}</span></a>`,
+    (group) =>
+      `<div class="nav-label">${group.group}</div>` +
+      group.items
+        .map((n) => `<a href="#/${n.route}" data-route="${n.route}">${icon(n.icon)}<span>${n.label}</span></a>`)
+        .join(""),
   ).join("");
 }
 
@@ -168,12 +186,12 @@ async function refresh() {
 /* ---------------- router ---------------- */
 function currentRoute() {
   const r = (location.hash || "#/overview").replace("#/", "");
-  return NAV.find((n) => n.route === r) ? r : "overview";
+  return navItems().find((n) => n.route === r) ? r : "overview";
 }
 
 function route() {
   const r = currentRoute();
-  const meta = NAV.find((n) => n.route === r);
+  const meta = navItems().find((n) => n.route === r);
   document.getElementById("page-title").textContent = meta.title;
   document.getElementById("page-subtitle").textContent = meta.sub;
   document.querySelectorAll("#nav a").forEach((a) => {
@@ -193,59 +211,65 @@ const VIEWS = {
   payments: viewPayments,
 };
 
+function movementFeed(rows) {
+  if (!rows.length) {
+    return `<div class="empty">${icon("inbox")}<div>Sin movimientos. El módulo de seguros deja aquí cada prima y cada siniestro.</div></div>`;
+  }
+  return `<ul class="feed">${[...rows].reverse().map((p) => `
+        <li>
+          <div class="fi">${icon(p.kind === "disburse" ? "zap" : "card")}</div>
+          <div>
+            <div class="ft"><b>${p.kind === "disburse" ? "−" : "+"}${money(p.amount)}</b> ${p.kind === "disburse" ? "dispersión" : "cobro"} · ${p.module}</div>
+            <div class="fdate"><code class="mono">${p.id}</code> · ${p.reference} · ${p.status}</div>
+          </div>
+        </li>`).join("")}</ul>`;
+}
+
 function viewOverview() {
   const o = state.overview;
-  const activePolicies = o.policies.filter((p) => p.status === "active").length;
+  const payments = o.payments || [];
+  const collected = payments.filter((p) => p.kind === "collect" && p.status === "paid").length;
+  const modules = o.modules || [];
   const kpi = `
     <div class="grid-kpi">
       <div class="kpi">
         <div class="kpi-top"><div class="kpi-ico">${icon("wallet")}</div></div>
-        <div class="kpi-label">Float asegurador</div>
+        <div class="kpi-label">Saldo de pagos</div>
         <div class="kpi-value">${o.float.displayBalance}</div>
-        <div class="kpi-hint">Primas acumuladas menos siniestros</div>
+        <div class="kpi-hint">Cobros acreditados menos dispersiones</div>
       </div>
       <div class="kpi green">
-        <div class="kpi-top"><div class="kpi-ico">${icon("shield")}</div></div>
-        <div class="kpi-label">Pólizas activas</div>
-        <div class="kpi-value">${activePolicies}</div>
-        <div class="kpi-hint">Clientes con cobertura vigente</div>
+        <div class="kpi-top"><div class="kpi-ico">${icon("card")}</div></div>
+        <div class="kpi-label">Cobros confirmados</div>
+        <div class="kpi-value">${collected}</div>
+        <div class="kpi-hint">Movimientos pagados en la wallet</div>
       </div>
       <div class="kpi amber">
-        <div class="kpi-top"><div class="kpi-ico">${icon("file")}</div></div>
-        <div class="kpi-label">Siniestros dispersados</div>
-        <div class="kpi-value">${o.claims.length}</div>
-        <div class="kpi-hint">Payouts realizados a beneficiarios</div>
+        <div class="kpi-top"><div class="kpi-ico">${icon("layers")}</div></div>
+        <div class="kpi-label">Módulos conectados</div>
+        <div class="kpi-value">${modules.length}</div>
+        <div class="kpi-hint">${modules.map((m) => m.label).join(", ") || "Ninguno"}</div>
       </div>
     </div>`;
 
-  const feed = o.claims.length
-    ? `<ul class="feed">${[...o.claims].reverse().map((c) => `
-        <li>
-          <div class="fi">${icon("zap")}</div>
-          <div>
-            <div class="ft"><b>${money(c.amount)}</b> dispersado a ${c.beneficiary}</div>
-            <div class="fdate"><code class="mono">${c.id}</code> · ${c.status}</div>
-          </div>
-        </li>`).join("")}</ul>`
-    : `<div class="empty">${icon("inbox")}<div>Aún no hay actividad. Contrata un plan y dispersa un siniestro.</div></div>`;
-
-  const quick = `
+  const moduleCard = `
     <div class="card">
-      <div class="card-head"><h3>Acciones rápidas</h3></div>
+      <div class="card-head"><h3>Módulos</h3></div>
       <div class="card-body">
-        <button class="btn btn-primary btn-block" onclick="location.hash='#/plans'">${icon("plus")} Contratar una póliza</button>
+        <p class="plan-desc">Seguros no es el núcleo. Contrata una póliza y el cobro aparece en Movimientos.</p>
+        <button class="btn btn-primary btn-block" onclick="location.hash='#/plans'">${icon("shield")} Abrir módulo de seguros</button>
         <div style="height:10px"></div>
-        <button class="btn btn-ghost btn-block" onclick="location.hash='#/payments'">${icon("card")} Ver estado de pasarelas</button>
+        <button class="btn btn-ghost btn-block" onclick="location.hash='#/payments'">${icon("card")} Ver movimientos</button>
       </div>
     </div>`;
 
   return `${kpi}
     <div class="cols">
       <div class="card">
-        <div class="card-head"><h3>Actividad reciente</h3><a class="btn btn-ghost btn-sm" href="#/claims">Ver todo</a></div>
-        <div class="card-body flush">${feed}</div>
+        <div class="card-head"><h3>Actividad de pagos</h3><a class="btn btn-ghost btn-sm" href="#/payments">Ver todo</a></div>
+        <div class="card-body flush">${movementFeed(payments)}</div>
       </div>
-      ${quick}
+      ${moduleCard}
     </div>`;
 }
 
@@ -286,7 +310,7 @@ function viewPolicies() {
         <div class="avatar">${initials(p.holderName)}</div>
         <div>
           <div class="who">${p.holderName}</div>
-          <div class="meta"><code class="mono">${p.id}</code> · plan ${p.planId}</div>
+          <div class="meta"><code class="mono">${p.id}</code> · plan ${p.planId}${p.paymentId ? ` · pago <code class="mono">${p.paymentId}</code>` : ""}</div>
         </div>
         <div class="push">
           <span class="pill ${pending ? "amber" : ""}">${pending ? "pago pendiente" : p.status}</span>
@@ -316,7 +340,7 @@ function viewClaims() {
         <td class="amt-pos">${money(c.amount)}</td>
         <td>${c.beneficiary}</td>
         <td><span class="pill ${c.status === "paid" ? "" : "amber"}">${c.status}</span></td>
-        <td><code class="mono">${c.payoutId}</code></td>
+        <td><code class="mono">${c.paymentId || c.payoutId}</code></td>
       </tr>`,
     )
     .join("");
@@ -341,7 +365,13 @@ function viewPayments() {
         </li>`).join("")}</ul>`
     : `<div class="empty">${icon("inbox")}<div>Sin eventos de webhook. Ejecuta <code class="mono">stripe trigger checkout.session.completed</code>.</div></div>`;
 
+  const movements = movementFeed(state.overview.payments || []);
+
   return `
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-head"><h3>Movimientos</h3><span class="badge">${(state.overview.payments || []).length}</span></div>
+      <div class="card-body flush">${movements}</div>
+    </div>
     <div class="card" style="margin-bottom:20px">
       <div class="card-head"><h3>Estado de pasarelas</h3><span class="badge ${h.stripeConfigured ? "live" : ""}">${h.currency ? h.currency.toUpperCase() : ""}</span></div>
       <div class="card-body">

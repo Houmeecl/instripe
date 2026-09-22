@@ -23,9 +23,8 @@ export interface Account {
 }
 
 /**
- * In-memory BaaS ledger. Every account holds a wallet balance and every
- * movement is recorded as a double-checked credit/debit entry. This is
- * intentionally storage-agnostic so it can later be backed by Postgres.
+ * In-memory payments ledger. Every account holds a wallet balance and every
+ * movement is a credit or a debit. Storage-agnostic so it can later sit on Postgres.
  */
 export class Ledger {
   private readonly accounts = new Map<string, Account>();

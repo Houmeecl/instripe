@@ -16,6 +16,8 @@ export interface Policy {
   premium: number;
   coverage: number;
   status: "pending_payment" | "active" | "lapsed";
+  /** Payment recorded by the payments core (`pay_…`). */
+  paymentId?: string;
   /** Stripe Checkout session that collects the premium, when applicable. */
   checkoutSessionId?: string;
   createdAt: string;
@@ -27,6 +29,8 @@ export interface Claim {
   amount: number;
   beneficiary: string;
   status: "paid" | "pending" | "rejected";
+  /** Disbursement recorded by the payments core (`pay_…`). */
+  paymentId?: string;
   payoutId: string;
   createdAt: string;
 }

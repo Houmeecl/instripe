@@ -1,24 +1,27 @@
 # instripe
 
-Infraestructura de pagos **BaaS + Insurtech** para Chile, construida con Node,
-TypeScript y Express. Integra **Stripe** y una **pasarela chilena**
-(estilo Webpay/Khipu/Flow) tras una misma abstracción, gestiona **wallets y un
-libro mayor (BaaS)**, y realiza **dispersión de fondos** (payouts de siniestros).
+Infraestructura de **pagos** para Chile, construida con Node, TypeScript y
+Express. Integra **Stripe** y una **pasarela chilena** (estilo Webpay/Khipu/Flow)
+tras una misma abstracción, gestiona **wallets y un libro mayor**, y realiza
+**cobros y dispersión de fondos**.
+
+**Seguros** (planes, pólizas, siniestros) es un módulo aparte. No cobra solo:
+cada prima y cada siniestro pasa por el núcleo de pagos.
 
 Corre completamente en **modo demo** sin credenciales externas. Si defines las
 credenciales, cada pasarela usa su API real automáticamente.
 
 ## Arquitectura
 
-- **Pasarelas de pago** (`src/gateways/`): interfaz `PaymentGateway` con
-  `charge` (cobro) y `payout` (dispersión). Adaptadores: `StripeGateway` y
-  `ChileGateway`, seleccionables en tiempo de ejecución.
-- **BaaS / libro mayor** (`src/domain/ledger.ts`): cuentas con saldo (wallet) y
-  asientos credit/debit. Un *float asegurador* concentra las primas.
-- **Insurtech** (`src/domain/insurance.ts`): planes, pólizas y siniestros.
-- **Plataforma** (`src/platform.ts`): orquesta cobro de prima → acredita float →
-  dispersa siniestro al beneficiario.
-- **API + panel** (`src/app.ts`, `public/`): REST y un dashboard.
+- **Pagos** (`src/payments/`): wallet, libro mayor y movimientos (`collect` /
+  `disburse`). No conoce pólizas. Un módulo le pasa un `reference` y pagos
+  acredita o debita la wallet.
+- **Pasarelas** (`src/gateways/`): `PaymentGateway` con `charge` y `payout`.
+  Adaptadores: `StripeGateway` y `ChileGateway`.
+- **Módulo Seguros** (`src/modules/seguros/`): planes, pólizas y siniestros.
+  Se conecta a pagos: la prima es un cobro y el siniestro es una dispersión.
+- **Composición** (`src/platform.ts`): arma pagos y le enchufa el módulo.
+- **API + panel** (`src/app.ts`, `public/`): REST y el portal.
 
 ## Requisitos
 

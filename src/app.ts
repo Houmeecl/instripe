@@ -52,7 +52,8 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       let fulfilled = false;
       if (event.type === "checkout.session.completed") {
         const session = event.data.object as Stripe.Checkout.Session;
-        const policyId = session.metadata?.policyId ?? session.client_reference_id ?? undefined;
+        const policyId =
+          session.metadata?.reference ?? session.metadata?.policyId ?? session.client_reference_id ?? undefined;
         fulfilled = platform.fulfillCheckout(policyId, session.id).fulfilled;
         console.log(
           `[stripe] checkout.session.completed ${session.id} policy=${policyId ?? "-"} fulfilled=${fulfilled}`,
@@ -95,6 +96,19 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     res.json({ events: platform.listWebhookEvents() });
   });
 
+  app.get("/api/payments", (_req: Request, res: Response) => {
+    const wallet = platform.floatAccount;
+    res.json({
+      currency: config.currency,
+      wallet: {
+        balance: wallet.balance,
+        displayBalance: formatAmount(wallet.balance, config.currency),
+      },
+      payments: platform.listPayments(),
+      modules: [{ id: "seguros", label: "Seguros", connected: true }],
+    });
+  });
+
   app.get("/api/overview", (_req: Request, res: Response) => {
     const floatAccount = platform.floatAccount;
     res.json({
@@ -103,6 +117,8 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         balance: floatAccount.balance,
         displayBalance: formatAmount(floatAccount.balance, config.currency),
       },
+      payments: platform.listPayments(),
+      modules: [{ id: "seguros", label: "Seguros", connected: true }],
       policies: platform.listPolicies(),
       claims: platform.listClaims(),
     });
@@ -142,7 +158,8 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     try {
       const stripe = new Stripe(config.stripeSecretKey);
       const session = await stripe.checkout.sessions.retrieve(sessionId);
-      const policyId = session.metadata?.policyId ?? session.client_reference_id ?? undefined;
+      const policyId =
+        session.metadata?.reference ?? session.metadata?.policyId ?? session.client_reference_id ?? undefined;
       const paid = session.status === "complete" && session.payment_status === "paid";
       const fulfillment = paid
         ? platform.fulfillCheckout(policyId, session.id)

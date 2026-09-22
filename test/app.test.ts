@@ -49,6 +49,13 @@ describe("instripe BaaS platform", () => {
     const overview = await request(server).get("/api/overview");
     expect(overview.body.float.balance).toBe(9000);
     expect(overview.body.policies).toHaveLength(1);
+    expect(overview.body.modules[0].id).toBe("seguros");
+    expect(overview.body.payments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ module: "seguros", kind: "collect", status: "paid", reference: res.body.policy.id }),
+      ]),
+    );
+    expect(res.body.policy.paymentId).toMatch(/^pay_/);
   });
 
   it("subscribes via Stripe gateway in demo mode and activates immediately", async () => {

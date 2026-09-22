@@ -91,6 +91,16 @@ body {
   flex: 1;
 }
 
+.nav-label {
+  margin: 16px 12px 6px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #7c93ad;
+  font-weight: 700;
+}
+.nav-label:first-child { margin-top: 0; }
+
 .nav a {
   display: flex;
   align-items: center;
@@ -323,7 +333,7 @@ body {
 
 @media (max-width: 900px) {
   .app { grid-template-columns: 72px 1fr; }
-  .brand-sub, .nav a span, .env-chip span:last-child { display: none; }
+  .brand-sub, .nav a span, .nav-label, .env-chip span:last-child { display: none; }
   .cols { grid-template-columns: 1fr; }
 }
 
