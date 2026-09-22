@@ -32,30 +32,21 @@ function icon(name) {
 
 const NAV = [
   {
-    group: "Pagos",
+    group: "Operación",
     items: [
-      { route: "overview", label: "Resumen", icon: "home", title: "Admin", sub: "Wallet de pagos y módulos conectados" },
-      { route: "payments", label: "Movimientos", icon: "card", title: "Movimientos", sub: "Todo lo que los módulos liquidan en pagos" },
+      { route: "overview", label: "Inicio", icon: "home", title: "Inicio", sub: "Cuentas, cobros y pólizas del día" },
+      { route: "accounts", label: "Cuentas", icon: "wallet", title: "Cuentas", sub: "Saldos de clientes" },
+      { route: "cobros", label: "Cobros", icon: "file", title: "Cobros", sub: "Pagos que no son una póliza" },
+      { route: "plans", label: "Planes", icon: "layers", title: "Planes", sub: "Productos de seguro" },
+      { route: "policies", label: "Pólizas", icon: "shield", title: "Pólizas", sub: "Titulares con cobertura" },
+      { route: "claims", label: "Siniestros", icon: "zap", title: "Siniestros", sub: "Pagos a beneficiarios" },
     ],
   },
   {
-    group: "Módulo cuentas",
+    group: "Admin técnico",
+    tone: "tech",
     items: [
-      { route: "accounts", label: "Cuentas", icon: "wallet", title: "Cuentas", sub: "Wallets BaaS · la recarga y el retiro pasan por pagos" },
-    ],
-  },
-  {
-    group: "Módulo cobros",
-    items: [
-      { route: "cobros", label: "Cobros", icon: "file", title: "Cobros", sub: "Solicitudes de pago sueltas, sin póliza" },
-    ],
-  },
-  {
-    group: "Módulo seguros",
-    items: [
-      { route: "plans", label: "Planes", icon: "layers", title: "Planes", sub: "Módulo de seguros · cobra la prima vía pagos" },
-      { route: "policies", label: "Pólizas", icon: "shield", title: "Pólizas", sub: "Cada póliza queda ligada a un movimiento de pago" },
-      { route: "claims", label: "Siniestros", icon: "file", title: "Siniestros", sub: "La dispersión sale por el núcleo de pagos" },
+      { route: "payments", label: "Libro y pasarelas", icon: "activity", title: "Admin técnico", sub: "Ids, pasarelas, webhooks y el libro de pagos" },
     ],
   },
 ];
@@ -155,7 +146,7 @@ function renderNav() {
   const nav = document.getElementById("nav");
   nav.innerHTML = NAV.map(
     (group) =>
-      `<div class="nav-label">${group.group}</div>` +
+      `<div class="nav-label${group.tone ? " " + group.tone : ""}">${group.group}</div>` +
       group.items
         .map((n) => `<a href="#/${n.route}" data-route="${n.route}">${icon(n.icon)}<span>${n.label}</span></a>`)
         .join(""),
@@ -233,16 +224,25 @@ const VIEWS = {
   payments: viewPayments,
 };
 
-function movementFeed(rows) {
+function movementLabel(p) {
+  if (p.description) return p.description;
+  if (p.module === "seguros" && p.kind === "disburse") return "Siniestro";
+  if (p.module === "seguros") return "Prima";
+  if (p.module === "cuentas" && p.kind === "disburse") return "Retiro";
+  if (p.module === "cuentas") return "Recarga";
+  return "Cobro";
+}
+
+function movementFeed(rows, technical) {
   if (!rows.length) {
-    return `<div class="empty">${icon("inbox")}<div>Sin movimientos. Cuentas, cobros y seguros dejan aquí cada liquidación.</div></div>`;
+    return `<div class="empty">${icon("inbox")}<div>${technical ? "El libro está vacío." : "Todavía no hay actividad."}</div></div>`;
   }
   return `<ul class="feed">${[...rows].reverse().map((p) => `
         <li>
           <div class="fi">${icon(p.kind === "disburse" ? "zap" : "card")}</div>
           <div>
-            <div class="ft"><b>${p.kind === "disburse" ? "−" : "+"}${money(p.amount)}</b> ${p.kind === "disburse" ? "dispersión" : "cobro"} · ${p.module}</div>
-            <div class="fdate"><code class="mono">${p.id}</code> · ${p.reference} · ${p.status}</div>
+            <div class="ft"><b>${p.kind === "disburse" ? "−" : "+"}${money(p.amount)}</b> ${movementLabel(p)}</div>
+            <div class="fdate">${p.status === "paid" ? "Pagado" : "Pendiente"}${technical ? ` · <code class="mono">${p.module}</code> · <code class="mono">${p.id}</code> · <code class="mono">${p.reference}</code>` : ""}</div>
           </div>
         </li>`).join("")}</ul>`;
 }
@@ -250,63 +250,50 @@ function movementFeed(rows) {
 function viewOverview() {
   const o = state.overview;
   const payments = o.payments || [];
-  const collected = payments.filter((p) => p.kind === "collect" && p.status === "paid").length;
-  const modules = o.modules || [];
+  const activePolicies = (o.policies || []).filter((p) => p.status === "active").length;
   const kpi = `
     <div class="grid-kpi">
       <div class="kpi">
         <div class="kpi-top"><div class="kpi-ico">${icon("wallet")}</div></div>
-        <div class="kpi-label">Saldo de pagos</div>
+        <div class="kpi-label">Dinero en la plataforma</div>
         <div class="kpi-value">${o.float.displayBalance}</div>
-        <div class="kpi-hint">Cobros acreditados menos dispersiones</div>
+        <div class="kpi-hint">Lo cobrado menos lo dispersado</div>
       </div>
       <div class="kpi green">
-        <div class="kpi-top"><div class="kpi-ico">${icon("card")}</div></div>
-        <div class="kpi-label">Cobros confirmados</div>
-        <div class="kpi-value">${collected}</div>
-        <div class="kpi-hint">Movimientos pagados en la wallet</div>
+        <div class="kpi-top"><div class="kpi-ico">${icon("wallet")}</div></div>
+        <div class="kpi-label">Cuentas</div>
+        <div class="kpi-value">${state.accounts.length}</div>
+        <div class="kpi-hint">Clientes con wallet</div>
       </div>
       <div class="kpi amber">
-        <div class="kpi-top"><div class="kpi-ico">${icon("layers")}</div></div>
-        <div class="kpi-label">Módulos conectados</div>
-        <div class="kpi-value">${modules.length}</div>
-        <div class="kpi-hint">${modules.map((m) => m.label).join(", ") || "Ninguno"}</div>
-      </div>
-    </div>`;
-
-  const moduleLinks = [
-    ["accounts", "wallet", "Cuentas", "Wallets y retiros"],
-    ["cobros", "file", "Cobros", "Cobros sin póliza"],
-    ["plans", "shield", "Seguros", "Primas y siniestros"],
-  ];
-  const moduleCard = `
-    <div class="card">
-      <div class="card-head"><h3>Módulos del admin</h3></div>
-      <div class="card-body">
-        <p class="plan-desc">Cada módulo opera solo. El dinero entra y sale por pagos.</p>
-        ${moduleLinks
-          .map(
-            ([route, ic, label, hint]) =>
-              `<a class="btn btn-ghost btn-block" href="#/${route}" style="margin-top:10px">${icon(ic)} ${label}<span class="meta" style="margin-left:auto">${hint}</span></a>`,
-          )
-          .join("")}
+        <div class="kpi-top"><div class="kpi-ico">${icon("shield")}</div></div>
+        <div class="kpi-label">Pólizas al día</div>
+        <div class="kpi-value">${activePolicies}</div>
+        <div class="kpi-hint">${state.cobros.length} cobros registrados</div>
       </div>
     </div>`;
 
   return `${kpi}
     <div class="cols">
       <div class="card">
-        <div class="card-head"><h3>Actividad de pagos</h3><a class="btn btn-ghost btn-sm" href="#/payments">Ver todo</a></div>
-        <div class="card-body flush">${movementFeed(payments)}</div>
+        <div class="card-head"><h3>Actividad reciente</h3><a class="btn btn-ghost btn-sm" href="#/payments">Admin técnico</a></div>
+        <div class="card-body flush">${movementFeed(payments, false)}</div>
       </div>
-      ${moduleCard}
+      <div class="card">
+        <div class="card-head"><h3>Ir a</h3></div>
+        <div class="card-body">
+          <a class="btn btn-ghost btn-block" href="#/accounts">${icon("wallet")} Cuentas</a>
+          <a class="btn btn-ghost btn-block" href="#/cobros" style="margin-top:10px">${icon("file")} Cobros</a>
+          <a class="btn btn-ghost btn-block" href="#/policies" style="margin-top:10px">${icon("shield")} Pólizas</a>
+        </div>
+      </div>
     </div>`;
 }
 
 function viewAccounts() {
   const rows = state.accounts;
   if (!rows.length) {
-    return `<div class="card"><div class="card-head"><h3>Cuentas</h3><button class="btn btn-primary btn-sm" data-open-account>${icon("plus")} Abrir cuenta</button></div><div class="card-body"><div class="empty">${icon("wallet")}<div>No hay wallets. Abre una cuenta y recárgala: el cobro queda en Movimientos.</div></div></div></div>`;
+    return `<div class="card"><div class="card-head"><h3>Cuentas</h3><button class="btn btn-primary btn-sm" data-open-account>${icon("plus")} Abrir cuenta</button></div><div class="card-body"><div class="empty">${icon("wallet")}<div>Todavía no hay clientes con saldo.</div></div></div></div>`;
   }
   const list = rows
     .map(
@@ -315,7 +302,7 @@ function viewAccounts() {
         <div class="avatar">${initials(a.name)}</div>
         <div>
           <div class="who">${a.name}</div>
-          <div class="meta"><code class="mono">${a.id}</code> · ${a.email}</div>
+          <div class="meta">${a.email}</div>
         </div>
         <div class="push">
           <b>${money(a.balance)}</b>
@@ -331,7 +318,7 @@ function viewAccounts() {
 function viewCobros() {
   const rows = state.cobros;
   if (!rows.length) {
-    return `<div class="card"><div class="card-head"><h3>Cobros</h3><button class="btn btn-primary btn-sm" data-new-cobro>${icon("plus")} Nuevo cobro</button></div><div class="card-body"><div class="empty">${icon("file")}<div>Sin cobros. Un cobro no crea póliza: solo un movimiento en pagos.</div></div></div></div>`;
+    return `<div class="card"><div class="card-head"><h3>Cobros</h3><button class="btn btn-primary btn-sm" data-new-cobro>${icon("plus")} Nuevo cobro</button></div><div class="card-body"><div class="empty">${icon("file")}<div>No hay cobros pendientes ni pagados.</div></div></div></div>`;
   }
   const list = rows
     .map((c) => {
@@ -341,7 +328,7 @@ function viewCobros() {
         <div class="avatar">${initials(c.payerName)}</div>
         <div>
           <div class="who">${c.concept}</div>
-          <div class="meta">${c.payerName} · <code class="mono">${c.id}</code>${c.paymentId ? ` · pago <code class="mono">${c.paymentId}</code>` : ""}</div>
+          <div class="meta">${c.payerName}</div>
         </div>
         <div class="push">
           <b>${money(c.amount)}</b>
@@ -390,10 +377,10 @@ function viewPolicies() {
         <div class="avatar">${initials(p.holderName)}</div>
         <div>
           <div class="who">${p.holderName}</div>
-          <div class="meta"><code class="mono">${p.id}</code> · plan ${p.planId}${p.paymentId ? ` · pago <code class="mono">${p.paymentId}</code>` : ""}</div>
+          <div class="meta">${(state.plans.find((plan) => plan.id === p.planId) || {}).name || "Plan"}</div>
         </div>
         <div class="push">
-          <span class="pill ${pending ? "amber" : ""}">${pending ? "pago pendiente" : p.status}</span>
+          <span class="pill ${pending ? "amber" : ""}">${pending ? "Pago pendiente" : "Al día"}</span>
           ${
             pending
               ? `<span class="meta">Esperando Stripe</span>`
@@ -416,16 +403,14 @@ function viewClaims() {
     .map(
       (c) => `
       <tr>
-        <td><code class="mono">${c.id}</code></td>
-        <td class="amt-pos">${money(c.amount)}</td>
         <td>${c.beneficiary}</td>
-        <td><span class="pill ${c.status === "paid" ? "" : "amber"}">${c.status}</span></td>
-        <td><code class="mono">${c.paymentId || c.payoutId}</code></td>
+        <td class="amt-pos">${money(c.amount)}</td>
+        <td><span class="pill ${c.status === "paid" ? "" : "amber"}">${c.status === "paid" ? "Pagado" : "Pendiente"}</span></td>
       </tr>`,
     )
     .join("");
-  return `<div class="card"><div class="card-head"><h3>Siniestros dispersados</h3></div><div class="card-body flush">
-    <table class="tbl"><thead><tr><th>ID</th><th>Monto</th><th>Beneficiario</th><th>Estado</th><th>Payout</th></tr></thead><tbody>${body}</tbody></table>
+  return `<div class="card"><div class="card-head"><h3>Siniestros</h3></div><div class="card-body flush">
+    <table class="tbl"><thead><tr><th>Beneficiario</th><th>Monto</th><th>Estado</th></tr></thead><tbody>${body}</tbody></table>
   </div></div>`;
 }
 
@@ -445,11 +430,11 @@ function viewPayments() {
         </li>`).join("")}</ul>`
     : `<div class="empty">${icon("inbox")}<div>Sin eventos de webhook. Ejecuta <code class="mono">stripe trigger checkout.session.completed</code>.</div></div>`;
 
-  const movements = movementFeed(state.overview.payments || []);
+  const movements = movementFeed(state.overview.payments || [], true);
 
   return `
     <div class="card" style="margin-bottom:20px">
-      <div class="card-head"><h3>Movimientos</h3><span class="badge">${(state.overview.payments || []).length}</span></div>
+      <div class="card-head"><h3>Libro de pagos</h3><span class="badge">${(state.overview.payments || []).length}</span></div>
       <div class="card-body flush">${movements}</div>
     </div>
     <div class="card" style="margin-bottom:20px">
