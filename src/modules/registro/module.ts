@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+import { PlatformError } from "../../errors.js";
 import type { CuentasModule } from "../cuentas/module.js";
 
 export interface PreRegistered {
@@ -8,6 +10,13 @@ export interface PreRegistered {
   role: "comercio" | "titular";
   status: "preinscrito";
   accountId: string;
+}
+
+export interface TosAcceptance {
+  id: string;
+  name: string;
+  email: string;
+  acceptedAt: string;
 }
 
 const SEED: Array<Omit<PreRegistered, "status" | "accountId">> = [
@@ -24,6 +33,8 @@ export class RegistroModule {
   readonly id = "registro";
   readonly label = "Preinscritos";
   private readonly members: PreRegistered[];
+  private readonly acceptances = new Map<string, TosAcceptance>();
+  private readonly sessions = new Map<string, string>();
 
   constructor(cuentas: CuentasModule) {
     this.members = SEED.map((row) => {
@@ -34,5 +45,35 @@ export class RegistroModule {
 
   list(): PreRegistered[] {
     return this.members.map((member) => ({ ...member }));
+  }
+
+  /** The SaaS app and the dashboard already hold these members. */
+  space(): "ocupado" {
+    return "ocupado";
+  }
+
+  acceptTos(input: { name: string; email: string; accepted: boolean }): { token: string; acceptance: TosAcceptance } {
+    const name = input.name.trim();
+    const email = input.email.trim();
+    if (!input.accepted) throw new PlatformError("Hay que aceptar los términos", 400);
+    if (!name || !email.includes("@")) throw new PlatformError("Nombre y email son requeridos", 400);
+    const acceptance: TosAcceptance = {
+      id: `tos_${randomBytes(4).toString("hex")}`,
+      name,
+      email,
+      acceptedAt: new Date().toISOString(),
+    };
+    const token = randomBytes(24).toString("hex");
+    this.acceptances.set(acceptance.id, acceptance);
+    this.sessions.set(token, acceptance.id);
+    return { token, acceptance };
+  }
+
+  tosSession(token: string | undefined): TosAcceptance | undefined {
+    if (!token) return undefined;
+    const id = this.sessions.get(token);
+    if (!id) return undefined;
+    const acceptance = this.acceptances.get(id);
+    return acceptance ? { ...acceptance } : undefined;
   }
 }

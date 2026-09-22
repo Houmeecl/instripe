@@ -352,7 +352,16 @@ describe("instripe BaaS platform", () => {
 
     const embedded = await request(server).get("/aplicacion");
     expect(embedded.status).toBe(200);
-    expect(embedded.text).toContain("Preinscritos");
+    expect(embedded.text).toContain("Términos");
+
+    const agent = request.agent(server);
+    const denied = await agent.post("/api/onboarding").send({ name: "Luis", email: "luis@proveedorregional.cl", accepted: false });
+    expect(denied.status).toBe(400);
+    const accepted = await agent.post("/api/onboarding").send({ name: "Luis", email: "luis@proveedorregional.cl", accepted: true });
+    expect(accepted.status).toBe(201);
+    const session = await agent.get("/api/onboarding");
+    expect(session.body).toMatchObject({ kind: "tos", accepted: true, space: "ocupado" });
+    expect(session.body.acceptance.email).toBe("luis@proveedorregional.cl");
 
     const registro = await request(server).get("/api/registro");
     expect(registro.status).toBe(200);

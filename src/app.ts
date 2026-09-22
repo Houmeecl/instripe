@@ -131,6 +131,31 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     });
   });
 
+  app.get("/api/onboarding", (req: Request, res: Response) => {
+    const acceptance = platform.registro.tosSession(readCookie(req.headers.cookie, "pr_tos"));
+    res.json({
+      kind: "tos",
+      accepted: Boolean(acceptance),
+      acceptance: acceptance ?? null,
+      space: platform.registro.space(),
+    });
+  });
+
+  app.post("/api/onboarding", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const result = platform.registro.acceptTos({
+        name: String(body.name ?? ""),
+        email: String(body.email ?? ""),
+        accepted: body.accepted === true,
+      });
+      res.setHeader("Set-Cookie", `pr_tos=${result.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`);
+      res.status(201).json({ acceptance: result.acceptance, space: platform.registro.space() });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
   app.get("/api/registro", (_req: Request, res: Response) => {
     const balances = new Map(platform.cuentas.list().map((account) => [account.id, account.balance]));
     res.json({
@@ -428,6 +453,15 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   app.use(express.static(publicDir));
 
   return app;
+}
+
+function readCookie(header: string | undefined, name: string): string | undefined {
+  if (!header) return undefined;
+  for (const part of header.split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (key === name) return decodeURIComponent(rest.join("="));
+  }
+  return undefined;
 }
 
 function checkoutReference(session: Stripe.Checkout.Session): string | undefined {
