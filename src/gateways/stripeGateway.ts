@@ -34,7 +34,7 @@ export class StripeGateway implements PaymentGateway {
         mode: "payment",
         ui_mode: embedded ? "embedded_page" : "hosted_page",
         customer_email: req.customerEmail,
-        client_reference_id: req.metadata?.policyId,
+        client_reference_id: req.metadata?.reference ?? req.metadata?.policyId,
         metadata: req.metadata,
         line_items: [
           {

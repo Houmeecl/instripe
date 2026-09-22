@@ -148,7 +148,7 @@ describe("instripe BaaS platform", () => {
     expect(platform.floatAccount.balance).toBe(0);
 
     const first = platform.fulfillCheckout(created.id, "cs_test_1");
-    expect(first.fulfilled).toBe(true);
+    expect(first).toMatchObject({ fulfilled: true, module: "seguros", reference: created.id });
     expect(platform.floatAccount.balance).toBe(9000);
     expect(platform.listPolicies()[0]?.status).toBe("active");
 
@@ -219,6 +219,20 @@ describe("instripe BaaS platform", () => {
     const payments = await request(server).get("/api/payments");
     const modules = payments.body.payments.map((p: { module: string }) => p.module);
     expect(modules).toContain("cuentas");
+  });
+
+  it("settles a cobro reference as cobros, not as a policy", () => {
+    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp" }));
+    platform.payments.openCollect({
+      module: "cobros",
+      reference: "cob_demo",
+      amount: 15000,
+      description: "Mantención mensual",
+    });
+    const result = platform.fulfillCheckout("cob_demo", "cs_test_cob");
+    expect(result).toEqual({ fulfilled: true, reference: "cob_demo", module: "cobros" });
+    expect(platform.listPolicies()).toHaveLength(0);
+    expect(platform.floatAccount.balance).toBe(15000);
   });
 
   it("collects a cobro through payments without creating a policy", async () => {

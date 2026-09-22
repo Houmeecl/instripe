@@ -34,9 +34,24 @@ const NAV = [
   {
     group: "Operación",
     items: [
-      { route: "overview", label: "Inicio", icon: "home", title: "Inicio", sub: "Cuentas, cobros y pólizas del día" },
+      { route: "overview", label: "Inicio", icon: "home", title: "Inicio", sub: "Cuentas, cobros y seguros del día" },
+    ],
+  },
+  {
+    group: "Cuentas",
+    items: [
       { route: "accounts", label: "Cuentas", icon: "wallet", title: "Cuentas", sub: "Saldos de clientes" },
-      { route: "cobros", label: "Cobros", icon: "file", title: "Cobros", sub: "Pagos que no son una póliza" },
+    ],
+  },
+  {
+    group: "Cobros",
+    items: [
+      { route: "cobros", label: "Cobros", icon: "file", title: "Cobros", sub: "Cobros sueltos a un pagador" },
+    ],
+  },
+  {
+    group: "Seguros",
+    items: [
       { route: "plans", label: "Crédito TC", icon: "layers", title: "Crédito de la TC", sub: "La póliza cubre el cupo de la tarjeta" },
       { route: "policies", label: "Pólizas", icon: "shield", title: "Pólizas", sub: "Seguro del crédito de cada tarjeta" },
       { route: "claims", label: "Siniestros", icon: "zap", title: "Siniestros", sub: "Pagos a beneficiarios" },
@@ -129,7 +144,15 @@ async function confirmReturnedCheckout() {
   try {
     const session = await api(`/api/checkout/sessions/${encodeURIComponent(sessionId)}`);
     const ref = session.reference || session.policyId || "";
-    const dest = ref.startsWith("top_") ? "#/accounts" : ref.startsWith("cob_") ? "#/cobros" : "#/policies";
+    const mod = session.module || "";
+    const dest =
+      mod === "cuentas" || ref.startsWith("top_")
+        ? "#/accounts"
+        : mod === "cobros" || ref.startsWith("cob_")
+          ? "#/cobros"
+          : mod === "seguros" || ref.startsWith("pol_")
+            ? "#/policies"
+            : "#/overview";
     history.replaceState({}, "", `${location.pathname}${dest}`);
     await refresh();
     if (session.paymentStatus === "paid") {
@@ -251,6 +274,7 @@ function viewOverview() {
   const o = state.overview;
   const payments = o.payments || [];
   const activePolicies = (o.policies || []).filter((p) => p.status === "active").length;
+  const pendingCobros = state.cobros.filter((c) => c.status === "pending_payment").length;
   const kpi = `
     <div class="grid-kpi">
       <div class="kpi">
@@ -265,11 +289,17 @@ function viewOverview() {
         <div class="kpi-value">${state.accounts.length}</div>
         <div class="kpi-hint">Clientes con wallet</div>
       </div>
+      <div class="kpi">
+        <div class="kpi-top"><div class="kpi-ico">${icon("file")}</div></div>
+        <div class="kpi-label">Cobros</div>
+        <div class="kpi-value">${state.cobros.length}</div>
+        <div class="kpi-hint">${pendingCobros ? pendingCobros + " con pago pendiente" : "Todos liquidados en pagos"}</div>
+      </div>
       <div class="kpi amber">
         <div class="kpi-top"><div class="kpi-ico">${icon("shield")}</div></div>
         <div class="kpi-label">Pólizas al día</div>
         <div class="kpi-value">${activePolicies}</div>
-        <div class="kpi-hint">${state.cobros.length} cobros registrados</div>
+        <div class="kpi-hint">Seguro del crédito de la TC</div>
       </div>
     </div>`;
 
@@ -379,7 +409,7 @@ function viewPolicies() {
           <span class="pill ${pending ? "amber" : ""}">${pending ? "Pago pendiente" : "Al día"}</span>
           ${
             pending
-              ? `<span class="meta">Esperando Stripe</span>`
+              ? `<span class="meta">Esperando el pago</span>`
               : `<button class="btn btn-ghost btn-sm" data-claim="${p.id}">${icon("zap")} Dispersar siniestro</button>`
           }
         </div>
@@ -626,7 +656,7 @@ function openWithdrawModal(account) {
 function openCobroModal() {
   mountModal(`
     <div class="modal">
-      <div class="modal-head"><h3>Nuevo cobro</h3><p>No abre una póliza. Solo crea un movimiento en pagos.</p></div>
+      <div class="modal-head"><h3>Nuevo cobro</h3><p>Queda en el libro de pagos, igual que una recarga o una prima.</p></div>
       <div class="modal-body">
         <div class="field"><label>Concepto</label><input id="b-concept" value="Mantención mensual" /></div>
         <div class="field"><label>Pagador</label><input id="b-name" value="Oficina Norte" /></div>

@@ -5,8 +5,11 @@ Express. Integra **Stripe** y una **pasarela chilena** (estilo Webpay/Khipu/Flow
 tras una misma abstracción, gestiona **wallets y un libro mayor**, y realiza
 **cobros y dispersión de fondos**.
 
-**Seguros** (planes, pólizas, siniestros) es un módulo aparte. No cobra solo:
-cada prima y cada siniestro pasa por el núcleo de pagos.
+Sobre ese núcleo corren tres módulos, y los tres liquidan en pagos:
+
+- **Cuentas**: wallets de clientes, recarga y retiro.
+- **Cobros**: un cobro suelto a un pagador.
+- **Seguros**: póliza del crédito de una tarjeta. La prima es un cobro y el siniestro es una dispersión.
 
 Corre completamente en **modo demo** sin credenciales externas. Si defines las
 credenciales, cada pasarela usa su API real automáticamente.
@@ -20,11 +23,12 @@ credenciales, cada pasarela usa su API real automáticamente.
   Adaptadores: `StripeGateway` y `ChileGateway`.
 - **Módulo Cuentas** (`src/modules/cuentas/`): wallets BaaS. Recarga y retiro
   pasan por pagos.
-- **Módulo Cobros** (`src/modules/cobros/`): solicitudes de pago sueltas, sin póliza.
-- **Módulo Seguros** (`src/modules/seguros/`): planes, pólizas y siniestros.
+- **Módulo Cobros** (`src/modules/cobros/`): solicitudes de pago a un pagador.
+- **Módulo Seguros** (`src/modules/seguros/`): póliza del crédito de una TC.
   La prima es un cobro y el siniestro es una dispersión.
-- El portal en `public/` es el **admin** que opera esos módulos.
-- **Composición** (`src/platform.ts`): arma pagos y le enchufa el módulo.
+- El portal en `public/` es el **admin** de esos módulos: operación por producto
+  y, aparte, el admin técnico del libro.
+- **Composición** (`src/platform.ts`): arma pagos y le enchufa los módulos.
 - **API + panel** (`src/app.ts`, `public/`): REST y el portal.
 
 ## Requisitos
@@ -50,7 +54,7 @@ Copia `.env.example` a `.env` (opcional). El servidor lo carga al arrancar y no 
 | `DEFAULT_GATEWAY`             | `chile`                 | Pasarela por defecto (`chile` o `stripe`).              |
 | `STRIPE_SECRET_KEY`           | _(vacío)_               | Si está presente, Stripe usa su API real.               |
 | `STRIPE_PUBLISHABLE_KEY`      | _(vacío)_               | `pk_test_…`. Monta Checkout embebido en el portal.      |
-| `STRIPE_WEBHOOK_SECRET`       | _(vacío)_               | `whsec_…` de `stripe listen`. Activa la póliza al pagar.|
+| `STRIPE_WEBHOOK_SECRET`       | _(vacío)_               | `whsec_…` de `stripe listen`. Liquida el movimiento al pagar.|
 | `CHILE_GATEWAY_API_KEY`       | _(vacío)_               | Credencial de la pasarela chilena (modo live).          |
 | `CHILE_GATEWAY_COMMERCE_CODE` | _(vacío)_               | Código de comercio de la pasarela chilena.              |
 | `PUBLIC_BASE_URL`             | `http://localhost:3000` | Base para URLs de retorno/redirección.                  |
@@ -71,12 +75,12 @@ Copia `.env.example` a `.env` (opcional). El servidor lo carga al arrancar y no 
 - `GET /health` — estado, moneda y pasarelas configuradas.
 - `GET /api/gateways` — pasarelas disponibles y cuál es la predeterminada.
 - `GET /api/plans` — planes de seguro con montos formateados.
-- `GET /api/overview` — saldo del float, pólizas y siniestros.
+- `GET /api/overview` — saldo, cuentas, cobros, pólizas y siniestros.
 - `POST /api/policies` — póliza del crédito de una TC: `{ holderName, email, cardLabel, cupo, gateway }`. La prima es el 0,60% del cupo.
   Con Stripe live y llave publicable, la respuesta trae `charge.clientSecret` y la póliza queda en `pending_payment` hasta que el pago se confirma.
-- `GET /api/checkout/sessions/:id` — estado de una sesión de Checkout; si está pagada, activa la póliza (idempotente).
+- `GET /api/checkout/sessions/:id` — estado de una sesión de Checkout; si está pagada, liquida el movimiento del módulo dueño (idempotente).
 - `POST /api/claims` — dispersar siniestro: `{ policyId, amount, beneficiary, gateway }`.
-- `POST /webhooks/stripe` — webhook de Stripe con verificación de firma. `checkout.session.completed` acredita el float y activa la póliza.
+- `POST /webhooks/stripe` — webhook de Stripe con verificación de firma. `checkout.session.completed` acredita el float y avisa al módulo dueño (`cuentas`, `cobros` o `seguros`).
 - `GET /api/stripe/events` — últimos eventos de webhook recibidos.
 
 ## Stripe (entorno de desarrollo)

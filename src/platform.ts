@@ -74,9 +74,8 @@ export class Platform {
     return this.seguros.holdPremium(input);
   }
 
-  fulfillCheckout(reference: string | null | undefined, sessionId: string): SettleResult & { policyId?: string } {
-    const result = this.payments.settle(reference, sessionId);
-    return { ...result, policyId: result.reference };
+  fulfillCheckout(reference: string | null | undefined, sessionId: string): SettleResult {
+    return this.payments.settle(reference, sessionId);
   }
 
   fileClaim(input: ClaimInput) {

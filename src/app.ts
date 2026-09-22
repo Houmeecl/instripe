@@ -52,11 +52,12 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       let fulfilled = false;
       if (event.type === "checkout.session.completed") {
         const session = event.data.object as Stripe.Checkout.Session;
-        const policyId =
-          session.metadata?.reference ?? session.metadata?.policyId ?? session.client_reference_id ?? undefined;
-        fulfilled = platform.fulfillCheckout(policyId, session.id).fulfilled;
+        const reference = checkoutReference(session);
+        const result = platform.fulfillCheckout(reference, session.id);
+        fulfilled = result.fulfilled;
+        const moduleName = result.module ?? session.metadata?.module ?? "-";
         console.log(
-          `[stripe] checkout.session.completed ${session.id} policy=${policyId ?? "-"} fulfilled=${fulfilled}`,
+          `[stripe] checkout.session.completed ${session.id} module=${moduleName} reference=${reference ?? "-"} fulfilled=${fulfilled}`,
         );
       }
       res.json({ received: true, type: event.type, fulfilled });
@@ -118,6 +119,8 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       },
       payments: platform.listPayments(),
       modules: platform.listModules(),
+      accounts: platform.cuentas.list(),
+      cobros: platform.cobros.list(),
       policies: platform.listPolicies(),
       claims: platform.listClaims(),
     });
@@ -231,18 +234,18 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     try {
       const stripe = new Stripe(config.stripeSecretKey);
       const session = await stripe.checkout.sessions.retrieve(sessionId);
-      const policyId =
-        session.metadata?.reference ?? session.metadata?.policyId ?? session.client_reference_id ?? undefined;
+      const reference = checkoutReference(session);
       const paid = session.status === "complete" && session.payment_status === "paid";
-      const fulfillment = paid
-        ? platform.fulfillCheckout(policyId, session.id)
-        : { fulfilled: false, policyId };
+      const fulfillment = paid ? platform.fulfillCheckout(reference, session.id) : { fulfilled: false as const };
+      const moduleName = fulfillment.module ?? session.metadata?.module ?? null;
+      const settledReference = fulfillment.reference ?? reference ?? null;
       res.json({
         id: session.id,
         status: session.status,
         paymentStatus: session.payment_status,
-        policyId: fulfillment.policyId ?? policyId ?? null,
-        reference: fulfillment.reference ?? policyId ?? null,
+        module: moduleName,
+        reference: settledReference,
+        policyId: moduleName === "seguros" ? settledReference : null,
         fulfilled: fulfillment.fulfilled,
       });
     } catch (error) {
@@ -272,6 +275,10 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   app.use(express.static(path.join(__dirname, "..", "public")));
 
   return app;
+}
+
+function checkoutReference(session: Stripe.Checkout.Session): string | undefined {
+  return session.metadata?.reference ?? session.metadata?.policyId ?? session.client_reference_id ?? undefined;
 }
 
 function withPublishableKey<T extends { charge: { clientSecret?: string } }>(

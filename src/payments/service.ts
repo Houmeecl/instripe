@@ -6,10 +6,10 @@ import { Ledger, type Account } from "./ledger.js";
 
 export interface MoneyMovement {
   id: string;
-  /** Which product module asked for this movement (`seguros`, …). */
+  /** Which product module asked for this movement (`cuentas`, `cobros`, `seguros`). */
   module: string;
   kind: "collect" | "disburse";
-  /** Id the module owns (póliza, siniestro, …). Payments does not interpret it. */
+  /** Id the module owns. Payments does not interpret it. */
   reference: string;
   amount: number;
   currency: string;
@@ -24,13 +24,15 @@ export interface MoneyMovement {
 export interface SettleResult {
   fulfilled: boolean;
   reference?: string;
+  /** Module that owns the reference, when the collection was found. */
+  module?: string;
 }
 
 type SettledListener = (movement: MoneyMovement) => void;
 
 /**
  * Payments core: wallets, gateways, Checkout and disbursement.
- * Product modules (seguros, …) call this. They never talk to Stripe directly.
+ * Product modules call this. They never talk to Stripe directly.
  */
 export class Payments {
   readonly ledger = new Ledger();
@@ -113,7 +115,7 @@ export class Payments {
       successUrl: `${this.config.publicBaseUrl}/?paid=1&ref=${encodeURIComponent(reference)}`,
       cancelUrl: `${this.config.publicBaseUrl}/?canceled=1`,
       returnUrl: `${this.config.publicBaseUrl}/?session_id={CHECKOUT_SESSION_ID}`,
-      metadata: { module, reference, policyId: reference },
+      metadata: { module, reference },
     });
     movement.gateway = gateway.name;
     movement.mode = charge.mode;
@@ -134,7 +136,7 @@ export class Payments {
     movement.status = "paid";
     movement.externalId = externalId;
     for (const listener of this.listeners) listener(movement);
-    return { fulfilled: true, reference };
+    return { fulfilled: true, reference, module: movement.module };
   }
 
   async disburse(input: {
