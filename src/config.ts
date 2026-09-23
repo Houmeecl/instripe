@@ -21,7 +21,11 @@ export interface AppConfig {
   appManifestPath: string;
   /** SQLite file. `:memory:` does not survive a restart. */
   databasePath: string;
+  /** Initial password used only when the user table is still empty. */
+  seedPassword: string;
 }
+
+export const DEFAULT_SEED_PASSWORD = "Antofagasta.183";
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsedPort = Number.parseInt(env.PORT ?? "3000", 10);
@@ -42,6 +46,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     appManifestPath: env.APP_MANIFEST_PATH?.trim() || "stripe-app.json",
     databasePath: env.DATABASE_PATH?.trim() || "data/platform.db",
+    seedPassword: env.AUTH_SEED_PASSWORD?.trim() || DEFAULT_SEED_PASSWORD,
   };
 }
 

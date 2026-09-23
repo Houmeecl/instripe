@@ -1,3 +1,4 @@
+import { AuthModule } from "./auth/module.js";
 import type { AppConfig, GatewayName } from "./config.js";
 import { PlatformError } from "./errors.js";
 import { AppsModule } from "./modules/apps/module.js";
@@ -30,6 +31,7 @@ export class Platform {
   readonly diseno: DisenoModule;
   readonly apps: AppsModule;
   readonly registro: RegistroModule;
+  readonly auth: AuthModule;
 
   readonly store: PlatformStore;
 
@@ -45,6 +47,7 @@ export class Platform {
     this.diseno = new DisenoModule(this.payments, this.connect, config, this.store);
     this.apps = new AppsModule(config.appManifestPath);
     this.registro = new RegistroModule(this.cuentas, this.store);
+    this.auth = new AuthModule(this.store, config.seedPassword);
   }
 
   listModules() {

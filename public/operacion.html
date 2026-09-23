@@ -14,7 +14,25 @@
     <link rel="icon" href="/favicon.png" type="image/png" />
   </head>
   <body>
-    <div class="app">
+    <div id="gate" class="gate" hidden>
+      <form id="login-form" class="gate-card">
+        <img src="/logo-mark.png" alt="" />
+        <h1>Operación</h1>
+        <p class="lede">Entra con el correo de tu rol.</p>
+        <div class="field">
+          <label for="login-email">Correo</label>
+          <input id="login-email" type="email" autocomplete="username" required />
+        </div>
+        <div class="field">
+          <label for="login-password">Clave</label>
+          <input id="login-password" type="password" autocomplete="current-password" required />
+        </div>
+        <p id="login-error" class="gate-error" hidden></p>
+        <button class="btn btn-primary btn-block" type="submit">Entrar</button>
+      </form>
+    </div>
+
+    <div class="app" hidden>
       <aside class="sidebar">
         <a class="brand" href="/">
           <img class="brand-logo" src="/logo-mark.png" alt="" />
@@ -25,6 +43,14 @@
         </a>
         <nav class="nav" id="nav"></nav>
         <div class="sidebar-foot">
+          <div class="whoami">
+            <strong id="who-name"></strong>
+            <span id="who-role"></span>
+            <div class="who-actions">
+              <button type="button" id="change-pass" class="btn btn-ghost btn-sm">Cambiar clave</button>
+              <button type="button" id="logout" class="btn btn-ghost btn-sm">Salir</button>
+            </div>
+          </div>
           <div class="env-chip" id="env-chip">
             <span class="dot"></span><span id="env-chip-text">Sandbox</span>
           </div>

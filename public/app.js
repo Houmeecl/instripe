@@ -15,6 +15,7 @@ const state = {
   stripeEvents: [],
   onboarding: null,
   registro: null,
+  user: null,
 };
 
 /* ---------------- icons ---------------- */
@@ -83,8 +84,20 @@ const NAV = [
   },
 ];
 
+function allowed(option) {
+  return Boolean(state.user && state.user.options.includes(option));
+}
+
+function visibleGroups() {
+  const options = new Set((state.user && state.user.options) || []);
+  return NAV.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => options.has(item.route)),
+  })).filter((group) => group.items.length);
+}
+
 function navItems() {
-  return NAV.flatMap((group) => group.items);
+  return visibleGroups().flatMap((group) => group.items);
 }
 
 /* ---------------- helpers ---------------- */
@@ -140,7 +153,70 @@ async function api(path, options) {
 }
 
 /* ---------------- boot ---------------- */
+let routed = false;
+
 async function boot() {
+  document.getElementById("login-form").addEventListener("submit", onLogin);
+  document.getElementById("logout").addEventListener("click", onLogout);
+  document.getElementById("change-pass").addEventListener("click", openPasswordModal);
+  try {
+    const session = await api("/api/session");
+    if (session.user) await enter(session.user);
+    else document.getElementById("gate").hidden = false;
+  } catch (err) {
+    document.getElementById("gate").hidden = false;
+    showLoginError(err.message);
+  }
+}
+
+function showLoginError(message) {
+  const el = document.getElementById("login-error");
+  el.hidden = !message;
+  el.textContent = message || "";
+}
+
+async function onLogin(event) {
+  event.preventDefault();
+  const btn = event.currentTarget.querySelector("button[type=submit]");
+  btn.disabled = true;
+  showLoginError("");
+  try {
+    const data = await api("/api/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: document.getElementById("login-email").value,
+        password: document.getElementById("login-password").value,
+      }),
+    });
+    await enter(data.user);
+  } catch (err) {
+    showLoginError(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function onLogout() {
+  try {
+    await api("/api/session", { method: "DELETE" });
+  } catch (err) {
+    toast(err.message, "error");
+    return;
+  }
+  state.user = null;
+  document.querySelector(".app").hidden = true;
+  document.getElementById("gate").hidden = false;
+  document.getElementById("login-password").value = "";
+  if (location.hash) history.replaceState({}, "", location.pathname + location.search);
+}
+
+async function enter(user) {
+  state.user = user;
+  document.getElementById("gate").hidden = true;
+  document.querySelector(".app").hidden = false;
+  document.getElementById("who-name").textContent = user.name;
+  document.getElementById("who-role").textContent = user.roleLabel;
   renderNav();
   try {
     state.health = await api("/health");
@@ -150,15 +226,64 @@ async function boot() {
     state.gateways = gw.gateways;
     state.defaultGateway = gw.defaultGateway;
     renderGatewaySelect();
-    const plans = await api("/api/plans");
-    state.plans = plans.plans;
+    state.plans = allowed("plans") ? (await api("/api/plans")).plans : [];
     await refresh();
     await confirmReturnedCheckout();
   } catch (err) {
     toast("Error al iniciar: " + err.message, "error");
   }
-  window.addEventListener("hashchange", route);
+  if (!routed) {
+    window.addEventListener("hashchange", route);
+    routed = true;
+  }
   route();
+}
+
+function openPasswordModal() {
+  mountModal(`
+    <div class="modal">
+      <div class="modal-head"><h3>Cambiar clave</h3><p>La clave nueva queda solo en tu usuario.</p></div>
+      <div class="modal-body">
+        <div class="field"><label>Clave actual</label><input id="pw-current" type="password" autocomplete="current-password" /></div>
+        <div class="field"><label>Clave nueva</label><input id="pw-next" type="password" autocomplete="new-password" /></div>
+        <div class="field"><label>Repetir clave nueva</label><input id="pw-repeat" type="password" autocomplete="new-password" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-cancel>Cancelar</button>
+        <button class="btn btn-primary" data-confirm>Guardar</button>
+      </div>
+    </div>`);
+  const root = document.getElementById("modal-root");
+  root.querySelector("[data-cancel]").onclick = closeModal;
+  root.querySelector("[data-confirm]").onclick = async (e) => {
+    const next = document.getElementById("pw-next").value;
+    const repeat = document.getElementById("pw-repeat").value;
+    if (next.length < 8) {
+      toast("La clave nueva necesita al menos 8 caracteres", "error");
+      return;
+    }
+    if (next !== repeat) {
+      toast("La clave nueva no coincide", "error");
+      return;
+    }
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      await api("/api/session/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: document.getElementById("pw-current").value,
+          newPassword: next,
+        }),
+      });
+      closeModal();
+      toast("Clave actualizada");
+    } catch (err) {
+      toast(err.message, "error");
+      btn.disabled = false;
+    }
+  };
 }
 
 async function confirmReturnedCheckout() {
@@ -192,13 +317,15 @@ async function confirmReturnedCheckout() {
 
 function renderNav() {
   const nav = document.getElementById("nav");
-  nav.innerHTML = NAV.map(
-    (group) =>
-      `<div class="nav-label${group.tone ? " " + group.tone : ""}">${group.group}</div>` +
-      group.items
-        .map((n) => `<a href="#/${n.route}" data-route="${n.route}">${icon(n.icon)}<span>${n.label}</span></a>`)
-        .join(""),
-  ).join("");
+  nav.innerHTML = visibleGroups()
+    .map(
+      (group) =>
+        `<div class="nav-label${group.tone ? " " + group.tone : ""}">${group.group}</div>` +
+        group.items
+          .map((n) => `<a href="#/${n.route}" data-route="${n.route}">${icon(n.icon)}<span>${n.label}</span></a>`)
+          .join(""),
+    )
+    .join("");
 }
 
 function renderGatewaySelect() {
@@ -230,20 +357,28 @@ function updateModeBadge() {
 
 async function refresh() {
   state.overview = await api("/api/overview");
-  const accounts = await api("/api/cuentas");
-  state.accounts = accounts.accounts || [];
-  const cobros = await api("/api/cobros");
-  state.cobros = cobros.cobros || [];
-  state.connect = (await api("/api/connect")).accounts || [];
-  state.treasury = (await api("/api/treasury")).accounts || [];
-  state.cards = (await api("/api/tarjetas")).cards || [];
-  state.design = (await api("/api/diseno")).design;
-  state.appManifest = (await api("/api/apps")).manifest;
-  applyDesign(state.design);
-  try {
-    const ev = await api("/api/stripe/events");
-    state.stripeEvents = ev.events || [];
-  } catch {
+  state.overview.payments = state.overview.payments || [];
+  state.overview.policies = state.overview.policies || [];
+  state.overview.claims = state.overview.claims || [];
+  state.overview.float = state.overview.float || { balance: 0, displayBalance: "—" };
+  state.accounts = allowed("accounts") ? (await api("/api/cuentas")).accounts || [] : [];
+  state.cobros = allowed("cobros") ? (await api("/api/cobros")).cobros || [] : [];
+  state.connect = allowed("connect") ? (await api("/api/connect")).accounts || [] : [];
+  state.treasury = allowed("treasury") ? (await api("/api/treasury")).accounts || [] : [];
+  state.cards = allowed("cards") ? (await api("/api/tarjetas")).cards || [] : [];
+  if (allowed("design")) {
+    state.design = (await api("/api/diseno")).design;
+    applyDesign(state.design);
+  }
+  state.appManifest = allowed("apps") ? (await api("/api/apps")).manifest : state.appManifest;
+  if (allowed("payments")) {
+    try {
+      const ev = await api("/api/stripe/events");
+      state.stripeEvents = ev.events || [];
+    } catch {
+      state.stripeEvents = [];
+    }
+  } else {
     state.stripeEvents = [];
   }
   try {
@@ -258,7 +393,11 @@ async function refresh() {
 /* ---------------- router ---------------- */
 function currentRoute() {
   const r = (location.hash || "#/overview").replace("#/", "");
-  return navItems().find((n) => n.route === r) ? r : "overview";
+  if (navItems().find((n) => n.route === r)) return r;
+  if (location.hash && location.hash !== "#/overview") {
+    history.replaceState({}, "", `${location.pathname}${location.search}#/overview`);
+  }
+  return "overview";
 }
 
 function route() {
@@ -339,7 +478,7 @@ function workflowStrip() {
       n: "3",
       title: "Operación",
       text: "Cuentas, cobros y crédito",
-      href: "#/accounts",
+      href: `#/${(navItems().find((item) => item.route !== "overview") || { route: "overview" }).route}`,
       state: "",
     },
   ];
@@ -355,50 +494,40 @@ function viewOverview() {
   const payments = o.payments || [];
   const activePolicies = (o.policies || []).filter((p) => p.status === "active").length;
   const pendingCobros = state.cobros.filter((c) => c.status === "pending_payment").length;
-  const kpi = `
-    <div class="grid-kpi">
-      <div class="kpi">
-        <div class="kpi-top"><div class="kpi-ico">${icon("wallet")}</div></div>
-        <div class="kpi-label">Dinero en la plataforma</div>
-        <div class="kpi-value">${o.float.displayBalance}</div>
-        <div class="kpi-hint">Lo cobrado menos lo dispersado</div>
-      </div>
-      <div class="kpi green">
-        <div class="kpi-top"><div class="kpi-ico">${icon("wallet")}</div></div>
-        <div class="kpi-label">Cuentas</div>
-        <div class="kpi-value">${state.accounts.length}</div>
-        <div class="kpi-hint">Clientes con wallet</div>
-      </div>
-      <div class="kpi">
-        <div class="kpi-top"><div class="kpi-ico">${icon("file")}</div></div>
-        <div class="kpi-label">Cobros</div>
-        <div class="kpi-value">${state.cobros.length}</div>
-        <div class="kpi-hint">${pendingCobros ? pendingCobros + " con pago pendiente" : "Todos liquidados en pagos"}</div>
-      </div>
-      <div class="kpi amber">
-        <div class="kpi-top"><div class="kpi-ico">${icon("shield")}</div></div>
-        <div class="kpi-label">Pólizas al día</div>
-        <div class="kpi-value">${activePolicies}</div>
-        <div class="kpi-hint">Seguro del crédito de la TC</div>
-      </div>
-    </div>`;
+  const kpis = [];
+  if (allowed("payments")) {
+    kpis.push(`<div class="kpi"><div class="kpi-top"><div class="kpi-ico">${icon("wallet")}</div></div><div class="kpi-label">Dinero en la plataforma</div><div class="kpi-value">${o.float.displayBalance}</div><div class="kpi-hint">Lo cobrado menos lo dispersado</div></div>`);
+  }
+  if (allowed("accounts")) {
+    kpis.push(`<div class="kpi green"><div class="kpi-top"><div class="kpi-ico">${icon("wallet")}</div></div><div class="kpi-label">Cuentas</div><div class="kpi-value">${state.accounts.length}</div><div class="kpi-hint">Clientes con wallet</div></div>`);
+  }
+  if (allowed("cobros")) {
+    kpis.push(`<div class="kpi"><div class="kpi-top"><div class="kpi-ico">${icon("file")}</div></div><div class="kpi-label">Cobros</div><div class="kpi-value">${state.cobros.length}</div><div class="kpi-hint">${pendingCobros ? pendingCobros + " con pago pendiente" : "Todos liquidados en pagos"}</div></div>`);
+  }
+  if (allowed("policies")) {
+    kpis.push(`<div class="kpi amber"><div class="kpi-top"><div class="kpi-ico">${icon("shield")}</div></div><div class="kpi-label">Pólizas al día</div><div class="kpi-value">${activePolicies}</div><div class="kpi-hint">Seguro del crédito de la TC</div></div>`);
+  }
+  const shortcuts = [
+    ["accounts", "wallet", "Cuentas"],
+    ["cobros", "file", "Cobros"],
+    ["policies", "shield", "Pólizas"],
+    ["connect", "arrow", "Comercios"],
+    ["treasury", "wallet", "Caja"],
+    ["cards", "card", "Tarjetas"],
+  ].filter(([route]) => allowed(route));
+  const activity = allowed("payments")
+    ? `<div class="card"><div class="card-head"><h3>Actividad reciente</h3><a class="btn btn-ghost btn-sm" href="#/payments">Admin técnico</a></div><div class="card-body flush">${movementFeed(payments, false)}</div></div>`
+    : "";
+  const links = shortcuts
+    .map(([route, ic, label], index) => `<a class="btn btn-ghost btn-block" href="#/${route}"${index ? ' style="margin-top:10px"' : ""}>${icon(ic)} ${label}</a>`)
+    .join("");
 
-  return `${workflowStrip()}${kpi}
-    <div class="cols">
-      <div class="card">
-        <div class="card-head"><h3>Actividad reciente</h3><a class="btn btn-ghost btn-sm" href="#/payments">Admin técnico</a></div>
-        <div class="card-body flush">${movementFeed(payments, false)}</div>
-      </div>
+  return `${workflowStrip()}${kpis.length ? `<div class="grid-kpi">${kpis.join("")}</div>` : ""}
+    <div class="cols${activity ? "" : " single"}">
+      ${activity}
       <div class="card">
         <div class="card-head"><h3>Ir a</h3></div>
-        <div class="card-body">
-          <a class="btn btn-ghost btn-block" href="#/accounts">${icon("wallet")} Cuentas</a>
-          <a class="btn btn-ghost btn-block" href="#/cobros" style="margin-top:10px">${icon("file")} Cobros</a>
-          <a class="btn btn-ghost btn-block" href="#/policies" style="margin-top:10px">${icon("shield")} Pólizas</a>
-          <a class="btn btn-ghost btn-block" href="#/connect" style="margin-top:10px">${icon("arrow")} Comercios</a>
-          <a class="btn btn-ghost btn-block" href="#/treasury" style="margin-top:10px">${icon("wallet")} Caja</a>
-          <a class="btn btn-ghost btn-block" href="#/cards" style="margin-top:10px">${icon("card")} Tarjetas</a>
-        </div>
+        <div class="card-body">${links}</div>
       </div>
     </div>`;
 }

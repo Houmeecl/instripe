@@ -4,11 +4,18 @@ import path from "node:path";
 import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app.js";
-import { loadConfig } from "../src/config.js";
+import { DEFAULT_SEED_PASSWORD, loadConfig } from "../src/config.js";
 import { Platform } from "../src/platform.js";
 
 function app(env: NodeJS.ProcessEnv = {}) {
   return createApp(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:", ...env }));
+}
+
+async function signedIn(server: ReturnType<typeof app>, email = "operacion@proveedorregional.cl") {
+  const agent = request.agent(server);
+  const login = await agent.post("/api/session").send({ email, password: DEFAULT_SEED_PASSWORD });
+  expect(login.status).toBe(201);
+  return agent;
 }
 
 function creditPolicy(overrides: Record<string, unknown> = {}) {
@@ -34,14 +41,14 @@ describe("instripe BaaS platform", () => {
   });
 
   it("lists both gateways", async () => {
-    const res = await request(app()).get("/api/gateways");
+    const res = await (await signedIn(app())).get("/api/gateways");
     expect(res.status).toBe(200);
     const names = res.body.gateways.map((g: { name: string }) => g.name).sort();
     expect(names).toEqual(["chile", "stripe"]);
   });
 
   it("lists the credit-card credit policy", async () => {
-    const res = await request(app()).get("/api/plans");
+    const res = await (await signedIn(app())).get("/api/plans");
     expect(res.status).toBe(200);
     expect(res.body.plans).toHaveLength(1);
     expect(res.body.plans[0].id).toBe("credito-tc");
@@ -51,7 +58,8 @@ describe("instripe BaaS platform", () => {
 
   it("subscribes to a plan via the Chile gateway and credits the float", async () => {
     const server = app();
-    const res = await request(server)
+    const client = await signedIn(server);
+    const res = await client
       .post("/api/policies")
       .send(creditPolicy());
     expect(res.status).toBe(201);
@@ -62,7 +70,7 @@ describe("instripe BaaS platform", () => {
     expect(res.body.charge.gateway).toBe("chile");
     expect(res.body.charge.mode).toBe("demo");
 
-    const overview = await request(server).get("/api/overview");
+    const overview = await client.get("/api/overview");
     expect(overview.body.float.balance).toBe(9000);
     expect(overview.body.policies).toHaveLength(1);
     expect(overview.body.modules.map((m: { id: string }) => m.id).sort()).toEqual([
@@ -86,7 +94,8 @@ describe("instripe BaaS platform", () => {
 
   it("subscribes via Stripe gateway in demo mode and activates immediately", async () => {
     const server = app();
-    const res = await request(server)
+    const client = await signedIn(server);
+    const res = await client
       .post("/api/policies")
       .send(creditPolicy({ holderName: "Bkr SpA", email: "ops@bkr.cl", gateway: "stripe" }));
     expect(res.status).toBe(201);
@@ -95,18 +104,19 @@ describe("instripe BaaS platform", () => {
     expect(res.body.charge.clientSecret).toBeUndefined();
     expect(res.body.charge.redirectUrl).toContain("charge=");
 
-    const overview = await request(server).get("/api/overview");
+    const overview = await client.get("/api/overview");
     expect(overview.body.float.balance).toBe(9000);
   });
 
   it("disperses a claim payout and debits the float (dispersión de fondos)", async () => {
     const server = app();
-    const sub = await request(server)
+    const client = await signedIn(server);
+    const sub = await client
       .post("/api/policies")
       .send(creditPolicy({ holderName: "Bkr SpA", email: "ops@bkr.cl", cupo: 5_000_000 }));
     const policyId = sub.body.policy.id;
 
-    const claim = await request(server)
+    const claim = await client
       .post("/api/claims")
       .send({ policyId, amount: 20000, beneficiary: "11.111.111-1", gateway: "chile" });
     expect(claim.status).toBe(201);
@@ -118,10 +128,11 @@ describe("instripe BaaS platform", () => {
 
   it("rejects a claim above coverage", async () => {
     const server = app();
-    const sub = await request(server)
+    const client = await signedIn(server);
+    const sub = await client
       .post("/api/policies")
       .send(creditPolicy({ holderName: "Ana", email: "ana@demo.cl" }));
-    const res = await request(server)
+    const res = await client
       .post("/api/claims")
       .send({ policyId: sub.body.policy.id, amount: 99999999, beneficiary: "x" });
     expect(res.status).toBe(422);
@@ -130,11 +141,12 @@ describe("instripe BaaS platform", () => {
 
   it("rejects a claim when the float has insufficient funds", async () => {
     const server = app();
-    const sub = await request(server)
+    const client = await signedIn(server);
+    const sub = await client
       .post("/api/policies")
       .send(creditPolicy({ holderName: "Ana", email: "ana@demo.cl" }));
     // insured credit is 1.500.000 but the wallet only holds the 9.000 premium
-    const res = await request(server)
+    const res = await client
       .post("/api/claims")
       .send({ policyId: sub.body.policy.id, amount: 500000, beneficiary: "x" });
     expect(res.status).toBe(502);
@@ -142,7 +154,7 @@ describe("instripe BaaS platform", () => {
   });
 
   it("validates required fields", async () => {
-    const res = await request(app()).post("/api/policies").send({ holderName: "Ana" });
+    const res = await (await signedIn(app())).post("/api/policies").send({ holderName: "Ana" });
     expect(res.status).toBe(400);
   });
 
@@ -189,7 +201,7 @@ describe("instripe BaaS platform", () => {
   });
 
   it("returns 409 when retrieving a checkout session without Stripe", async () => {
-    const res = await request(app()).get("/api/checkout/sessions/cs_test_missing");
+    const res = await (await signedIn(app())).get("/api/checkout/sessions/cs_test_missing");
     expect(res.status).toBe(409);
   });
 
@@ -203,33 +215,34 @@ describe("instripe BaaS platform", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ received: true, type: "checkout.session.completed", fulfilled: false });
 
-    const events = await request(server).get("/api/stripe/events");
+    const events = await (await signedIn(server)).get("/api/stripe/events");
     expect(events.body.events[0]).toMatchObject({ id: "evt_test_123", type: "checkout.session.completed" });
   });
 
   it("funds a BaaS account through payments and withdraws from that balance", async () => {
     const server = app();
-    const opened = await request(server).post("/api/cuentas").send({ name: "Taller Sur", email: "caja@taller.cl" });
+    const client = await signedIn(server);
+    const opened = await client.post("/api/cuentas").send({ name: "Taller Sur", email: "caja@taller.cl" });
     expect(opened.status).toBe(201);
     const id = opened.body.account.id;
 
-    const fund = await request(server).post(`/api/cuentas/${id}/recarga`).send({ amount: 10000, gateway: "chile" });
+    const fund = await client.post(`/api/cuentas/${id}/recarga`).send({ amount: 10000, gateway: "chile" });
     expect(fund.status).toBe(201);
     expect(fund.body.account.balance).toBe(10000);
     expect(fund.body.topup.status).toBe("paid");
 
-    const withdraw = await request(server)
+    const withdraw = await client
       .post(`/api/cuentas/${id}/retiro`)
       .send({ amount: 4000, destination: "12.345.678-9", gateway: "chile" });
     expect(withdraw.status).toBe(201);
     expect(withdraw.body.account.balance).toBe(6000);
 
-    const tooMuch = await request(server)
+    const tooMuch = await client
       .post(`/api/cuentas/${id}/retiro`)
       .send({ amount: 99999, destination: "12.345.678-9", gateway: "chile" });
     expect(tooMuch.status).toBe(422);
 
-    const payments = await request(server).get("/api/payments");
+    const payments = await client.get("/api/payments");
     const modules = payments.body.payments.map((p: { module: string }) => p.module);
     expect(modules).toContain("cuentas");
   });
@@ -250,7 +263,8 @@ describe("instripe BaaS platform", () => {
 
   it("collects a cobro through payments without creating a policy", async () => {
     const server = app();
-    const res = await request(server).post("/api/cobros").send({
+    const client = await signedIn(server);
+    const res = await client.post("/api/cobros").send({
       concept: "Mantención mensual",
       payerName: "Oficina Norte",
       email: "pago@norte.cl",
@@ -261,7 +275,7 @@ describe("instripe BaaS platform", () => {
     expect(res.body.cobro.status).toBe("paid");
     expect(res.body.cobro.paymentId).toMatch(/^pay_/);
 
-    const overview = await request(server).get("/api/overview");
+    const overview = await client.get("/api/overview");
     expect(overview.body.policies).toHaveLength(0);
     expect(overview.body.float.balance).toBe(15000);
     expect(overview.body.payments[0]).toMatchObject({ module: "cobros", kind: "collect", status: "paid" });
@@ -270,14 +284,15 @@ describe("instripe BaaS platform", () => {
   it("opens Connect, Treasury, a card and an app without treating them as policies", async () => {
     const manifestPath = `/tmp/instripe-app-${Date.now()}.json`;
     const server = app({ PORT: "3000", CURRENCY: "clp", APP_MANIFEST_PATH: manifestPath });
+    const client = await signedIn(server);
 
-    const connect = await request(server).post("/api/connect").send({ businessName: "Taller Sur", email: "caja@taller.cl" });
+    const connect = await client.post("/api/connect").send({ businessName: "Taller Sur", email: "caja@taller.cl" });
     expect(connect.status).toBe(201);
     expect(connect.body.account.id).toMatch(/^con_/);
     expect(connect.body.account.mode).toBe("demo");
     expect(connect.body.account.country).toBe("CL");
 
-    const funded = await request(server).post("/api/cobros").send({
+    const funded = await client.post("/api/cobros").send({
       concept: "Fondo",
       payerName: "Caja",
       email: "caja@taller.cl",
@@ -286,17 +301,17 @@ describe("instripe BaaS platform", () => {
     });
     expect(funded.status).toBe(201);
 
-    const payout = await request(server).post(`/api/connect/${connect.body.account.id}/pago`).send({ amount: 5000, gateway: "chile" });
+    const payout = await client.post(`/api/connect/${connect.body.account.id}/pago`).send({ amount: 5000, gateway: "chile" });
     expect(payout.status).toBe(201);
     expect(payout.body.payout.destination).toBe(connect.body.account.id);
 
-    const treasury = await request(server).post("/api/treasury").send({ nickname: "Caja principal" });
+    const treasury = await client.post("/api/treasury").send({ nickname: "Caja principal" });
     expect(treasury.status).toBe(201);
     expect(treasury.body.account.mode).toBe("demo");
-    const abono = await request(server).post(`/api/treasury/${treasury.body.account.id}/abono`).send({ amount: 8000, gateway: "chile" });
+    const abono = await client.post(`/api/treasury/${treasury.body.account.id}/abono`).send({ amount: 8000, gateway: "chile" });
     expect(abono.status).toBe(201);
 
-    const card = await request(server).post("/api/tarjetas").send({
+    const card = await client.post("/api/tarjetas").send({
       holderName: "Ana Díaz",
       email: "ana@demo.cl",
       phone: "+34910000000",
@@ -307,7 +322,7 @@ describe("instripe BaaS platform", () => {
     expect(card.body.card.cupo).toBe(1_500_000);
     expect(card.body.card.number).toBeUndefined();
 
-    const design = await request(server).post("/api/diseno").send({
+    const design = await client.post("/api/diseno").send({
       displayName: "instripe",
       buttonColor: "#112233",
       backgroundColor: "#f5f7fb",
@@ -318,15 +333,15 @@ describe("instripe BaaS platform", () => {
     expect(design.status).toBe(200);
     expect(design.body.design.buttonColor).toBe("#112233");
 
-    const blocked = await request(server).post("/api/apps").send({ name: "Stripe Gratis" });
+    const blocked = await client.post("/api/apps").send({ name: "Stripe Gratis" });
     expect(blocked.status).toBe(400);
 
-    const created = await request(server).post("/api/apps").send({ name: "Instripe" });
+    const created = await client.post("/api/apps").send({ name: "Instripe" });
     expect(created.status).toBe(201);
     expect(created.body.manifest.id).toBe("com.houmeecl.instripe");
     expect(created.body.upload).toBe("stripe apps upload");
 
-    const overview = await request(server).get("/api/overview");
+    const overview = await client.get("/api/overview");
     expect(overview.body.policies).toHaveLength(0);
     expect(overview.body.connect).toHaveLength(1);
     expect(overview.body.treasury[0].balance).toBe(8000);
@@ -375,10 +390,10 @@ describe("instripe BaaS platform", () => {
     const landing = await request(server).get("/");
     expect(landing.status).toBe(200);
     expect(landing.text).toContain("Proveedor Regional");
-    expect(landing.text).toContain('src="/logo.png"');
+    expect(landing.text).toContain('src="/logo-mark.png"');
     expect(landing.text).toContain('src="/aplicacion"');
     expect(landing.text).toContain("Procesador de pagos");
-    expect(landing.text).toContain("Espacio ocupado");
+    expect(landing.text).toContain("El espacio ya está ocupado.");
 
     const embedded = await request(server).get("/aplicacion");
     expect(embedded.status).toBe(200);
@@ -422,5 +437,115 @@ describe("instripe BaaS platform", () => {
     expect(second.cuentas.list().filter((account) => account.email === "caja@taller.cl")).toHaveLength(1);
     expect(second.registro.tosSession(accepted.token)?.email).toBe("luis@proveedorregional.cl");
     expect(second.floatAccount.balance).toBe(first.floatAccount.balance);
+  });
+
+  it("keeps the dashboard closed until a role signs in", async () => {
+    const server = app();
+    const anonymous = await request(server).get("/api/overview");
+    expect(anonymous.status).toBe(401);
+    expect(anonymous.body.error).toBe("Inicia sesión");
+
+    const wrong = await request(server).post("/api/session").send({
+      email: "operacion@proveedorregional.cl",
+      password: "clave-incorrecta",
+    });
+    expect(wrong.status).toBe(401);
+    expect(wrong.headers["set-cookie"]).toBeUndefined();
+
+    const missing = await request(server).post("/api/session").send({ email: "nadie@proveedorregional.cl", password: "Antofagasta.183" });
+    expect(missing.status).toBe(401);
+
+    const operacion = await request(server).post("/api/session").send({
+      email: "operacion@proveedorregional.cl",
+      password: DEFAULT_SEED_PASSWORD,
+    });
+    expect(operacion.status).toBe(201);
+    expect(operacion.body.user).toMatchObject({
+      email: "operacion@proveedorregional.cl",
+      role: "operacion",
+      roleLabel: "Operación",
+    });
+    expect(operacion.body.user.options).toEqual([
+      "overview",
+      "accounts",
+      "cobros",
+      "plans",
+      "policies",
+      "claims",
+      "connect",
+      "treasury",
+      "cards",
+      "design",
+      "apps",
+      "payments",
+    ]);
+    expect(operacion.body.user.passwordHash).toBeUndefined();
+    const cookie = String(operacion.headers["set-cookie"]);
+    expect(cookie).toContain("pr_session=");
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("SameSite=Lax");
+    const secureLogin = await request(app({ PUBLIC_BASE_URL: "https://proveedorregional.cl" }))
+      .post("/api/session")
+      .send({ email: "operacion@proveedorregional.cl", password: DEFAULT_SEED_PASSWORD });
+    expect(String(secureLogin.headers["set-cookie"])).toContain("Secure");
+
+    const comercio = await signedIn(server, "caja@taller.cl");
+    const comercioSession = await comercio.get("/api/session");
+    expect(comercioSession.body.user.options).toEqual(["overview", "accounts", "cobros", "connect"]);
+    const comercioOverview = await comercio.get("/api/overview");
+    expect(comercioOverview.status).toBe(200);
+    expect(comercioOverview.body.accounts).toBeDefined();
+    expect(comercioOverview.body.cobros).toBeDefined();
+    expect(comercioOverview.body.connect).toBeDefined();
+    expect(comercioOverview.body.payments).toBeUndefined();
+    expect(comercioOverview.body.cards).toBeUndefined();
+    expect(comercioOverview.body.policies).toBeUndefined();
+    const blocked = await comercio.get("/api/payments");
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.error).toBe("Esta opción no está en tu rol");
+    expect((await comercio.get("/api/tarjetas")).status).toBe(403);
+    expect((await comercio.get("/api/gateways")).status).toBe(200);
+
+    const titular = await signedIn(server, "ana@proveedorregional.cl");
+    expect((await titular.get("/api/session")).body.user.options).toEqual([
+      "overview",
+      "plans",
+      "policies",
+      "claims",
+      "cards",
+    ]);
+    expect((await titular.get("/api/tarjetas")).status).toBe(200);
+    expect((await titular.get("/api/cuentas")).status).toBe(403);
+    const titularOverview = await titular.get("/api/overview");
+    expect(titularOverview.body.cards).toBeDefined();
+    expect(titularOverview.body.policies).toBeDefined();
+    expect(titularOverview.body.accounts).toBeUndefined();
+
+    const changed = await titular.post("/api/session/password").send({
+      currentPassword: DEFAULT_SEED_PASSWORD,
+      newPassword: "NuevaClave.183",
+    });
+    expect(changed.status).toBe(200);
+    const stale = await request(server).post("/api/session").send({
+      email: "ana@proveedorregional.cl",
+      password: DEFAULT_SEED_PASSWORD,
+    });
+    expect(stale.status).toBe(401);
+    const next = await request(server).post("/api/session").send({
+      email: "ana@proveedorregional.cl",
+      password: "NuevaClave.183",
+    });
+    expect(next.status).toBe(201);
+
+    const out = await comercio.delete("/api/session");
+    expect(out.status).toBe(200);
+    expect(out.body.user).toBeNull();
+    expect((await comercio.get("/api/overview")).status).toBe(401);
+    expect((await request(server).get("/api/registro")).status).toBe(200);
+    expect((await request(server).post("/webhooks/stripe").set("Content-Type", "application/json").send({
+      id: "evt_public",
+      type: "checkout.session.completed",
+      data: { object: { id: "cs_public", payment_status: "unpaid" } },
+    })).status).toBe(200);
   });
 });

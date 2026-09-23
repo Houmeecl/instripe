@@ -1,7 +1,8 @@
-import express, { type Express, type Request, type Response } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import type Stripe from "stripe";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { requiredOption, type SessionUser } from "./auth/module.js";
 import { loadConfig, isStripeConfigured, isChileConfigured, type AppConfig, type GatewayName } from "./config.js";
 import { createStripe } from "./stripe/client.js";
 import { formatAmount } from "./money.js";
@@ -87,6 +88,61 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     });
   });
 
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (!req.path.startsWith("/api/") || isPublicApi(req)) {
+      next();
+      return;
+    }
+    const user = platform.auth.userFromCookie(readCookie(req.headers.cookie, "pr_session"));
+    if (!user) {
+      res.status(401).json({ error: "Inicia sesión" });
+      return;
+    }
+    res.locals.user = user;
+    const required = requiredOption(req.path);
+    if (required === "any" || (required !== "deny" && user.options.includes(required))) {
+      next();
+      return;
+    }
+    res.status(403).json({ error: "Esta opción no está en tu rol" });
+  });
+
+  app.post("/api/session", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const result = platform.auth.login(String(body.email ?? ""), String(body.password ?? ""));
+      writeSessionCookie(res, result.token, config);
+      res.status(201).json({ user: result.user });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/session", (req: Request, res: Response) => {
+    const user = platform.auth.userFromCookie(readCookie(req.headers.cookie, "pr_session"));
+    res.json({ user });
+  });
+
+  app.delete("/api/session", (req: Request, res: Response) => {
+    platform.auth.logout(readCookie(req.headers.cookie, "pr_session"));
+    writeSessionCookie(res, "", config, true);
+    res.json({ user: null });
+  });
+
+  app.post("/api/session/password", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      platform.auth.changePassword(
+        readCookie(req.headers.cookie, "pr_session"),
+        String(body.currentPassword ?? ""),
+        String(body.newPassword ?? ""),
+      );
+      res.json({ updated: true });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
   app.get("/api/gateways", (_req: Request, res: Response) => {
     res.json({ defaultGateway: config.defaultGateway, gateways: platform.listGateways() });
   });
@@ -119,25 +175,28 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   app.get("/api/overview", (_req: Request, res: Response) => {
-    const floatAccount = platform.floatAccount;
-    res.json({
-      currency: config.currency,
-      float: {
+    const user = res.locals.user as SessionUser;
+    const options = new Set(user.options);
+    const body: Record<string, unknown> = { currency: config.currency };
+    if (options.has("payments")) {
+      const floatAccount = platform.floatAccount;
+      body.float = {
         balance: floatAccount.balance,
         displayBalance: formatAmount(floatAccount.balance, config.currency),
-      },
-      payments: platform.listPayments(),
-      modules: platform.listModules(),
-      accounts: platform.cuentas.list(),
-      cobros: platform.cobros.list(),
-      policies: platform.listPolicies(),
-      claims: platform.listClaims(),
-      connect: platform.connect.list(),
-      treasury: platform.treasury.list(),
-      cards: platform.tarjetas.list(),
-      design: platform.diseno.current(),
-      app: platform.apps.current(),
-    });
+      };
+      body.payments = platform.listPayments();
+      body.modules = platform.listModules();
+    }
+    if (options.has("accounts")) body.accounts = platform.cuentas.list();
+    if (options.has("cobros")) body.cobros = platform.cobros.list();
+    if (options.has("policies")) body.policies = platform.listPolicies();
+    if (options.has("claims")) body.claims = platform.listClaims();
+    if (options.has("connect")) body.connect = platform.connect.list();
+    if (options.has("treasury")) body.treasury = platform.treasury.list();
+    if (options.has("cards")) body.cards = platform.tarjetas.list();
+    if (options.has("design")) body.design = platform.diseno.current();
+    if (options.has("apps")) body.app = platform.apps.current();
+    res.json(body);
   });
 
   app.get("/api/onboarding", (req: Request, res: Response) => {
@@ -467,6 +526,18 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   app.use(express.static(publicDir));
 
   return app;
+}
+
+function isPublicApi(req: Request): boolean {
+  if (req.path === "/api/onboarding" || req.path === "/api/registro") return true;
+  return req.path === "/api/session" && (req.method === "GET" || req.method === "POST" || req.method === "DELETE");
+}
+
+function writeSessionCookie(res: Response, token: string, config: AppConfig, clear = false): void {
+  const secure = config.publicBaseUrl.startsWith("https://") ? "; Secure" : "";
+  const value = clear ? "" : encodeURIComponent(token);
+  const maxAge = clear ? 0 : 43200;
+  res.setHeader("Set-Cookie", `pr_session=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure}`);
 }
 
 function readCookie(header: string | undefined, name: string): string | undefined {

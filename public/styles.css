@@ -775,3 +775,49 @@ code.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
 /* ---------- Skeleton ---------- */
 .skeleton-page { height: 300px; border-radius: var(--radius); background: linear-gradient(90deg, #eef1f6 25%, #f7f9fc 37%, #eef1f6 63%); background-size: 400% 100%; animation: sk 1.2s ease infinite; }
 @keyframes sk { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+
+.cols.single { grid-template-columns: 1fr; }
+
+.whoami {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.whoami strong { display: block; color: #fff; font-size: 13px; }
+.whoami span { display: block; color: #9eb0c4; font-size: 12px; margin: 2px 0 10px; }
+.who-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.sidebar .btn-ghost {
+  background: transparent;
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.sidebar .btn-ghost:hover { background: rgba(255, 255, 255, 0.08); }
+
+.gate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(900px 420px at 50% -10%, rgba(14, 62, 102, 0.16), transparent 60%),
+    var(--bg);
+}
+.gate-card {
+  width: min(420px, 100%);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow-lg);
+  padding: 28px 28px 24px;
+}
+.gate-card img {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 12px;
+}
+.gate-card h1 { margin: 14px 0 6px; font-size: 28px; letter-spacing: -0.03em; }
+.gate-card .lede { margin: 0 0 18px; color: var(--muted); }
+.gate-error { color: var(--red); font-size: 13px; margin: 0 0 12px; }
