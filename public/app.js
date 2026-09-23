@@ -1758,7 +1758,7 @@ function loadStripeJs() {
   if (window.Stripe) return Promise.resolve();
   return new Promise((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = "https://js.stripe.com/v3/";
+    script.src = "https://js.stripe.com/dahlia/stripe.js";
     script.onload = () => resolve();
     script.onerror = () => reject(new Error("No se pudo cargar Stripe.js"));
     document.head.appendChild(script);
