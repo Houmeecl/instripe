@@ -228,6 +228,62 @@ h2 {
   font-size: 14px;
 }
 
+.gallery {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  gap: 14px;
+  padding: 28px 0 8px;
+}
+
+.gallery figure,
+.band {
+  margin: 0;
+}
+
+.gallery img {
+  display: block;
+  width: 100%;
+  height: 280px;
+  object-fit: cover;
+}
+
+.gallery figcaption {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.band {
+  position: relative;
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+}
+
+.band img {
+  display: block;
+  width: 100%;
+  height: 460px;
+  object-fit: cover;
+}
+
+.band-second img { object-position: center 60%; }
+
+.band figcaption {
+  position: absolute;
+  left: max(24px, calc((100vw - 1080px) / 2));
+  bottom: 18px;
+  color: #fff;
+  font-weight: 600;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
+}
+
+.credits {
+  display: block;
+  margin-top: 6px;
+  max-width: 62ch;
+}
+
 .split,
 .measure {
   display: grid;
@@ -358,6 +414,7 @@ h2 {
 .site-foot, .app-foot {
   display: flex;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 18px 0 28px;
   color: var(--muted);
@@ -558,7 +615,8 @@ h2 {
   .site-head, main, .site-foot { width: min(100% - 32px, 1080px); }
   .site-head { flex-wrap: wrap; gap: 12px; }
   .site-head nav { order: 3; width: 100%; margin-left: 0; gap: 14px; flex-wrap: wrap; }
-  .figures, .split, .measure, .territory ul { grid-template-columns: 1fr; }
+  .figures, .split, .measure, .territory ul, .gallery { grid-template-columns: 1fr; }
+  .gallery img, .band img { height: 220px; }
   .hero { min-height: 560px; }
   .hero-copy { margin-left: 0; padding-top: 96px; }
   .split, .measure, .territory, .route { padding: 40px 0; }
