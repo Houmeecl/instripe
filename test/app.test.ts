@@ -1542,7 +1542,7 @@ describe("instripe BaaS platform", () => {
     expect(panel.text).toContain("Cada empresa y cada cliente tiene su propio usuario");
   });
 
-  it("keeps a Chilean transfer-out account pending and apart from debit cards", async () => {
+  it("stores a pending cuenta virtual and cuenta puente without moving debit balances", async () => {
     const server = app();
     const comercio = await signedIn(server, "caja@taller.cl");
     const operacion = await signedIn(server);
@@ -1590,47 +1590,32 @@ describe("instripe BaaS platform", () => {
     expect(calls).toEqual([]);
     expect(requested.status).toBe(201);
     expect(requested.body.company.balance).toBe(28_000);
-    expect(requested.body.company.card.kind).toBe("debito");
     expect(requested.body.company.card.balance).toBe(28_000);
     expect(requested.body.company.card.available).toBe(0);
     expect(requested.body.company.card.movements).toEqual(beforeMoves);
-    expect(requested.body.company.workers[0].kind).toBe("debito");
     expect(requested.body.company.workers[0].balance).toBe(12_000);
     const accounts = requested.body.company.globalAccounts.accounts;
-    expect(accounts).toHaveLength(1);
-    const chile = accounts[0];
-    expect(chile).toEqual({
-      id: chile.id,
-      kind: "cuenta_chile",
-      label: "Cuenta en Chile solo para transferir",
-      purpose: "Solo para transferir desde Chile. No recibe dinero, no emite tarjeta, no convierte a cripto y no abona a Stripe.",
-      direction: "salida",
-      status: "pending",
-      externalId: null,
-      createdAt: chile.createdAt,
-    });
-    expect(chile.id).not.toBe(requested.body.company.card.id);
-    expect(chile.id).not.toBe(workerId);
-    expect(chile).not.toHaveProperty("balance");
-    expect(chile).not.toHaveProperty("last4");
-    expect(chile).not.toHaveProperty("accountNumber");
-    expect(chile).not.toHaveProperty("rail");
-    expect(chile).not.toHaveProperty("card");
-    expect(requested.body.company.globalAccounts.notice).toContain("queda pendiente");
-    expect(requested.body.company.globalAccounts.notice).toContain("no deposita en Stripe");
-    expect(JSON.stringify(chile)).not.toContain("bridge");
+    expect(accounts.map((account: { kind: string }) => account.kind)).toEqual(["cuenta_virtual", "cuenta_puente"]);
+    expect(accounts.every((account: { status: string; externalId: null }) => account.status === "pending" && account.externalId === null)).toBe(true);
+    expect(accounts.every((account: { accountNumber?: string }) => account.accountNumber === undefined)).toBe(true);
+    const bridge = accounts.find((account: { kind: string }) => account.kind === "cuenta_puente");
+    expect(bridge.purpose).toBe("Recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.");
+    expect(accounts.find((account: { kind: string }) => account.kind === "cuenta_virtual").label).toBe("Cuenta virtual");
+    expect(requested.body.company.globalAccounts.notice).toContain("movimientos y pagos");
+    expect(requested.body.company.globalAccounts.notice).toContain("no la apertura de cuentas");
 
     const titular = await signedIn(server, "ana@proveedorregional.cl");
     const own = await titular.get("/api/empresas");
     expect(own.body.companies[0].workers[0].balance).toBe(12_000);
     expect(own.body.companies[0].globalAccounts).toBeUndefined();
-    expect(JSON.stringify(own.body)).not.toContain("cuenta_chile");
-    expect(JSON.stringify(own.body)).not.toContain("Cuenta en Chile solo para transferir");
+    expect(JSON.stringify(own.body)).not.toContain("cuenta_virtual");
     expect((await titular.post(`/api/empresas/${id}/cuentas-virtuales`)).status).toBe(403);
 
     const again = await operacion.post(`/api/empresas/${id}/cuentas-virtuales`);
     expect(again.status).toBe(200);
-    expect(again.body.company.globalAccounts.accounts.map((account: { id: string }) => account.id)).toEqual([chile.id]);
+    expect(again.body.company.globalAccounts.accounts.map((account: { id: string }) => account.id)).toEqual(
+      accounts.map((account: { id: string }) => account.id),
+    );
     expect(again.body.company.balance).toBe(28_000);
     expect((await comercio.post(`/api/empresas/${id}/cuentas-virtuales`)).status).toBe(403);
     expect((await operacion.get("/api/overview")).body.float.balance).toBe(0);
@@ -1648,13 +1633,9 @@ describe("instripe BaaS platform", () => {
     const otherRequest = await operacion.post(`/api/empresas/${otherId}/cuentas-virtuales`);
     expect(otherRequest.status).toBe(201);
     const otherAccounts = otherRequest.body.company.globalAccounts.accounts;
-    expect(otherAccounts).toHaveLength(1);
-    expect(otherAccounts[0].label).toBe("Cuenta en Chile solo para transferir");
-    expect(otherAccounts[0].direction).toBe("salida");
-    expect(otherAccounts[0].status).toBe("pending");
-    expect(otherAccounts[0].externalId).toBeNull();
+    expect(otherAccounts).toHaveLength(2);
     const otherIds = otherAccounts.map((account: { id: string }) => account.id);
-    const tallerIds = [chile.id];
+    const tallerIds = accounts.map((account: { id: string }) => account.id);
     expect(otherIds.some((accountId: string) => tallerIds.includes(accountId))).toBe(false);
 
     const tallerView = await comercio.get("/api/empresas");
@@ -1691,13 +1672,8 @@ describe("instripe BaaS platform", () => {
     expect(personal).not.toContain("data-create-gift");
     expect(clientHome).not.toContain("usersSection");
     expect(home).toContain("adminGlobalAccounts()");
-    const chileBox = panel.text.slice(panel.text.indexOf("function adminGlobalAccounts"), panel.text.indexOf("function transferLabel"));
-    expect(companyBlock).not.toContain("Cuenta en Chile solo para transferir");
-    expect(chileBox).toContain("Cuenta en Chile solo para transferir");
-    expect(chileBox).toContain("Solicitar cuenta en Chile solo para transferir");
-    expect(chileBox).toContain("Sin número de cuenta");
-    expect(chileBox).not.toContain("Recibe una transferencia destinada a Stripe");
-    expect(chileBox).not.toContain("displayBalance");
-    expect(panel.text).not.toContain("Solicitar cuenta virtual y cuenta puente");
+    expect(panel.text).toContain("Solicitar cuenta virtual y cuenta puente");
+    expect(panel.text).toContain("Recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.");
+    expect(panel.text).toContain("Sin número de cuenta");
   });
 });
