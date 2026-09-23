@@ -347,6 +347,7 @@ describe("instripe BaaS platform", () => {
     const landing = await request(server).get("/");
     expect(landing.status).toBe(200);
     expect(landing.text).toContain("Proveedor Regional");
+    expect(landing.text).toContain('src="/logo.png"');
     expect(landing.text).toContain('src="/aplicacion"');
     expect(landing.text).toContain("Procesador de pagos");
     expect(landing.text).toContain("Espacio ocupado");

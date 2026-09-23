@@ -1,7 +1,7 @@
 :root {
-  --indigo: #c4622d;
-  --indigo-600: #a34e22;
-  --indigo-050: #f8efe8;
+  --indigo: #0e3e66;
+  --indigo-600: #0a3254;
+  --indigo-050: #e8f0f8;
   --navy: #0a2540;
   --navy-800: #0c2743;
   --navy-700: #10365c;
@@ -62,18 +62,31 @@ body {
 }
 
 .brand {
-  padding: 8px 10px 22px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px 22px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.brand-logo {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 12px;
+  padding: 3px;
+  flex: none;
 }
 
 .brand-mark {
-  font-size: 22px;
+  display: block;
+  font-size: 15px;
   font-weight: 800;
   letter-spacing: -0.03em;
   color: #fff;
-}
-
-.brand-mark span {
-  color: var(--indigo);
+  line-height: 1.15;
 }
 
 .brand-sub {
@@ -287,7 +300,7 @@ body {
   position: absolute;
   inset: 0 0 auto 0;
   height: 3px;
-  background: linear-gradient(90deg, var(--indigo), #e7b08a);
+  background: linear-gradient(90deg, var(--indigo), #f3932c);
   opacity: 0.9;
 }
 
@@ -379,7 +392,8 @@ body {
 
 @media (max-width: 900px) {
   .app { grid-template-columns: 72px 1fr; }
-  .brand-sub, .nav a span, .nav-label, .env-chip span:last-child { display: none; }
+  .brand-text, .nav a span, .nav-label, .env-chip span:last-child { display: none; }
+  .brand { padding: 4px 0 16px; justify-content: center; }
   .cols, .space-banner { grid-template-columns: 1fr; }
   .space-banner { flex-direction: column; align-items: flex-start; }
 }
@@ -431,7 +445,7 @@ body {
 
 .plan.featured {
   border: 1.5px solid var(--indigo);
-  box-shadow: 0 12px 30px rgba(196, 98, 45, 0.18);
+  box-shadow: 0 12px 30px rgba(14, 62, 102, 0.18);
 }
 
 .ribbon {
@@ -517,7 +531,7 @@ body {
   font-size: 12px;
   line-height: 1.5;
 }
-.btn-primary { background: var(--indigo); color: #fff; box-shadow: 0 6px 16px rgba(196, 98, 45, 0.28); }
+.btn-primary { background: var(--indigo); color: #fff; box-shadow: 0 6px 16px rgba(14, 62, 102, 0.28); }
 .btn-primary:hover { background: var(--indigo-600); }
 .btn-ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); }
 .btn-ghost:hover { background: var(--surface-2); }

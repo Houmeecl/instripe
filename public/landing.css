@@ -1,10 +1,10 @@
 :root {
-  --ink: #17241c;
-  --sage: #e7f0e4;
-  --paper: #f7f4ee;
-  --copper: #c4622d;
-  --line: #d9d3c7;
-  --muted: #5d6b62;
+  --ink: #0e3e66;
+  --sage: #e8f1fa;
+  --paper: #f5f8fc;
+  --copper: #f3932c;
+  --line: #d5deea;
+  --muted: #4d6278;
 }
 
 * { box-sizing: border-box; }
@@ -18,7 +18,7 @@ body {
   font-family: "Outfit", sans-serif;
   color: var(--ink);
   background:
-    radial-gradient(900px 420px at 90% -10%, #f3d7c4 0%, transparent 55%),
+    radial-gradient(900px 420px at 90% -10%, #ffe4c2 0%, transparent 55%),
     var(--paper);
 }
 
@@ -31,16 +31,28 @@ body {
 }
 
 .logo {
-  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
   text-decoration: none;
-  font-family: "Fraunces", serif;
-  font-size: 22px;
-  font-weight: 560;
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: -0.02em;
 }
 
-.logo em {
-  font-style: normal;
-  color: var(--copper);
+.logo img,
+.app-logo img {
+  display: block;
+  height: 42px;
+  width: auto;
+}
+
+.lockup {
+  display: block;
+  width: min(280px, 72vw);
+  height: auto;
+  margin: 0 0 18px;
 }
 
 .site-head nav {
@@ -210,9 +222,12 @@ h1 {
   padding: 16px 20px 8px;
 }
 
-.app-bar strong {
-  font-family: "Fraunces", serif;
-  font-size: 20px;
+.app-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  color: var(--ink);
 }
 
 .app-bar span, .app-foot {

@@ -594,7 +594,7 @@ function viewCards() {
 function viewDesign() {
   const d = state.design || {
     displayName: "Proveedor Regional",
-    buttonColor: "#c4622d",
+    buttonColor: "#0e3e66",
     backgroundColor: "#f5f7fb",
     borderStyle: "rounded",
     carrierTitle: "Tu tarjeta",
