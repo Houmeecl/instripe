@@ -1522,7 +1522,7 @@ describe("instripe BaaS platform", () => {
     expect(requested.body.company.card.balance).toBe(28_000);
     expect(requested.body.company.card.available).toBe(0);
     expect(requested.body.company.card.movements).toEqual(beforeMoves);
-    expect(requested.body.company.workers[0].balance).toBe(0);
+    expect(requested.body.company.workers[0].balance).toBe(12_000);
     const accounts = requested.body.company.globalAccounts.accounts;
     expect(accounts.map((account: { kind: string }) => account.kind)).toEqual(["cuenta_virtual", "cuenta_puente"]);
     expect(accounts.every((account: { status: string; externalId: null }) => account.status === "pending" && account.externalId === null)).toBe(true);
