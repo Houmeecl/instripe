@@ -321,7 +321,12 @@ describe("instripe BaaS platform", () => {
     expect(card.status).toBe(201);
     expect(card.body.card.last4).toHaveLength(4);
     expect(card.body.card.cupo).toBe(1_500_000);
+    expect(card.body.card.mode).toBe("demo");
+    expect(card.body.card.stripeCardId).toBeUndefined();
     expect(card.body.card.number).toBeUndefined();
+    const listed = await client.get("/api/tarjetas");
+    expect(listed.body.issuing).toMatchObject({ stripeConfigured: false, active: false, chargesEnabled: false });
+    expect(listed.body.cards).toHaveLength(1);
 
     const design = await client.post("/api/diseno").send({
       displayName: "instripe",

@@ -10,6 +10,7 @@ const state = {
   connect: [],
   treasury: [],
   cards: [],
+  issuing: null,
   companies: [],
   canCreateCompany: false,
   design: null,
@@ -376,7 +377,14 @@ async function refresh() {
   state.cobros = allowed("cobros") ? (await api("/api/cobros")).cobros || [] : [];
   state.connect = allowed("connect") ? (await api("/api/connect")).accounts || [] : [];
   state.treasury = allowed("treasury") ? (await api("/api/treasury")).accounts || [] : [];
-  state.cards = allowed("cards") ? (await api("/api/tarjetas")).cards || [] : [];
+  if (allowed("cards")) {
+    const tarjetas = await api("/api/tarjetas");
+    state.cards = tarjetas.cards || [];
+    state.issuing = tarjetas.issuing || null;
+  } else {
+    state.cards = [];
+    state.issuing = null;
+  }
   if (allowed("empresas")) {
     const empresas = await api("/api/empresas");
     state.companies = empresas.companies || [];
@@ -725,8 +733,9 @@ function viewTreasury() {
 
 function viewCards() {
   const rows = state.cards;
+  const note = state.issuing ? `<p class="hint">${escapeAttr(state.issuing.detail)}</p>` : "";
   if (!rows.length) {
-    return `<div class="card"><div class="card-head"><h3>Tarjetas</h3><button class="btn btn-primary btn-sm" data-new-card>${icon("plus")} Emitir tarjeta</button></div><div class="card-body"><div class="empty">${icon("card")}<div>No hay tarjetas emitidas. El cupo es el crédito que puede cubrir el seguro.</div></div></div></div>`;
+    return `<div class="card"><div class="card-head"><h3>Tarjetas</h3><button class="btn btn-primary btn-sm" data-new-card>${icon("plus")} Emitir tarjeta</button></div><div class="card-body">${note}<div class="empty">${icon("card")}<div>No hay tarjetas emitidas. El cupo es el crédito que puede cubrir el seguro.</div></div></div></div>`;
   }
   const list = rows
     .map((c) => {
@@ -745,7 +754,7 @@ function viewCards() {
       </div>`;
     })
     .join("");
-  return `<div class="card"><div class="card-head"><h3>Tarjetas (${rows.length})</h3><button class="btn btn-primary btn-sm" data-new-card>${icon("plus")} Emitir tarjeta</button></div><div class="card-body flush"><div class="rowlist">${list}</div></div></div>`;
+  return `<div class="card"><div class="card-head"><h3>Tarjetas (${rows.length})</h3><button class="btn btn-primary btn-sm" data-new-card>${icon("plus")} Emitir tarjeta</button></div><div class="card-body">${note}</div><div class="card-body flush"><div class="rowlist">${list}</div></div></div>`;
 }
 
 function viewDesign() {
@@ -1581,14 +1590,23 @@ function openTreasuryFundModal(account) {
 }
 
 function openCardModal() {
+  const real = Boolean(state.issuing && state.issuing.stripeConfigured);
+  const identity = real
+    ? `<div class="field"><label>Nacimiento</label><input id="c-dob" type="date" /></div>
+        <div class="field"><label>Dirección</label><input id="c-line" placeholder="Calle y número" /></div>
+        <div class="field"><label>Ciudad</label><input id="c-city" /></div>
+        <div class="field"><label>País</label><input id="c-country" maxlength="2" placeholder="ES" /></div>
+        <div class="field"><label>Código postal</label><input id="c-postal" /></div>`
+    : "";
   mountModal(`
     <div class="modal">
-      <div class="modal-head"><h3>Emitir tarjeta</h3><p>Virtual. El número no pasa por este servidor. El cupo es el crédito asegurable.</p></div>
+      <div class="modal-head"><h3>Emitir tarjeta</h3><p>${real ? "Tarjeta virtual de Stripe. El número no pasa por este servidor. El cupo es el crédito asegurable." : "Sin clave de Stripe esto queda en demo y no es una tarjeta real."}</p></div>
       <div class="modal-body">
-        <div class="field"><label>Titular</label><input id="c-name" value="Ana Díaz" /></div>
-        <div class="field"><label>Email</label><input id="c-email" type="email" value="ana@demo.cl" /></div>
-        <div class="field"><label>Teléfono</label><input id="c-phone" value="+34910000000" /></div>
+        <div class="field"><label>Titular</label><input id="c-name" value="${real ? "" : "Ana Díaz"}" /></div>
+        <div class="field"><label>Email</label><input id="c-email" type="email" value="${real ? "" : "ana@demo.cl"}" /></div>
+        <div class="field"><label>Teléfono</label><input id="c-phone" placeholder="+56912345678" value="${real ? "" : "+56912345678"}" /></div>
         <div class="field"><label>Cupo</label><input id="c-cupo" type="number" value="1500000" /></div>
+        ${identity}
       </div>
       <div class="modal-foot">
         <button class="btn btn-ghost" data-cancel>Cancelar</button>
@@ -1601,15 +1619,27 @@ function openCardModal() {
     const btn = e.currentTarget;
     btn.disabled = true;
     try {
+      const payload = {
+        holderName: document.getElementById("c-name").value,
+        email: document.getElementById("c-email").value,
+        phone: document.getElementById("c-phone").value,
+        cupo: Number(document.getElementById("c-cupo").value),
+      };
+      const dob = document.getElementById("c-dob");
+      if (dob && dob.value) {
+        const [year, month, day] = dob.value.split("-").map(Number);
+        payload.dob = { day, month, year };
+        payload.address = {
+          line1: document.getElementById("c-line").value,
+          city: document.getElementById("c-city").value,
+          country: document.getElementById("c-country").value,
+          postalCode: document.getElementById("c-postal").value,
+        };
+      }
       const result = await api("/api/tarjetas", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          holderName: document.getElementById("c-name").value,
-          email: document.getElementById("c-email").value,
-          phone: document.getElementById("c-phone").value,
-          cupo: Number(document.getElementById("c-cupo").value),
-        }),
+        body: JSON.stringify(payload),
       });
       closeModal();
       await refresh();

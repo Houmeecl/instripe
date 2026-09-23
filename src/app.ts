@@ -455,8 +455,9 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
   });
 
-  app.get("/api/tarjetas", (_req: Request, res: Response) => {
-    res.json({ cards: platform.tarjetas.list() });
+  app.get("/api/tarjetas", async (_req: Request, res: Response) => {
+    const issuing = await platform.tarjetas.issuingStatus();
+    res.json({ cards: platform.tarjetas.list(), issuing });
   });
 
   app.post("/api/tarjetas", async (req: Request, res: Response) => {
@@ -465,12 +466,25 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       res.status(400).json({ error: "cupo es requerido" });
       return;
     }
+    const dob = body.dob && typeof body.dob === "object" ? body.dob : undefined;
+    const address = body.address && typeof body.address === "object" ? body.address : undefined;
     try {
       const card = await platform.tarjetas.issue({
         holderName: String(body.holderName ?? ""),
         email: String(body.email ?? ""),
         phone: String(body.phone ?? ""),
         cupo: Number(body.cupo),
+        dob: dob
+          ? { day: Number(dob.day), month: Number(dob.month), year: Number(dob.year) }
+          : undefined,
+        address: address
+          ? {
+              line1: String(address.line1 ?? ""),
+              city: String(address.city ?? ""),
+              country: String(address.country ?? ""),
+              postalCode: String(address.postalCode ?? address.postal_code ?? ""),
+            }
+          : undefined,
       });
       res.status(201).json({ card });
     } catch (error) {
