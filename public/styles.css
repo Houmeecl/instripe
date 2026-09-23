@@ -304,37 +304,100 @@ body {
   opacity: 0.9;
 }
 
-.space-banner {
+.workflow {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 0 0 22px;
+  padding: 0;
+}
+
+.workflow a {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 18px;
-  padding: 16px 18px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  height: 100%;
+  text-decoration: none;
+  color: inherit;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  padding: 14px 16px;
   box-shadow: var(--shadow-sm);
 }
 
-.space-banner strong {
-  display: block;
-  margin-bottom: 4px;
+.workflow a:focus-visible {
+  outline: 2px solid var(--indigo);
+  outline-offset: 2px;
 }
 
-.space-banner p {
-  margin: 0;
+.workflow span {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: var(--indigo-050);
+  color: var(--indigo);
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.workflow li.done span,
+.workflow li.current span {
+  background: var(--indigo);
+  color: #fff;
+}
+
+.workflow strong { font-size: 14px; }
+.workflow em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.workflow-lead {
+  margin: -6px 0 12px;
   color: var(--muted);
   font-size: 14px;
 }
 
-.space-kicker {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--indigo);
-  margin-bottom: 4px;
+.brand-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 0 0 16px;
+}
+
+.brand-row img {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 4px;
+}
+
+.swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.swatch i {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  display: block;
+  border: 1px solid var(--border);
 }
 
 .kpi .kpi-top {
@@ -394,8 +457,7 @@ body {
   .app { grid-template-columns: 72px 1fr; }
   .brand-text, .nav a span, .nav-label, .env-chip span:last-child { display: none; }
   .brand { padding: 4px 0 16px; justify-content: center; }
-  .cols, .space-banner { grid-template-columns: 1fr; }
-  .space-banner { flex-direction: column; align-items: flex-start; }
+  .cols, .workflow { grid-template-columns: 1fr; }
 }
 
 .card {

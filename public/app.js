@@ -70,7 +70,7 @@ const NAV = [
       { route: "connect", label: "Comercios", icon: "arrow", title: "Comercios", sub: "Cuentas de comercios de la plataforma" },
       { route: "treasury", label: "Caja", icon: "wallet", title: "Caja", sub: "Cuentas financieras. El abono entra por pagos" },
       { route: "cards", label: "Tarjetas", icon: "card", title: "Tarjetas", sub: "Tarjetas emitidas y su cupo" },
-      { route: "design", label: "Diseño", icon: "layers", title: "Diseño", sub: "Personalización de la tarjeta y del pago" },
+      { route: "design", label: "Diseño", icon: "layers", title: "Diseño y workflow", sub: "Marca, colores y el recorrido de la plataforma" },
       { route: "apps", label: "App", icon: "file", title: "App", sub: "Manifest de la aplicación" },
     ],
   },
@@ -315,32 +315,39 @@ function movementFeed(rows, technical) {
         </li>`).join("")}</ul>`;
 }
 
-function spaceBanner() {
-  if (!state.registro) return "";
-  const members = state.registro.members || [];
+function workflowStrip() {
+  const members = (state.registro && state.registro.members) || [];
   const known = Boolean(state.onboarding);
-  const accepted = Boolean(state.onboarding && state.onboarding.accepted);
-  const names = members.map((member) => escapeAttr(member.name)).join(" · ");
-  const status = !known
-    ? "Este dashboard ya está ocupado."
-    : accepted
-      ? "Términos aceptados. Este dashboard ya está ocupado."
-      : "Falta aceptar los términos. Este dashboard ya está ocupado.";
-  const action = known && !accepted
-    ? `<a class="btn btn-primary btn-sm" href="/#aplicacion">Aceptar términos</a>`
-    : "";
-  const detail = members.length
-    ? `${members.length} preinscritos${names ? ` · ${names}` : ""}`
-    : "Los preinscritos aparecen aquí cuando el registro responde.";
-  return `
-    <section class="space-banner">
-      <div>
-        <p class="space-kicker">${accepted ? "Listo" : known ? "Onboarding" : "Ocupado"}</p>
-        <strong>${status}</strong>
-        <p>${detail}</p>
-      </div>
-      ${action}
-    </section>`;
+  const accepted = Boolean(known && state.onboarding.accepted);
+  const names = members.map((member) => member.name).join(" · ");
+  const steps = [
+    {
+      n: "1",
+      title: "Términos",
+      text: !known ? "Onboarding" : accepted ? "Aceptados" : "Falta aceptar",
+      href: "/#aplicacion",
+      state: accepted ? "done" : "current",
+    },
+    {
+      n: "2",
+      title: "Espacio ocupado",
+      text: members.length ? `${members.length} preinscritos${names ? ` · ${names}` : ""}` : "Preinscritos con saldo en cero",
+      href: "/aplicacion",
+      state: accepted ? "done" : "",
+    },
+    {
+      n: "3",
+      title: "Operación",
+      text: "Cuentas, cobros y crédito",
+      href: "#/accounts",
+      state: "",
+    },
+  ];
+  return `<ol class="workflow">${steps
+    .map(
+      (step) => `<li class="${step.state}"><a href="${step.href}"><span>${step.n}</span><strong>${step.title}</strong><em>${escapeAttr(step.text)}</em></a></li>`,
+    )
+    .join("")}</ol>`;
 }
 
 function viewOverview() {
@@ -376,7 +383,7 @@ function viewOverview() {
       </div>
     </div>`;
 
-  return `${spaceBanner()}${kpi}
+  return `${workflowStrip()}${kpi}
     <div class="cols">
       <div class="card">
         <div class="card-head"><h3>Actividad reciente</h3><a class="btn btn-ghost btn-sm" href="#/payments">Admin técnico</a></div>
@@ -600,22 +607,38 @@ function viewDesign() {
     carrierTitle: "Tu tarjeta",
     carrierBody: "Crédito de la plataforma",
   };
-  return `<div class="cols">
+  const borders = [
+    ["rounded", "Redondeado"],
+    ["rectangular", "Rectangular"],
+    ["pill", "Píldora"],
+  ];
+  return `
+    <h2 class="section-title">Workflow</h2>
+    <p class="workflow-lead">El recorrido es aceptar los términos, ver el espacio ocupado y operar las cuentas.</p>
+    ${workflowStrip()}
+    <h2 class="section-title">Diseño</h2>
+    <div class="brand-row">
+      <img src="/logo-mark.png" alt="" />
+      <span class="swatch"><i style="background:#0e3e66"></i>Azul</span>
+      <span class="swatch"><i style="background:#f3932c"></i>Sol</span>
+      <span class="swatch"><i style="background:${escapeAttr(d.buttonColor)}"></i>Botón ${escapeAttr(d.buttonColor)}</span>
+    </div>
+    <div class="cols">
     <div class="card">
-      <div class="card-head"><h3>Personalización</h3></div>
+      <div class="card-head"><h3>Pago</h3></div>
       <div class="card-body">
-        <div class="field"><label>Nombre en Checkout</label><input id="d-name" value="${escapeAttr(d.displayName)}" /></div>
+        <div class="field"><label>Nombre en el pago</label><input id="d-name" value="${escapeAttr(d.displayName)}" /></div>
         <div class="field"><label>Color del botón</label><input id="d-button" value="${escapeAttr(d.buttonColor)}" /></div>
         <div class="field"><label>Fondo</label><input id="d-bg" value="${escapeAttr(d.backgroundColor)}" /></div>
         <div class="field"><label>Bordes</label>
           <select id="d-border">
-            ${["rounded", "rectangular", "pill"].map((v) => `<option value="${v}" ${d.borderStyle === v ? "selected" : ""}>${v}</option>`).join("")}
+            ${borders.map(([value, label]) => `<option value="${value}" ${d.borderStyle === value ? "selected" : ""}>${label}</option>`).join("")}
           </select>
         </div>
         <div class="field"><label>Texto de la tarjeta</label><input id="d-title" value="${escapeAttr(d.carrierTitle)}" /></div>
         <div class="field"><label>Detalle</label><input id="d-body" value="${escapeAttr(d.carrierBody)}" /></div>
         <button class="btn btn-primary" data-save-design>${icon("check")} Guardar diseño</button>
-        <p class="hint">Checkout usa estos colores. Si hay cuentas Connect live, también se actualiza su branding.</p>
+        <p class="hint">El nombre y estos colores salen en el pago.</p>
       </div>
     </div>
     <div class="card">
