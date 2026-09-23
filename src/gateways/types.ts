@@ -58,4 +58,6 @@ export interface PaymentGateway {
   readonly configured: boolean;
   charge(req: ChargeRequest): Promise<ChargeResult>;
   payout(req: PayoutRequest): Promise<PayoutResult>;
+  /** Available Stripe balance for a currency, in the smallest unit. */
+  available?(currency: string): Promise<number>;
 }

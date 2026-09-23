@@ -54,20 +54,41 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         }
       }
 
+      if (platform.seenWebhook(event.id)) {
+        res.json({ received: true, type: event.type, fulfilled: false, duplicate: true });
+        return;
+      }
       platform.recordWebhookEvent(event.id, event.type);
       let fulfilled = false;
       if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
         const session = event.data.object as Stripe.Checkout.Session;
-        const payable = session.payment_status === "paid" || session.payment_status === "no_payment_required";
-        if (payable) {
-          const reference = checkoutReference(session);
-          const result = platform.fulfillCheckout(reference, session.id);
-          fulfilled = result.fulfilled;
-          const moduleName = result.module ?? session.metadata?.module ?? "-";
-          console.log(
-            `[stripe] ${event.type} ${session.id} module=${moduleName} reference=${reference ?? "-"} fulfilled=${fulfilled}`,
-          );
-        }
+        const reference = checkoutReference(session);
+        const result = platform.fulfillCheckout({
+          reference,
+          sessionId: session.id,
+          amountTotal: session.amount_total,
+          currency: session.currency,
+          paymentStatus: session.payment_status,
+        });
+        fulfilled = result.fulfilled;
+        const moduleName = result.module ?? session.metadata?.module ?? "-";
+        console.log(
+          `[stripe] ${event.type} ${session.id} module=${moduleName} reference=${reference ?? "-"} fulfilled=${fulfilled}`,
+        );
+      } else if (event.type === "checkout.session.async_payment_failed") {
+        const session = event.data.object as Stripe.Checkout.Session;
+        platform.failCheckout(checkoutReference(session), event.id);
+      } else if (event.type === "charge.refunded") {
+        const charge = event.data.object as Stripe.Charge;
+        platform.reverseCollection(charge.metadata?.reference, charge.amount_refunded, event.id);
+      } else if (event.type === "charge.dispute.created") {
+        const dispute = event.data.object as Stripe.Dispute;
+        const charge = typeof dispute.charge === "string" ? undefined : dispute.charge;
+        const reference = dispute.metadata?.reference ?? charge?.metadata?.reference;
+        platform.reverseCollection(reference, dispute.amount, event.id);
+      } else if (event.type === "transfer.reversed") {
+        const transfer = event.data.object as Stripe.Transfer;
+        platform.reverseTransfer(transfer.id, transfer.amount_reversed, event.id);
       }
       res.json({ received: true, type: event.type, fulfilled });
     },
@@ -99,6 +120,10 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       return;
     }
     res.locals.user = user;
+    if (user.mustChangePassword && req.path !== "/api/session/password") {
+      res.status(403).json({ error: "Cambia la clave inicial antes de operar" });
+      return;
+    }
     const required = requiredOption(req.path);
     if (required === "any" || (required !== "deny" && user.options.includes(required))) {
       next();
@@ -132,12 +157,12 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   app.post("/api/session/password", (req: Request, res: Response) => {
     const body = req.body ?? {};
     try {
-      platform.auth.changePassword(
+      const user = platform.auth.changePassword(
         readCookie(req.headers.cookie, "pr_session"),
         String(body.currentPassword ?? ""),
         String(body.newPassword ?? ""),
       );
-      res.json({ updated: true });
+      res.json({ updated: true, user });
     } catch (error) {
       handleError(error, res);
     }
@@ -169,6 +194,10 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         balance: wallet.balance,
         displayBalance: formatAmount(wallet.balance, config.currency),
       },
+      transferable: {
+        balance: platform.transferableAccount.balance,
+        displayBalance: formatAmount(platform.transferableAccount.balance, config.currency),
+      },
       payments: platform.listPayments(),
       modules: platform.listModules(),
     });
@@ -184,14 +213,18 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         balance: floatAccount.balance,
         displayBalance: formatAmount(floatAccount.balance, config.currency),
       };
+      body.transferable = {
+        balance: platform.transferableAccount.balance,
+        displayBalance: formatAmount(platform.transferableAccount.balance, config.currency),
+      };
       body.payments = platform.listPayments();
       body.modules = platform.listModules();
     }
-    if (options.has("accounts")) body.accounts = platform.cuentas.list();
+    if (options.has("accounts")) body.accounts = platform.cuentas.listFor(user);
     if (options.has("cobros")) body.cobros = platform.cobros.list();
     if (options.has("policies")) body.policies = platform.listPolicies();
     if (options.has("claims")) body.claims = platform.listClaims();
-    if (options.has("connect")) body.connect = platform.connect.list();
+    if (options.has("connect")) body.connect = platform.connect.list(user);
     if (options.has("treasury")) body.treasury = platform.treasury.list();
     if (options.has("cards")) body.cards = platform.tarjetas.list();
     if (options.has("design")) body.design = platform.diseno.current();
@@ -239,15 +272,18 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   app.get("/api/cuentas", (_req: Request, res: Response) => {
-    res.json({ accounts: platform.cuentas.list() });
+    const user = res.locals.user as SessionUser;
+    res.json({ accounts: platform.cuentas.listFor(user) });
   });
 
   app.post("/api/cuentas", (req: Request, res: Response) => {
     const body = req.body ?? {};
+    const user = res.locals.user as SessionUser;
     try {
       const account = platform.cuentas.open({
         name: String(body.name ?? ""),
         email: String(body.email ?? ""),
+        memberId: user.role === "operacion" ? undefined : user.memberId,
       });
       res.status(201).json({ account });
     } catch (error) {
@@ -262,11 +298,13 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       return;
     }
     try {
+      const user = res.locals.user as SessionUser;
       const result = await platform.cuentas.fund({
         accountId: String(req.params.id),
         amount: Number(body.amount),
         gateway: asGateway(body.gateway, config.defaultGateway),
         email: body.email ? String(body.email) : undefined,
+        actor: user,
       });
       res.status(201).json(withPublishableKey(result, config));
     } catch (error) {
@@ -281,13 +319,16 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       return;
     }
     try {
-      const result = await platform.cuentas.withdraw({
+      const user = res.locals.user as SessionUser;
+      const result = platform.cuentas.withdraw({
         accountId: String(req.params.id),
         amount: Number(body.amount),
         destination: String(body.destination),
         gateway: asGateway(body.gateway, config.defaultGateway),
+        requestedBy: user.id,
+        actor: user,
       });
-      res.status(201).json(result);
+      res.status(202).json(result);
     } catch (error) {
       handleError(error, res);
     }
@@ -318,15 +359,18 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   app.get("/api/connect", (_req: Request, res: Response) => {
-    res.json({ accounts: platform.connect.list() });
+    const user = res.locals.user as SessionUser;
+    res.json({ accounts: platform.connect.list(user) });
   });
 
   app.post("/api/connect", async (req: Request, res: Response) => {
     const body = req.body ?? {};
+    const user = res.locals.user as SessionUser;
     try {
       const account = await platform.connect.create({
         businessName: String(body.businessName ?? ""),
         email: String(body.email ?? ""),
+        actor: user,
       });
       res.status(201).json({ account });
     } catch (error) {
@@ -341,12 +385,14 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       return;
     }
     try {
-      const result = await platform.connect.payout({
+      const user = res.locals.user as SessionUser;
+      const result = platform.connect.payout({
         accountId: String(req.params.id),
         amount: Number(body.amount),
         gateway: asGateway(body.gateway, config.defaultGateway),
+        requestedBy: user.id,
       });
-      res.status(201).json(result);
+      res.status(202).json(result);
     } catch (error) {
       handleError(error, res);
     }
@@ -562,7 +608,15 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       const session = await stripe.checkout.sessions.retrieve(sessionId);
       const reference = checkoutReference(session);
       const paid = session.status === "complete" && session.payment_status === "paid";
-      const fulfillment = paid ? platform.fulfillCheckout(reference, session.id) : { fulfilled: false as const };
+      const fulfillment = paid
+        ? platform.fulfillCheckout({
+            reference,
+            sessionId: session.id,
+            amountTotal: session.amount_total,
+            currency: session.currency,
+            paymentStatus: session.payment_status,
+          })
+        : { fulfilled: false as const };
       const moduleName = fulfillment.module ?? session.metadata?.module ?? null;
       const settledReference = fulfillment.reference ?? reference ?? null;
       res.json({
@@ -579,6 +633,24 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
   });
 
+  app.get("/api/salidas", (_req: Request, res: Response) => {
+    res.json({ exits: platform.listExits().filter((exit) => exit.status === "pending") });
+  });
+
+  app.post("/api/salidas/:id/confirmar", async (req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    if (user.role !== "operacion") {
+      res.status(403).json({ error: "Otro usuario de operación tiene que confirmar la salida" });
+      return;
+    }
+    try {
+      const result = await platform.confirmExit(String(req.params.id), user.id);
+      res.status(201).json({ ...result, floatBalance: platform.floatAccount.balance });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
   app.post("/api/claims", async (req: Request, res: Response) => {
     const body = req.body ?? {};
     if (!body.policyId || !body.beneficiary || body.amount === undefined) {
@@ -586,13 +658,15 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       return;
     }
     try {
+      const user = res.locals.user as SessionUser;
       const result = await platform.fileClaim({
         policyId: String(body.policyId),
         amount: Number(body.amount),
         beneficiary: String(body.beneficiary),
         gateway: asGateway(body.gateway, config.defaultGateway),
+        requestedBy: user.id,
       });
-      res.status(201).json(result);
+      res.status(202).json(result);
     } catch (error) {
       handleError(error, res);
     }

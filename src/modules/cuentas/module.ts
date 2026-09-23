@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { GatewayName } from "../../config.js";
 import { PlatformError } from "../../errors.js";
 import type { Payments } from "../../payments/service.js";
-import type { ChargeResult, PayoutResult } from "../../gateways/types.js";
+import type { ChargeResult } from "../../gateways/types.js";
 import type { PlatformStore } from "../../store/db.js";
 
 export interface CustomerAccount {
@@ -10,6 +10,7 @@ export interface CustomerAccount {
   name: string;
   email: string;
   ledgerAccountId: string;
+  memberId?: string;
   createdAt: string;
 }
 
@@ -59,13 +60,21 @@ export class CuentasModule {
   }
 
   list() {
-    return [...this.accounts.values()].map((account) => ({
-      ...account,
-      balance: this.balanceOf(account),
-    }));
+    return [...this.accounts.values()].map((account) => this.withBalance(account));
   }
 
-  open(input: { name: string; email: string }): CustomerAccount {
+  listFor(actor: { role: string; memberId?: string }) {
+    return this.list().filter((account) => this.owns(actor, account));
+  }
+
+  bindMember(accountId: string, memberId: string): void {
+    const account = this.accounts.get(accountId);
+    if (!account || account.memberId) return;
+    account.memberId = memberId;
+    this.store.put("cuentas", account.id, account);
+  }
+
+  open(input: { name: string; email: string; memberId?: string }): CustomerAccount {
     const name = input.name.trim();
     const email = input.email.trim();
     if (!name || !email) throw new PlatformError("name y email son requeridos", 400);
@@ -79,6 +88,7 @@ export class CuentasModule {
       name,
       email,
       ledgerAccountId: ledgerAccount.id,
+      memberId: input.memberId,
       createdAt: new Date().toISOString(),
     };
     this.accounts.set(account.id, account);
@@ -86,12 +96,18 @@ export class CuentasModule {
     return account;
   }
 
-  async fund(input: { accountId: string; amount: number; gateway: GatewayName; email?: string }): Promise<{
+  async fund(input: {
+    accountId: string;
+    amount: number;
+    gateway: GatewayName;
+    email?: string;
+    actor: { role: string; memberId?: string };
+  }): Promise<{
     account: CustomerAccount & { balance: number };
     topup: Topup;
     charge: ChargeResult;
   }> {
-    const account = this.require(input.accountId);
+    const account = this.requireOwned(input.accountId, input.actor);
     if (input.amount <= 0) throw new PlatformError("El monto de la recarga debe ser positivo", 400);
     const topup: Topup = {
       id: `top_${randomUUID().slice(0, 8)}`,
@@ -121,35 +137,48 @@ export class CuentasModule {
     }
   }
 
-  async withdraw(input: {
+  withdraw(input: {
     accountId: string;
     amount: number;
     destination: string;
     gateway: GatewayName;
-  }): Promise<{ account: CustomerAccount & { balance: number }; payout: PayoutResult }> {
-    const account = this.require(input.accountId);
+    requestedBy: string;
+    actor: { role: string; memberId?: string };
+  }): { account: CustomerAccount & { balance: number }; exitId: string } {
+    const account = this.requireOwned(input.accountId, input.actor);
     if (input.amount <= 0) throw new PlatformError("El monto del retiro debe ser positivo", 400);
     if (!input.destination.trim()) throw new PlatformError("destination es requerido", 400);
     if (this.balanceOf(account) < input.amount) {
       throw new PlatformError("Saldo insuficiente en la cuenta", 422);
     }
     const withdrawalId = `ret_${randomUUID().slice(0, 8)}`;
-    const { payout } = await this.payments.disburse({
+    const exit = this.payments.requestExit({
       module: MODULE,
       reference: withdrawalId,
       amount: input.amount,
       description: `Retiro ${account.name}`,
       destination: input.destination.trim(),
       gateway: input.gateway,
+      requestedBy: input.requestedBy,
+      ledgerAccountId: account.ledgerAccountId,
     });
-    this.payments.ledger.post("debit", account.ledgerAccountId, input.amount, `Retiro ${withdrawalId}`);
-    return { account: { ...account, balance: this.balanceOf(account) }, payout };
+    return { account: this.withBalance(account), exitId: exit.id };
   }
 
-  private require(id: string): CustomerAccount {
+  private requireOwned(id: string, actor: { role: string; memberId?: string }): CustomerAccount {
     const account = this.accounts.get(id);
     if (!account) throw new PlatformError(`Cuenta desconocida: ${id}`, 404);
+    if (!this.owns(actor, account)) throw new PlatformError("Esta cuenta no está en tu rol", 403);
     return account;
+  }
+
+  private owns(actor: { role: string; memberId?: string }, account: CustomerAccount): boolean {
+    if (actor.role === "operacion") return true;
+    return Boolean(actor.memberId && account.memberId === actor.memberId);
+  }
+
+  private withBalance(account: CustomerAccount): CustomerAccount & { balance: number } {
+    return { ...account, balance: this.balanceOf(account) };
   }
 
   private balanceOf(account: CustomerAccount): number {

@@ -12,7 +12,7 @@ import { RegistroModule } from "./modules/registro/module.js";
 import { TarjetasModule } from "./modules/tarjetas/module.js";
 import { TreasuryModule } from "./modules/treasury/module.js";
 import type { Account } from "./payments/ledger.js";
-import { Payments, type SettleResult } from "./payments/service.js";
+import { Payments, type CheckoutSettlement, type SettleResult } from "./payments/service.js";
 import { PlatformStore } from "./store/db.js";
 
 export { PlatformError };
@@ -43,7 +43,7 @@ export class Platform {
     this.cuentas = new CuentasModule(this.payments, this.store);
     this.cobros = new CobrosModule(this.payments, this.store);
     this.seguros = new SegurosModule(this.payments);
-    this.connect = new ConnectModule(this.payments, config);
+    this.connect = new ConnectModule(this.payments, config, this.store);
     this.treasury = new TreasuryModule(this.payments, config);
     this.tarjetas = new TarjetasModule(this.payments, config, this.store);
     this.diseno = new DisenoModule(this.payments, this.connect, config, this.store);
@@ -63,6 +63,10 @@ export class Platform {
 
   get floatAccount(): Account {
     return this.payments.walletAccount;
+  }
+
+  get transferableAccount(): Account {
+    return this.payments.transferableAccount;
   }
 
   plans() {
@@ -101,11 +105,54 @@ export class Platform {
     return this.seguros.holdPremium(input);
   }
 
-  fulfillCheckout(reference: string | null | undefined, sessionId: string): SettleResult {
-    return this.payments.settle(reference, sessionId);
+  fulfillCheckout(input: CheckoutSettlement): SettleResult {
+    return this.payments.settleCheckout(input);
   }
 
-  fileClaim(input: ClaimInput) {
+  failCheckout(reference: string | null | undefined, eventKey: string): boolean {
+    return this.payments.failCheckout(reference, eventKey);
+  }
+
+  reverseCollection(reference: string | undefined, amount: number, eventKey: string): boolean {
+    return this.payments.reverseCollection(reference, amount, eventKey);
+  }
+
+  reverseTransfer(transferId: string, amountReversed: number, eventKey: string): boolean {
+    return this.payments.reverseTransfer(transferId, amountReversed, eventKey);
+  }
+
+  seenWebhook(id: string): boolean {
+    return this.payments.seenWebhook(id);
+  }
+
+  listExits() {
+    return this.payments.listExits();
+  }
+
+  async confirmExit(id: string, authorizerId: string) {
+    const pending = this.payments.getExit(id);
+    if (!pending || pending.status !== "pending") throw new PlatformError("Esa salida no está pendiente", 404);
+    if (pending.requestedBy === authorizerId) {
+      throw new PlatformError("Otro usuario de operación tiene que confirmar la salida", 403);
+    }
+    if (pending.ledgerAccountId) {
+      const balance = this.payments.ledger.getAccount(pending.ledgerAccountId)?.balance ?? 0;
+      if (balance < pending.amount) throw new PlatformError("Saldo insuficiente en la cuenta", 422);
+      this.payments.ledger.post("debit", pending.ledgerAccountId, pending.amount, pending.description);
+    }
+    try {
+      const result = await this.payments.confirmExit(id, authorizerId);
+      if (pending.module === "seguros") this.seguros.markClaimPaid(pending.reference);
+      return result;
+    } catch (error) {
+      if (pending.ledgerAccountId) {
+        this.payments.ledger.post("credit", pending.ledgerAccountId, pending.amount, `Reverso ${pending.description}`);
+      }
+      throw error;
+    }
+  }
+
+  fileClaim(input: ClaimInput & { requestedBy: string }) {
     return this.seguros.fileClaim(input);
   }
 }

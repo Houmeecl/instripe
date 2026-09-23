@@ -7,6 +7,8 @@ import { createApp } from "../src/app.js";
 import { DEFAULT_SEED_PASSWORD, loadConfig } from "../src/config.js";
 import { Platform } from "../src/platform.js";
 
+const TEST_PASSWORD = "Operacion.1831";
+
 function app(env: NodeJS.ProcessEnv = {}) {
   return createApp(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:", ...env }));
 }
@@ -15,7 +17,20 @@ async function signedIn(server: ReturnType<typeof app>, email = "operacion@prove
   const agent = request.agent(server);
   const login = await agent.post("/api/session").send({ email, password: DEFAULT_SEED_PASSWORD });
   expect(login.status).toBe(201);
+  if (login.body.user.mustChangePassword) {
+    const changed = await agent.post("/api/session/password").send({
+      currentPassword: DEFAULT_SEED_PASSWORD,
+      newPassword: TEST_PASSWORD,
+    });
+    expect(changed.status).toBe(200);
+    expect(changed.body.user.mustChangePassword).toBe(false);
+  }
   return agent;
+}
+
+async function confirmExit(server: ReturnType<typeof app>, exitId: string) {
+  const control = await signedIn(server, "control@proveedorregional.cl");
+  return control.post(`/api/salidas/${exitId}/confirmar`);
 }
 
 function creditPolicy(overrides: Record<string, unknown> = {}) {
@@ -120,11 +135,15 @@ describe("instripe BaaS platform", () => {
     const claim = await client
       .post("/api/claims")
       .send({ policyId, amount: 20000, beneficiary: "11.111.111-1", gateway: "chile" });
-    expect(claim.status).toBe(201);
-    expect(claim.body.claim.status).toBe("paid");
-    expect(claim.body.payout.gateway).toBe("chile");
+    expect(claim.status).toBe(202);
+    expect(claim.body.claim.status).toBe("pending");
+    expect(claim.body.floatBalance).toBe(30000);
+    const confirmed = await confirmExit(server, claim.body.exitId);
+    expect(confirmed.status).toBe(201);
+    expect(confirmed.body.payout.gateway).toBe("chile");
+    expect(confirmed.body.exit.requestedBy).not.toBe(confirmed.body.exit.authorizedBy);
     // premium is 0,60% of 5.000.000 = 30.000; payout 20.000 leaves 10.000
-    expect(claim.body.floatBalance).toBe(10000);
+    expect(confirmed.body.floatBalance).toBe(10000);
   });
 
   it("rejects a claim above coverage", async () => {
@@ -150,8 +169,11 @@ describe("instripe BaaS platform", () => {
     const res = await client
       .post("/api/claims")
       .send({ policyId: sub.body.policy.id, amount: 500000, beneficiary: "x" });
-    expect(res.status).toBe(502);
-    expect(res.body.error).toContain("Insufficient funds");
+    expect(res.status).toBe(202);
+    const confirmed = await confirmExit(server, res.body.exitId);
+    expect(confirmed.status).toBe(502);
+    expect(confirmed.body.error).toContain("Insufficient funds");
+    expect((await client.get("/api/overview")).body.float.balance).toBe(9000);
   });
 
   it("validates required fields", async () => {
@@ -173,12 +195,44 @@ describe("instripe BaaS platform", () => {
     expect(created.status).toBe("pending_payment");
     expect(platform.floatAccount.balance).toBe(0);
 
-    const first = platform.fulfillCheckout(created.id, "cs_test_1");
+    const wrong = platform.fulfillCheckout({
+      reference: created.id,
+      sessionId: "cs_test_1",
+      amountTotal: 1,
+      currency: "clp",
+      paymentStatus: "paid",
+    });
+    expect(wrong.fulfilled).toBe(false);
+    expect(platform.floatAccount.balance).toBe(0);
+
+    const unpaid = platform.fulfillCheckout({
+      reference: created.id,
+      sessionId: "cs_test_1",
+      amountTotal: 9000,
+      currency: "clp",
+      paymentStatus: "no_payment_required",
+    });
+    expect(unpaid.fulfilled).toBe(false);
+
+    const first = platform.fulfillCheckout({
+      reference: created.id,
+      sessionId: "cs_test_1",
+      amountTotal: 9000,
+      currency: "clp",
+      paymentStatus: "paid",
+    });
     expect(first).toMatchObject({ fulfilled: true, module: "seguros", reference: created.id });
     expect(platform.floatAccount.balance).toBe(9000);
+    expect(platform.transferableAccount.balance).toBe(0);
     expect(platform.listPolicies()[0]?.status).toBe("active");
 
-    const second = platform.fulfillCheckout(created.id, "cs_test_1");
+    const second = platform.fulfillCheckout({
+      reference: created.id,
+      sessionId: "cs_test_1",
+      amountTotal: 9000,
+      currency: "clp",
+      paymentStatus: "paid",
+    });
     expect(second.fulfilled).toBe(false);
     expect(platform.floatAccount.balance).toBe(9000);
   });
@@ -197,6 +251,7 @@ describe("instripe BaaS platform", () => {
         amount: 1000,
         beneficiary: "12.345.678-9",
         gateway: "chile",
+        requestedBy: "usr_operacion",
       }),
     ).rejects.toMatchObject({ status: 409 });
   });
@@ -235,8 +290,11 @@ describe("instripe BaaS platform", () => {
     const withdraw = await client
       .post(`/api/cuentas/${id}/retiro`)
       .send({ amount: 4000, destination: "12.345.678-9", gateway: "chile" });
-    expect(withdraw.status).toBe(201);
-    expect(withdraw.body.account.balance).toBe(6000);
+    expect(withdraw.status).toBe(202);
+    expect(withdraw.body.account.balance).toBe(10000);
+    const confirmed = await confirmExit(server, withdraw.body.exitId);
+    expect(confirmed.status).toBe(201);
+    expect((await client.get("/api/cuentas")).body.accounts.find((account: { id: string }) => account.id === id).balance).toBe(6000);
 
     const tooMuch = await client
       .post(`/api/cuentas/${id}/retiro`)
@@ -256,7 +314,13 @@ describe("instripe BaaS platform", () => {
       amount: 15000,
       description: "Mantención mensual",
     });
-    const result = platform.fulfillCheckout("cob_demo", "cs_test_cob");
+    const result = platform.fulfillCheckout({
+      reference: "cob_demo",
+      sessionId: "cs_test_cob",
+      amountTotal: 15000,
+      currency: "clp",
+      paymentStatus: "paid",
+    });
     expect(result).toEqual({ fulfilled: true, reference: "cob_demo", module: "cobros" });
     expect(platform.listPolicies()).toHaveLength(0);
     expect(platform.floatAccount.balance).toBe(15000);
@@ -303,8 +367,10 @@ describe("instripe BaaS platform", () => {
     expect(funded.status).toBe(201);
 
     const payout = await client.post(`/api/connect/${connect.body.account.id}/pago`).send({ amount: 5000, gateway: "chile" });
-    expect(payout.status).toBe(201);
-    expect(payout.body.payout.destination).toBe(connect.body.account.id);
+    expect(payout.status).toBe(202);
+    const confirmed = await confirmExit(server, payout.body.exitId);
+    expect(confirmed.status).toBe(201);
+    expect(confirmed.body.payout.destination).toBe(connect.body.account.id);
 
     const treasury = await client.post("/api/treasury").send({ nickname: "Caja principal" });
     expect(treasury.status).toBe(201);
@@ -431,7 +497,12 @@ describe("instripe BaaS platform", () => {
     const env = { PORT: "3000", CURRENCY: "clp", DATABASE_PATH: databasePath };
     const first = new Platform(loadConfig(env));
     const opened = first.cuentas.open({ name: "Bodega Centro", email: "bodega@proveedorregional.cl" });
-    const funded = await first.cuentas.fund({ accountId: opened.id, amount: 8000, gateway: "chile" });
+    const funded = await first.cuentas.fund({
+      accountId: opened.id,
+      amount: 8000,
+      gateway: "chile",
+      actor: { role: "operacion" },
+    });
     expect(funded.account.balance).toBe(8000);
     const accepted = first.registro.acceptTos({ name: "Luis", email: "luis@proveedorregional.cl", accepted: true });
 
@@ -530,7 +601,7 @@ describe("instripe BaaS platform", () => {
     expect(titularOverview.body.accounts).toBeUndefined();
 
     const changed = await titular.post("/api/session/password").send({
-      currentPassword: DEFAULT_SEED_PASSWORD,
+      currentPassword: TEST_PASSWORD,
       newPassword: "NuevaClave.183",
     });
     expect(changed.status).toBe(200);
@@ -639,5 +710,97 @@ describe("instripe BaaS platform", () => {
     expect(companyView.body.companies[0].balance).toBe(35_000);
     expect(companyView.body.companies[0].workers[0].displayBalance).toBe("—");
     expect(companyView.body.companies[0].workers[0].balance).toBe(0);
+  });
+
+  it("does not let a demo collection fund a Transfer, and reverses a rejected one", async () => {
+    const server = app();
+    const client = await signedIn(server);
+    const opened = await client.post("/api/cuentas").send({ name: "Taller Sur", email: "caja@taller.cl" });
+    const id = opened.body.account.id;
+    await client.post(`/api/cuentas/${id}/recarga`).send({ amount: 10000, gateway: "chile" });
+    const book = await client.get("/api/payments");
+    expect(book.body.wallet.balance).toBe(10000);
+    expect(book.body.transferable.balance).toBe(0);
+
+    const rut = await client.post(`/api/cuentas/${id}/retiro`).send({ amount: 1000, destination: "12.345.678-9", gateway: "stripe" });
+    expect(rut.status).toBe(422);
+    expect(rut.body.error).toContain("acct_");
+
+    const exit = await client.post(`/api/cuentas/${id}/retiro`).send({ amount: 1000, destination: "acct_reversa", gateway: "stripe" });
+    expect(exit.status).toBe(202);
+    const rejected = await confirmExit(server, exit.body.exitId);
+    expect(rejected.status).toBe(502);
+    expect(rejected.body.error).toContain("Transfer rejected");
+    const after = await client.get("/api/payments");
+    expect(after.body.wallet.balance).toBe(10000);
+    expect(after.body.transferable.balance).toBe(0);
+    expect((await client.get("/api/cuentas")).body.accounts.find((account: { id: string }) => account.id === id).balance).toBe(10000);
+
+    const self = await client.post(`/api/salidas/${exit.body.exitId}/confirmar`);
+    expect(self.status).toBe(403);
+  });
+
+  it("settles a webhook only when amount, currency and payment status match, then reverses a refund", async () => {
+    const server = app();
+    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:" }));
+    const { policy } = platform.holdPremium({
+      holderName: "Ana Díaz",
+      email: "ana@demo.cl",
+      cardLabel: "Visa •••• 4242",
+      cupo: 1_500_000,
+    });
+    const paid = await request(server).post("/webhooks/stripe").set("Content-Type", "application/json").send({
+      id: "evt_paid",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_paid",
+          payment_status: "paid",
+          amount_total: 1,
+          currency: "clp",
+          metadata: { reference: "missing" },
+        },
+      },
+    });
+    expect(paid.body.fulfilled).toBe(false);
+
+    const good = platform.fulfillCheckout({
+      reference: policy.id,
+      sessionId: "cs_paid",
+      amountTotal: 9000,
+      currency: "usd",
+      paymentStatus: "paid",
+    });
+    expect(good.fulfilled).toBe(false);
+    platform.fulfillCheckout({
+      reference: policy.id,
+      sessionId: "cs_paid",
+      amountTotal: 9000,
+      currency: "clp",
+      paymentStatus: "paid",
+    });
+    expect(platform.floatAccount.balance).toBe(9000);
+    expect(platform.reverseCollection(policy.id, 9000, "evt_refund")).toBe(true);
+    expect(platform.floatAccount.balance).toBe(0);
+    expect(platform.reverseCollection(policy.id, 9000, "evt_refund")).toBe(false);
+  });
+
+  it("blocks the panel until the seed password is replaced and keeps a comercio on its member", async () => {
+    const server = app();
+    const login = await request(server).post("/api/session").send({
+      email: "operacion@proveedorregional.cl",
+      password: DEFAULT_SEED_PASSWORD,
+    });
+    expect(login.body.user.mustChangePassword).toBe(true);
+    const agent = request.agent(server);
+    await agent.post("/api/session").send({ email: "operacion@proveedorregional.cl", password: DEFAULT_SEED_PASSWORD });
+    expect((await agent.get("/api/overview")).status).toBe(403);
+
+    const norte = await signedIn(server, "pago@norte.cl");
+    const taller = await signedIn(server, "caja@taller.cl");
+    const accounts = await taller.get("/api/cuentas");
+    const own = accounts.body.accounts.find((account: { email: string }) => account.email === "caja@taller.cl");
+    expect(own.memberId).toBe("reg_taller");
+    expect((await norte.post(`/api/cuentas/${own.id}/retiro`).send({ amount: 1, destination: "x", gateway: "chile" })).status).toBe(403);
   });
 });

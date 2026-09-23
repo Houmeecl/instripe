@@ -34,7 +34,8 @@ export interface Claim {
   status: "paid" | "pending" | "rejected";
   /** Disbursement recorded by the payments core (`pay_…`). */
   paymentId?: string;
-  payoutId: string;
+  /** Gateway payout id, present once the second operator confirms the exit. */
+  payoutId?: string;
   createdAt: string;
 }
 

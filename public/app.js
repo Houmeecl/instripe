@@ -19,6 +19,7 @@ const state = {
   onboarding: null,
   registro: null,
   user: null,
+  exits: [],
 };
 
 /* ---------------- icons ---------------- */
@@ -230,6 +231,14 @@ async function enter(user) {
   document.getElementById("who-role").textContent = user.roleLabel;
   document.getElementById("top-role").textContent = user.roleLabel;
   renderNav();
+  if (user.mustChangePassword) {
+    openPasswordModal(true);
+    return;
+  }
+  await loadPanel();
+}
+
+async function loadPanel() {
   try {
     state.health = await api("/health");
     state.currency = state.health.currency;
@@ -251,22 +260,23 @@ async function enter(user) {
   route();
 }
 
-function openPasswordModal() {
+function openPasswordModal(forced) {
   mountModal(`
     <div class="modal">
-      <div class="modal-head"><h3>Cambiar clave</h3><p>La clave nueva queda solo en tu usuario.</p></div>
+      <div class="modal-head"><h3>${forced ? "Cambia la clave inicial" : "Cambiar clave"}</h3><p>${forced ? "La clave de inicio no sirve para operar. Elige una propia." : "La clave nueva queda solo en tu usuario."}</p></div>
       <div class="modal-body">
         <div class="field"><label>Clave actual</label><input id="pw-current" type="password" autocomplete="current-password" /></div>
         <div class="field"><label>Clave nueva</label><input id="pw-next" type="password" autocomplete="new-password" /></div>
         <div class="field"><label>Repetir clave nueva</label><input id="pw-repeat" type="password" autocomplete="new-password" /></div>
       </div>
       <div class="modal-foot">
-        <button class="btn btn-ghost" data-cancel>Cancelar</button>
+        ${forced ? "" : `<button class="btn btn-ghost" data-cancel>Cancelar</button>`}
         <button class="btn btn-primary" data-confirm>Guardar</button>
       </div>
-    </div>`);
+    </div>`, { locked: Boolean(forced) });
   const root = document.getElementById("modal-root");
-  root.querySelector("[data-cancel]").onclick = closeModal;
+  const cancel = root.querySelector("[data-cancel]");
+  if (cancel) cancel.onclick = closeModal;
   root.querySelector("[data-confirm]").onclick = async (e) => {
     const next = document.getElementById("pw-next").value;
     const repeat = document.getElementById("pw-repeat").value;
@@ -281,7 +291,7 @@ function openPasswordModal() {
     const btn = e.currentTarget;
     btn.disabled = true;
     try {
-      await api("/api/session/password", {
+      const data = await api("/api/session/password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -289,8 +299,10 @@ function openPasswordModal() {
           newPassword: next,
         }),
       });
+      if (data.user) state.user = data.user;
       closeModal();
       toast("Clave actualizada");
+      if (forced) await loadPanel();
     } catch (err) {
       toast(err.message, "error");
       btn.disabled = false;
@@ -405,8 +417,10 @@ async function refresh() {
     } catch {
       state.stripeEvents = [];
     }
+    state.exits = (await api("/api/salidas")).exits || [];
   } else {
     state.stripeEvents = [];
+    state.exits = [];
   }
   try {
     state.onboarding = await api("/api/onboarding");
@@ -477,7 +491,7 @@ function movementFeed(rows, technical) {
           <div class="fi">${icon(p.kind === "disburse" ? "zap" : "card")}</div>
           <div>
             <div class="ft"><b>${p.kind === "disburse" ? "−" : "+"}${money(p.amount)}</b> ${movementLabel(p)}</div>
-            <div class="fdate">${p.status === "paid" ? "Pagado" : "Pendiente"}${technical ? ` · <code class="mono">${p.module}</code> · <code class="mono">${p.id}</code> · <code class="mono">${p.reference}</code>` : ""}</div>
+            <div class="fdate">${p.status === "paid" ? "Pagado" : p.status === "failed" ? "Fallido" : "Pendiente"}${technical ? ` · <code class="mono">${p.module}</code> · <code class="mono">${p.id}</code> · <code class="mono">${p.reference}</code>` : ""}</div>
           </div>
         </li>`).join("")}</ul>`;
 }
@@ -517,6 +531,25 @@ function workflowStrip() {
     .join("")}</ol>`;
 }
 
+function pendingExitsCard() {
+  if (!allowed("payments") || !state.exits.length) return "";
+  const list = state.exits
+    .map(
+      (exit) => `
+      <div class="row">
+        <div>
+          <div class="who">${escapeAttr(exit.description)}</div>
+          <div class="meta">${money(exit.amount)} · ${escapeAttr(exit.destination)}</div>
+        </div>
+        <div class="push">
+          <button class="btn btn-primary btn-sm" data-confirm-exit="${escapeAttr(exit.id)}">Confirmar</button>
+        </div>
+      </div>`,
+    )
+    .join("");
+  return `<div class="card" style="margin-bottom:20px"><div class="card-head"><h3>Salidas por confirmar</h3><span class="badge">${state.exits.length}</span></div><div class="card-body flush"><div class="rowlist">${list}</div></div></div>`;
+}
+
 function viewOverview() {
   const o = state.overview;
   const payments = o.payments || [];
@@ -524,7 +557,7 @@ function viewOverview() {
   const pendingCobros = state.cobros.filter((c) => c.status === "pending_payment").length;
   const kpis = [];
   if (allowed("payments")) {
-    kpis.push(`<div class="kpi"><div class="kpi-top"><div class="kpi-ico">${icon("wallet")}</div></div><div class="kpi-label">Dinero en la plataforma</div><div class="kpi-value">${o.float.displayBalance}</div><div class="kpi-hint">Lo cobrado menos lo dispersado</div></div>`);
+    kpis.push(`<div class="kpi"><div class="kpi-top"><div class="kpi-ico">${icon("wallet")}</div></div><div class="kpi-label">Dinero en la plataforma</div><div class="kpi-value">${o.float.displayBalance}</div><div class="kpi-hint">Puede salir por Stripe: ${o.transferable ? o.transferable.displayBalance : "—"}</div></div>`);
   }
   if (allowed("accounts")) {
     kpis.push(`<div class="kpi green"><div class="kpi-top"><div class="kpi-ico">${icon("wallet")}</div></div><div class="kpi-label">Cuentas</div><div class="kpi-value">${state.accounts.length}</div><div class="kpi-hint">Clientes con wallet</div></div>`);
@@ -551,7 +584,7 @@ function viewOverview() {
     .map(([route, ic, label], index) => `<a class="btn btn-ghost btn-block" href="#/${route}"${index ? ' style="margin-top:10px"' : ""}>${icon(ic)} ${label}</a>`)
     .join("");
 
-  return `${workflowStrip()}${kpis.length ? `<div class="grid-kpi">${kpis.join("")}</div>` : ""}
+  return `${workflowStrip()}${pendingExitsCard()}${kpis.length ? `<div class="grid-kpi">${kpis.join("")}</div>` : ""}
     <div class="cols${activity ? "" : " single"}">
       ${activity}
       <div class="card">
@@ -688,7 +721,8 @@ function viewConnect() {
   }
   const list = rows
     .map((a) => {
-      const pay = a.mode === "live" ? `<a class="btn btn-ghost btn-sm" href="${a.onboardingUrl || "#"}" target="_blank" rel="noreferrer">Onboarding</a>` : "";
+      const pay = a.onboardingUrl ? `<a class="btn btn-ghost btn-sm" href="${escapeAttr(a.onboardingUrl)}" target="_blank" rel="noreferrer">Onboarding</a>` : "";
+      const modeLabel = a.mode === "live" ? "live" : a.mode === "pending" ? "pendiente" : "demo";
       return `
       <div class="row">
         <div class="avatar">${initials(a.businessName)}</div>
@@ -697,7 +731,7 @@ function viewConnect() {
           <div class="meta">${a.email}${a.notice ? ` · ${a.notice}` : ""}</div>
         </div>
         <div class="push">
-          <span class="pill ${a.mode === "live" ? "" : "amber"}">${a.mode === "live" ? "live" : "demo"}</span>
+          <span class="pill ${a.mode === "live" ? "" : "amber"}">${modeLabel}</span>
           ${pay}
           <button class="btn btn-ghost btn-sm" data-connect-pay="${a.id}">${icon("zap")} Pagar</button>
         </div>
@@ -1048,6 +1082,11 @@ async function transferPrepaid(companyId) {
 
 /* ---------------- view wiring ---------------- */
 function wireView(r) {
+  if (r === "overview") {
+    document.querySelectorAll("[data-confirm-exit]").forEach((btn) => {
+      btn.onclick = () => confirmPendingExit(btn.dataset.confirmExit, btn);
+    });
+  }
   if (r === "accounts") {
     const open = document.querySelector("[data-open-account]");
     if (open) open.onclick = () => openAccountModal();
@@ -1135,12 +1174,27 @@ function loadStripeJs() {
   });
 }
 
-function mountModal(html) {
+function mountModal(html, options) {
   const root = document.getElementById("modal-root");
   root.innerHTML = `<div class="overlay" data-overlay>${html}</div>`;
-  root.querySelector("[data-overlay]").addEventListener("click", (e) => {
-    if (e.target.dataset.overlay !== undefined) closeModal();
-  });
+  if (!options || !options.locked) {
+    root.querySelector("[data-overlay]").addEventListener("click", (e) => {
+      if (e.target.dataset.overlay !== undefined) closeModal();
+    });
+  }
+}
+
+async function confirmPendingExit(id, btn) {
+  btn.disabled = true;
+  try {
+    await api(`/api/salidas/${encodeURIComponent(id)}/confirmar`, { method: "POST" });
+    await refresh();
+    route();
+    toast("Salida confirmada");
+  } catch (err) {
+    btn.disabled = false;
+    toast(err.message, "error");
+  }
 }
 
 function openAccountModal() {
@@ -1224,10 +1278,11 @@ function openWithdrawModal(account) {
   if (!account) return;
   mountModal(`
     <div class="modal">
-      <div class="modal-head"><h3>Retirar de ${account.name}</h3><p>La dispersión sale por pagos. Saldo ${money(account.balance)}.</p></div>
+      <div class="modal-head"><h3>Retirar de ${account.name}</h3><p>Queda pedido hasta que otro usuario de operación lo confirme. Saldo ${money(account.balance)}.</p></div>
       <div class="modal-body">
         <div class="field"><label>Monto</label><input id="w-amount" type="number" placeholder="Ej: 4000" /></div>
-        <div class="field"><label>Destino</label><input id="w-dest" value="12.345.678-9" /></div>
+        <div class="field"><label>Destino</label><input id="w-dest" value="12.345.678-9" />
+          <div class="hint">Con Stripe el destino es una cuenta conectada acct_. Un RUT no se envía.</div></div>
       </div>
       <div class="modal-foot">
         <button class="btn btn-ghost" data-cancel>Cancelar</button>
@@ -1254,7 +1309,7 @@ function openWithdrawModal(account) {
       closeModal();
       await refresh();
       route();
-      toast(`Retiro dispersado · saldo ${money(result.account.balance)}`);
+      toast(`Retiro pedido · saldo ${money(result.account.balance)}. Otro usuario de operación tiene que confirmarlo.`);
     } catch (err) {
       btn.disabled = false;
       toast(err.message, "error");
@@ -1399,7 +1454,7 @@ function openClaimModal(policy) {
   if (!policy) return;
   mountModal(`
     <div class="modal">
-      <div class="modal-head"><h3>Dispersar siniestro</h3><p>Payout desde el float al beneficiario · póliza ${policy.id}.</p></div>
+      <div class="modal-head"><h3>Dispersar siniestro</h3><p>Queda pedido hasta que otro usuario de operación lo confirme · póliza ${policy.id}.</p></div>
       <div class="modal-body">
         <div class="field"><label>Monto del siniestro</label><input id="c-amount" type="number" placeholder="Ej: 20000" />
           <div class="hint">Crédito asegurado: ${money(policy.cupo || policy.coverage)}</div></div>
@@ -1435,7 +1490,7 @@ function openClaimModal(policy) {
       closeModal();
       await refresh();
       route();
-      toast(`Fondos dispersados: ${result.claim.id} vía ${result.payout.gateway} (${result.payout.status})`);
+      toast(`Siniestro ${result.claim.id} pedido. Otro usuario de operación tiene que confirmarlo.`);
     } catch (err) {
       btn.disabled = false;
       btn.innerHTML = `${icon("zap")} Dispersar fondos`;
@@ -1474,7 +1529,7 @@ function openConnectModal() {
       closeModal();
       await refresh();
       route();
-      toast(result.account.mode === "live" ? `Connect ${result.account.stripeAccountId} creado` : `Connect en demo${result.account.notice ? ": " + result.account.notice : ""}`);
+      toast(result.account.mode === "live" ? `Connect ${result.account.stripeAccountId} creado` : result.account.mode === "pending" ? "Cuenta creada. Stripe todavía no habilita los pagos." : `Connect en demo${result.account.notice ? ": " + result.account.notice : ""}`);
     } catch (err) {
       btn.disabled = false;
       toast(err.message, "error");
@@ -1509,7 +1564,7 @@ function openConnectPayModal(account) {
       closeModal();
       await refresh();
       route();
-      toast(`Pago enviado a ${account.businessName}`);
+      toast(`Pago a ${account.businessName} pedido. Otro usuario de operación tiene que confirmarlo.`);
     } catch (err) {
       btn.disabled = false;
       toast(err.message, "error");

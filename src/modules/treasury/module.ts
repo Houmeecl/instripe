@@ -75,7 +75,9 @@ export class TreasuryModule {
       createdAt: new Date().toISOString(),
     };
 
-    if (this.stripe) {
+    if (this.stripe && account.currency === "clp") {
+      account.notice = "Treasury no se abre en CLP. El abono queda en el libro local.";
+    } else if (this.stripe) {
       try {
         const created = await this.stripe.treasury.financialAccounts.create({
           supported_currencies: [account.currency],

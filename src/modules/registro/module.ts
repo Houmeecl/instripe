@@ -44,11 +44,12 @@ export class RegistroModule {
     this.members = saved.length
       ? saved
       : SEED.map((row) => {
-          const account = cuentas.open({ name: row.name, email: row.email });
+          const account = cuentas.open({ name: row.name, email: row.email, memberId: row.id });
           const member = { ...row, status: "preinscrito" as const, accountId: account.id };
           store.put("members", member.id, member);
           return member;
         });
+    for (const member of this.members) cuentas.bindMember(member.accountId, member.id);
     for (const acceptance of store.list<TosAcceptance>("tos_acceptances")) this.acceptances.set(acceptance.id, acceptance);
     for (const session of store.list<{ token: string; acceptanceId: string }>("tos_sessions")) {
       this.sessions.set(session.token, session.acceptanceId);

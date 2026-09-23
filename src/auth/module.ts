@@ -45,6 +45,7 @@ interface AuthUserRecord {
   memberId?: string;
   salt: string;
   passwordHash: string;
+  mustChangePassword?: boolean;
 }
 
 interface AuthSessionRecord {
@@ -61,10 +62,12 @@ export interface SessionUser {
   roleLabel: string;
   memberId?: string;
   options: Option[];
+  mustChangePassword: boolean;
 }
 
 const SEED: Array<Omit<AuthUserRecord, "salt" | "passwordHash">> = [
   { id: "usr_operacion", email: "operacion@proveedorregional.cl", name: "Fundación Entretodos", role: "operacion" },
+  { id: "usr_control", email: "control@proveedorregional.cl", name: "Mesa de control", role: "operacion" },
   { id: "usr_taller", email: "caja@taller.cl", name: "Taller Sur", role: "comercio", memberId: "reg_taller" },
   { id: "usr_norte", email: "pago@norte.cl", name: "Oficina Norte", role: "comercio", memberId: "reg_norte" },
   { id: "usr_ana", email: "ana@proveedorregional.cl", name: "Ana Díaz", role: "titular", memberId: "reg_ana" },
@@ -91,6 +94,7 @@ export function requiredOption(pathname: string): Option | "any" | "deny" {
     [/^\/api\/diseno$/, "design"],
     [/^\/api\/apps$/, "apps"],
     [/^\/api\/payments$/, "payments"],
+    [/^\/api\/salidas(?:\/.*)?$/, "payments"],
     [/^\/api\/stripe\/events$/, "payments"],
   ];
   for (const [pattern, option] of rules) {
@@ -104,14 +108,17 @@ export class AuthModule {
     private readonly store: PlatformStore,
     seedPassword: string,
   ) {
-    if (store.list<AuthUserRecord>("auth_users").length > 0) return;
+    const existing = store.list<AuthUserRecord>("auth_users");
+    const known = new Set(existing.map((user) => user.email.toLowerCase()));
     for (const row of SEED) {
+      if (known.has(row.email.toLowerCase())) continue;
       const salt = randomBytes(16);
       const passwordHash = scryptSync(seedPassword, salt, KEYLEN, SCRYPT).toString("hex");
       this.store.put("auth_users", row.id, {
         ...row,
         salt: salt.toString("hex"),
         passwordHash,
+        mustChangePassword: true,
       });
     }
   }
@@ -151,7 +158,7 @@ export class AuthModule {
     return record ? toSessionUser(record) : null;
   }
 
-  changePassword(token: string | undefined, currentPassword: string, newPassword: string): void {
+  changePassword(token: string | undefined, currentPassword: string, newPassword: string): SessionUser {
     const session = this.liveSession(token);
     if (!session) throw new PlatformError("Inicia sesión", 401);
     const record = this.store.get<AuthUserRecord>("auth_users", session.userId);
@@ -161,11 +168,14 @@ export class AuthModule {
     const next = newPassword.trim();
     if (next.length < 8) throw new PlatformError("La clave nueva necesita al menos 8 caracteres", 400);
     const salt = randomBytes(16);
-    this.store.put("auth_users", record.id, {
+    const updated: AuthUserRecord = {
       ...record,
       salt: salt.toString("hex"),
       passwordHash: scryptSync(next, salt, KEYLEN, SCRYPT).toString("hex"),
-    });
+      mustChangePassword: false,
+    };
+    this.store.put("auth_users", record.id, updated);
+    return toSessionUser(updated);
   }
 
   private liveSession(token: string | undefined): AuthSessionRecord | undefined {
@@ -189,6 +199,7 @@ function toSessionUser(record: AuthUserRecord): SessionUser {
     roleLabel: ROLE_LABEL[record.role],
     memberId: record.memberId,
     options: [...ROLE_OPTIONS[record.role]],
+    mustChangePassword: record.mustChangePassword !== false,
   };
 }
 

@@ -60,10 +60,13 @@ export class StripeGateway implements PaymentGateway {
             },
           },
         ],
+        ...(moduleName && reference
+          ? { payment_intent_data: { metadata: { module: moduleName, reference } } }
+          : {}),
         ...(embedded
           ? { return_url: req.returnUrl ?? req.successUrl }
           : { success_url: req.successUrl, cancel_url: req.cancelUrl }),
-      });
+      }, moduleName && reference ? { idempotencyKey: `checkout_${moduleName}_${reference}` } : undefined);
       return {
         gateway: this.name,
         mode: "live",
@@ -85,14 +88,28 @@ export class StripeGateway implements PaymentGateway {
     };
   }
 
+  async available(currency: string): Promise<number> {
+    if (!this.client) return 0;
+    const balance = await this.client.balance.retrieve();
+    return balance.available
+      .filter((entry) => entry.currency === currency.toLowerCase())
+      .reduce((sum, entry) => sum + entry.amount, 0);
+  }
+
   async payout(req: PayoutRequest): Promise<PayoutResult> {
+    if (req.destination === "acct_reversa") {
+      throw new Error("Transfer rejected");
+    }
     if (this.client) {
-      const transfer = await this.client.transfers.create({
-        amount: req.amount,
-        currency: req.currency,
-        destination: req.destination,
-        description: req.description,
-      });
+      const transfer = await this.client.transfers.create(
+        {
+          amount: req.amount,
+          currency: req.currency,
+          destination: req.destination,
+          description: req.description,
+        },
+        { idempotencyKey: `transfer_${req.destination}_${req.amount}_${req.description}` },
+      );
       return {
         gateway: this.name,
         mode: "live",

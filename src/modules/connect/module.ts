@@ -3,8 +3,8 @@ import type Stripe from "stripe";
 import type { AppConfig, GatewayName } from "../../config.js";
 import { PlatformError } from "../../errors.js";
 import type { Payments } from "../../payments/service.js";
-import type { PayoutResult } from "../../gateways/types.js";
 import { createStripe, platformAccount, stripeMessage } from "../../stripe/client.js";
+import type { PlatformStore } from "../../store/db.js";
 
 export interface ConnectedAccount {
   id: string;
@@ -13,7 +13,7 @@ export interface ConnectedAccount {
   country: string;
   stripeAccountId?: string;
   onboardingUrl?: string;
-  mode: "live" | "demo";
+  mode: "live" | "pending" | "demo";
   notice?: string;
   createdAt: string;
 }
@@ -34,15 +34,21 @@ export class ConnectModule {
   constructor(
     private readonly payments: Payments,
     private readonly config: AppConfig,
+    private readonly store: PlatformStore,
   ) {
     this.stripe = createStripe(config);
+    for (const account of store.list<ConnectedAccount>("connect_accounts")) this.accounts.set(account.id, account);
   }
 
-  list(): ConnectedAccount[] {
-    return [...this.accounts.values()];
+  list(actor?: { role: string; email: string }): ConnectedAccount[] {
+    return [...this.accounts.values()].map((account) => this.visible(account, actor));
   }
 
-  async create(input: { businessName: string; email: string }): Promise<ConnectedAccount> {
+  async create(input: {
+    businessName: string;
+    email: string;
+    actor?: { role: string; email: string };
+  }): Promise<ConnectedAccount> {
     const businessName = input.businessName.trim();
     const email = input.email.trim();
     if (!businessName || !email) throw new PlatformError("businessName y email son requeridos", 400);
@@ -72,7 +78,6 @@ export class ConnectModule {
               losses: { payments: "application" },
             },
             capabilities: {
-              card_payments: { requested: true },
               transfers: { requested: true },
             },
             metadata: { module: MODULE, reference: account.id, businessName },
@@ -86,7 +91,10 @@ export class ConnectModule {
           account.country = country;
           account.stripeAccountId = created.id;
           account.onboardingUrl = link.url;
-          account.mode = "live";
+          account.mode = created.payouts_enabled ? "live" : "pending";
+          if (!created.payouts_enabled) {
+            account.notice = "La cuenta existe en Stripe y todavía no puede recibir pagos.";
+          }
         }
       } catch (error) {
         account.notice = stripeMessage(error);
@@ -94,27 +102,39 @@ export class ConnectModule {
     }
 
     this.accounts.set(account.id, account);
-    return account;
+    this.store.put("connect_accounts", account.id, account);
+    return this.visible(account, input.actor);
   }
 
-  async payout(input: {
+  payout(input: {
     accountId: string;
     amount: number;
     gateway: GatewayName;
-  }): Promise<{ account: ConnectedAccount; payout: PayoutResult }> {
+    requestedBy: string;
+  }): { account: ConnectedAccount; exitId: string } {
     const account = this.accounts.get(input.accountId);
     if (!account) throw new PlatformError(`Cuenta Connect desconocida: ${input.accountId}`, 404);
     if (input.amount <= 0) throw new PlatformError("El monto del pago debe ser positivo", 400);
-    const destination = account.stripeAccountId ?? account.id;
-    const { payout } = await this.payments.disburse({
+    const destination = input.gateway === "stripe" ? account.stripeAccountId : account.id;
+    if (!destination) throw new PlatformError("El pago real necesita una cuenta conectada acct_", 422);
+    const exit = this.payments.requestExit({
       module: MODULE,
       reference: `cnp_${randomUUID().slice(0, 8)}`,
       amount: input.amount,
       description: `Pago Connect ${account.businessName}`,
       destination,
       gateway: input.gateway,
+      requestedBy: input.requestedBy,
     });
-    return { account, payout };
+    return { account: this.visible(account), exitId: exit.id };
+  }
+
+  private visible(account: ConnectedAccount, actor?: { role: string; email: string }): ConnectedAccount {
+    const owner = actor?.role !== "operacion" && actor?.email.toLowerCase() === account.email.toLowerCase();
+    if (owner) return { ...account };
+    const copy = { ...account };
+    delete copy.onboardingUrl;
+    return copy;
   }
 
   private async country(): Promise<string> {

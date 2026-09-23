@@ -3,7 +3,7 @@ import type { GatewayName } from "../../config.js";
 import { PlatformError } from "../../errors.js";
 import type { Account } from "../../payments/ledger.js";
 import type { Payments } from "../../payments/service.js";
-import type { ChargeResult, PayoutResult } from "../../gateways/types.js";
+import type { ChargeResult } from "../../gateways/types.js";
 import { CREDITO_TC, PLANS, premiumForCupo, type Claim, type InsurancePlan, type Policy } from "./catalog.js";
 
 export interface SubscribeInput {
@@ -110,7 +110,7 @@ export class SegurosModule {
     }
   }
 
-  async fileClaim(input: ClaimInput): Promise<{ claim: Claim; payout: PayoutResult; floatBalance: number }> {
+  async fileClaim(input: ClaimInput & { requestedBy: string }): Promise<{ claim: Claim; exitId: string; floatBalance: number }> {
     const policy = this.policies.get(input.policyId);
     if (!policy) throw new PlatformError(`Póliza desconocida: ${input.policyId}`, 404);
     if (policy.status === "pending_payment") {
@@ -123,25 +123,29 @@ export class SegurosModule {
     }
 
     const claimId = `clm_${randomUUID().slice(0, 8)}`;
-    const { movement, payout } = await this.payments.disburse({
+    const exit = this.payments.requestExit({
       module: MODULE,
       reference: claimId,
       amount: input.amount,
       description: `Dispersión siniestro ${policy.id}`,
-      destination: input.beneficiary,
+      destination: input.beneficiary.trim(),
       gateway: input.gateway,
+      requestedBy: input.requestedBy,
     });
     const claim: Claim = {
       id: claimId,
       policyId: policy.id,
       amount: input.amount,
       beneficiary: input.beneficiary,
-      status: payout.status === "paid" ? "paid" : "pending",
-      paymentId: movement.id,
-      payoutId: payout.payoutId,
+      status: "pending",
       createdAt: new Date().toISOString(),
     };
     this.claims.push(claim);
-    return { claim, payout, floatBalance: this.payments.walletAccount.balance };
+    return { claim, exitId: exit.id, floatBalance: this.payments.walletAccount.balance };
+  }
+
+  markClaimPaid(claimId: string): void {
+    const claim = this.claims.find((item) => item.id === claimId);
+    if (claim) claim.status = "paid";
   }
 }
