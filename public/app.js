@@ -637,9 +637,9 @@ function viewApps() {
   return `<div class="card">
     <div class="card-head"><h3>App</h3></div>
     <div class="card-body">
-      <div class="field"><label>Nombre</label><input id="app-name" value="${escapeAttr(m ? m.name : "Instripe")}" /></div>
+      <div class="field"><label>Nombre</label><input id="app-name" value="${escapeAttr(m ? m.name : "Proveedor Regional")}" /></div>
       <button class="btn btn-primary" data-create-app>${icon("plus")} Crear app</button>
-      <p class="hint">Escribe <code class="mono">stripe-app.json</code>. Para subirla: <code class="mono">stripe apps upload</code>.</p>
+      <p class="hint">Nombre de la aplicación de la plataforma. El manifest queda en el repositorio.</p>
       <pre class="manifest">${pretty}</pre>
     </div>
   </div>`;

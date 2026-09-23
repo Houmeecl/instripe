@@ -14,10 +14,12 @@ function roleLabel(role) {
 }
 
 function setStep(id) {
+  const order = ["tos", "space", "dash"];
+  const current = order.indexOf(id);
   document.querySelectorAll("#steps li").forEach((item) => {
-    const step = item.dataset.step;
-    item.classList.toggle("current", step === id);
-    item.classList.toggle("done", id === "space" && step === "tos");
+    const index = order.indexOf(item.dataset.step);
+    item.classList.toggle("current", item.dataset.step === id);
+    item.classList.toggle("done", index > -1 && index < current);
   });
 }
 
@@ -28,6 +30,7 @@ function showTos() {
     <form id="tos-form" class="tos">
       <h2>Acepta los términos</h2>
       <p>Este es el onboarding. Al aceptar entras a la aplicación, que ya está ocupada por los preinscritos.</p>
+      <p>Confirmas que el espacio ya tiene preinscritos, que el saldo parte en cero y que el dashboard muestra esas mismas cuentas.</p>
       <label>Nombre<input name="name" required autocomplete="name" /></label>
       <label>Email<input name="email" type="email" required autocomplete="email" /></label>
       <label class="check"><input name="accepted" type="checkbox" required /> Acepto los términos de Proveedor Regional.</label>
@@ -115,5 +118,5 @@ fetch("/api/onboarding")
   .then((res) => res.json())
   .then((session) => (session.accepted ? showOccupied() : showTos()))
   .catch((error) => {
-    stage.innerHTML = `<p class="loading">${escapeHtml(error.message)}</p>`;
+    stage.innerHTML = `<p class="tos-error" role="alert">${escapeHtml(error.message)}</p>`;
   });

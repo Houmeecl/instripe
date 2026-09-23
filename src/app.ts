@@ -1,8 +1,9 @@
 import express, { type Express, type Request, type Response } from "express";
-import Stripe from "stripe";
+import type Stripe from "stripe";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, isStripeConfigured, isChileConfigured, type AppConfig, type GatewayName } from "./config.js";
+import { createStripe } from "./stripe/client.js";
 import { formatAmount } from "./money.js";
 import { Platform, PlatformError } from "./platform.js";
 
@@ -25,14 +26,18 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       const signature = req.headers["stripe-signature"];
       let event: Stripe.Event;
 
-      if (config.stripeSecretKey && config.stripeWebhookSecret && signature) {
+      if (config.stripeWebhookSecret) {
+        if (!signature || !config.stripeSecretKey) {
+          res.status(400).json({ error: "Webhook signature verification failed: falta la firma" });
+          return;
+        }
         try {
-          const stripe = new Stripe(config.stripeSecretKey);
-          event = stripe.webhooks.constructEvent(
-            req.body as Buffer,
-            signature as string,
-            config.stripeWebhookSecret,
-          );
+          const stripe = createStripe(config);
+          if (!stripe) {
+            res.status(400).json({ error: "Webhook signature verification failed: falta la firma" });
+            return;
+          }
+          event = stripe.webhooks.constructEvent(req.body as Buffer, signature, config.stripeWebhookSecret);
         } catch (error) {
           const message = error instanceof Error ? error.message : "invalid signature";
           res.status(400).json({ error: `Webhook signature verification failed: ${message}` });
@@ -50,15 +55,18 @@ export function createApp(config: AppConfig = loadConfig()): Express {
 
       platform.recordWebhookEvent(event.id, event.type);
       let fulfilled = false;
-      if (event.type === "checkout.session.completed") {
+      if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
         const session = event.data.object as Stripe.Checkout.Session;
-        const reference = checkoutReference(session);
-        const result = platform.fulfillCheckout(reference, session.id);
-        fulfilled = result.fulfilled;
-        const moduleName = result.module ?? session.metadata?.module ?? "-";
-        console.log(
-          `[stripe] checkout.session.completed ${session.id} module=${moduleName} reference=${reference ?? "-"} fulfilled=${fulfilled}`,
-        );
+        const payable = session.payment_status === "paid" || session.payment_status === "no_payment_required";
+        if (payable) {
+          const reference = checkoutReference(session);
+          const result = platform.fulfillCheckout(reference, session.id);
+          fulfilled = result.fulfilled;
+          const moduleName = result.module ?? session.metadata?.module ?? "-";
+          console.log(
+            `[stripe] ${event.type} ${session.id} module=${moduleName} reference=${reference ?? "-"} fulfilled=${fulfilled}`,
+          );
+        }
       }
       res.json({ received: true, type: event.type, fulfilled });
     },
@@ -403,7 +411,11 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
     const sessionId = String(req.params.id);
     try {
-      const stripe = new Stripe(config.stripeSecretKey);
+      const stripe = createStripe(config);
+      if (!stripe) {
+        res.status(409).json({ error: "Stripe no está configurado" });
+        return;
+      }
       const session = await stripe.checkout.sessions.retrieve(sessionId);
       const reference = checkoutReference(session);
       const paid = session.status === "complete" && session.payment_status === "paid";
@@ -465,7 +477,7 @@ function readCookie(header: string | undefined, name: string): string | undefine
 }
 
 function checkoutReference(session: Stripe.Checkout.Session): string | undefined {
-  return session.metadata?.reference ?? session.metadata?.policyId ?? session.client_reference_id ?? undefined;
+  return session.metadata?.reference ?? session.client_reference_id ?? undefined;
 }
 
 function withPublishableKey<T extends { charge: { clientSecret?: string } }>(

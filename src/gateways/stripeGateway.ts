@@ -1,6 +1,6 @@
-import Stripe from "stripe";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { AppConfig } from "../config.js";
+import { createStripe } from "../stripe/client.js";
 import type {
   ChargeRequest,
   ChargeResult,
@@ -17,10 +17,10 @@ import type {
 export class StripeGateway implements PaymentGateway {
   readonly name = "stripe" as const;
   readonly label = "Stripe";
-  private readonly client: Stripe | undefined;
+  private readonly client: ReturnType<typeof createStripe>;
 
   constructor(private readonly config: AppConfig) {
-    this.client = config.stripeSecretKey ? new Stripe(config.stripeSecretKey) : undefined;
+    this.client = createStripe(config);
   }
 
   get configured(): boolean {
@@ -30,12 +30,15 @@ export class StripeGateway implements PaymentGateway {
   async charge(req: ChargeRequest): Promise<ChargeResult> {
     if (this.client) {
       const embedded = Boolean(this.config.stripePublishableKey);
+      const reference = req.metadata?.reference;
+      const moduleName = req.metadata?.module;
       const session = await this.client.checkout.sessions.create({
         mode: "payment",
         ui_mode: embedded ? "embedded_page" : "hosted_page",
         customer_email: req.customerEmail,
-        client_reference_id: req.metadata?.reference ?? req.metadata?.policyId,
-        metadata: req.metadata,
+        client_reference_id: reference,
+        ...(moduleName && reference ? { metadata: { module: moduleName, reference } } : {}),
+        integration_identifier: `proveedor-regional-${randomSuffix()}`,
         ...(req.branding
           ? {
               branding_settings: {
@@ -110,4 +113,12 @@ export class StripeGateway implements PaymentGateway {
       status: "paid",
     };
   }
+}
+
+function randomSuffix(): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz";
+  const bytes = randomBytes(8);
+  let suffix = "";
+  for (let i = 0; i < 8; i += 1) suffix += alphabet[bytes[i] % alphabet.length];
+  return suffix;
 }

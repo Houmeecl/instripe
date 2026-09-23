@@ -51,38 +51,43 @@ export class ConnectModule {
       id: `con_${randomUUID().slice(0, 8)}`,
       businessName,
       email,
-      country: "ES",
+      country: "CL",
       mode: "demo",
       createdAt: new Date().toISOString(),
     };
 
     if (this.stripe) {
       try {
-        const country = await this.country();
-        const created = await this.stripe.accounts.create({
-          country,
-          email,
-          controller: {
-            stripe_dashboard: { type: "express" },
-            fees: { payer: "application" },
-            losses: { payments: "application" },
-          },
-          capabilities: {
-            card_payments: { requested: true },
-            transfers: { requested: true },
-          },
-          metadata: { module: MODULE, reference: account.id, businessName },
-        });
-        const link = await this.stripe.accountLinks.create({
-          account: created.id,
-          type: "account_onboarding",
-          refresh_url: `${this.config.publicBaseUrl}/?connect=refresh`,
-          return_url: `${this.config.publicBaseUrl}/?connect=return`,
-        });
-        account.country = country;
-        account.stripeAccountId = created.id;
-        account.onboardingUrl = link.url;
-        account.mode = "live";
+        const platform = await platformAccount(this.stripe);
+        if (platform.controller?.type !== "application") {
+          account.notice = "Esta cuenta no es una plataforma Connect. El comercio queda en el registro local.";
+        } else {
+          const country = await this.country();
+          const created = await this.stripe.accounts.create({
+            country,
+            email,
+            controller: {
+              stripe_dashboard: { type: "express" },
+              fees: { payer: "application" },
+              losses: { payments: "application" },
+            },
+            capabilities: {
+              card_payments: { requested: true },
+              transfers: { requested: true },
+            },
+            metadata: { module: MODULE, reference: account.id, businessName },
+          });
+          const link = await this.stripe.accountLinks.create({
+            account: created.id,
+            type: "account_onboarding",
+            refresh_url: `${this.config.publicBaseUrl}/?connect=refresh`,
+            return_url: `${this.config.publicBaseUrl}/?connect=return`,
+          });
+          account.country = country;
+          account.stripeAccountId = created.id;
+          account.onboardingUrl = link.url;
+          account.mode = "live";
+        }
       } catch (error) {
         account.notice = stripeMessage(error);
       }

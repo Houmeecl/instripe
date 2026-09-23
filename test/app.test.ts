@@ -272,6 +272,7 @@ describe("instripe BaaS platform", () => {
     expect(connect.status).toBe(201);
     expect(connect.body.account.id).toMatch(/^con_/);
     expect(connect.body.account.mode).toBe("demo");
+    expect(connect.body.account.country).toBe("CL");
 
     const funded = await request(server).post("/api/cobros").send({
       concept: "Fondo",
@@ -329,6 +330,30 @@ describe("instripe BaaS platform", () => {
     expect(overview.body.cards).toHaveLength(1);
     const modules = overview.body.payments.map((p: { module: string }) => p.module);
     expect(modules).toEqual(expect.arrayContaining(["cobros", "connect", "treasury"]));
+  });
+
+  it("rejects a webhook without a signature when the secret is set", async () => {
+    const server = app({ PORT: "3000", CURRENCY: "clp", STRIPE_SECRET_KEY: "rk_test_dummy", STRIPE_WEBHOOK_SECRET: "whsec_dummy" });
+    const res = await request(server)
+      .post("/webhooks/stripe")
+      .set("Content-Type", "application/json")
+      .send({ id: "evt_nosig", type: "checkout.session.completed" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("signature verification failed");
+  });
+
+  it("records an async checkout event without fulfilling an unpaid session", async () => {
+    const server = app();
+    const res = await request(server)
+      .post("/webhooks/stripe")
+      .set("Content-Type", "application/json")
+      .send({
+        id: "evt_async_1",
+        type: "checkout.session.async_payment_succeeded",
+        data: { object: { id: "cs_async", payment_status: "unpaid" } },
+      });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ received: true, type: "checkout.session.async_payment_succeeded", fulfilled: false });
   });
 
   it("rejects a signed webhook when the signature is invalid", async () => {
