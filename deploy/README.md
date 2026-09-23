@@ -5,6 +5,12 @@ Cada push a `main` corre typecheck, lint, pruebas y build en GitHub Actions
 reinicia el servicio y revisa `/health`. Si `/health` no responde en 30 s,
 vuelve al release anterior y el job falla.
 
+Si la app **ya corre en el VPS**, no hace falta indicar dónde: por defecto el
+despliegue busca el proceso `node dist/index.js` que está sirviendo, usa su
+carpeta y lo reinicia con su servicio (systemd o pm2). Para eso `VPS_USER` debe
+ser el mismo usuario que corre la app, o root. Si la app corre desde
+`src/index.ts` (modo desarrollo), el despliegue se detiene y avisa.
+
 El despliegue **no toca** `.env` ni `data/` (la base SQLite). Esos archivos
 viven solo en el VPS.
 
@@ -62,8 +68,8 @@ Settings → Environments → `production` → Environment secrets:
 | `VPS_KNOWN_HOSTS`  | recomendado | se toma con `ssh-keyscan`         |
 | `VPS_USER`         | no          | `deploy`                          |
 | `VPS_PORT`         | no          | `22`                              |
-| `VPS_APP_DIR`      | no          | `/opt/instripe`                   |
-| `VPS_RESTART_CMD`  | no          | `sudo systemctl restart instripe` |
+| `VPS_APP_DIR`      | no          | carpeta de la app que ya corre    |
+| `VPS_RESTART_CMD`  | no          | su servicio (systemd o pm2)       |
 
 ## Ver qué versión corre
 

@@ -75,8 +75,8 @@ jobs:
           remote_tgz="/tmp/instripe-${GITHUB_SHA}.tgz"
           scp -i ~/.ssh/id_deploy -P "$port" -o BatchMode=yes release.tgz "$target:$remote_tgz"
           ssh -i ~/.ssh/id_deploy -p "$port" -o BatchMode=yes "$target" bash -s -- \
-            "$(printf %q "${VPS_APP_DIR:-/opt/instripe}")" \
+            "$(printf %q "${VPS_APP_DIR:-auto}")" \
             "$(printf %q "$remote_tgz")" \
             "$(printf %q "$GITHUB_SHA")" \
-            "$(printf %q "${VPS_RESTART_CMD:-sudo systemctl restart instripe}")" \
+            "$(printf %q "${VPS_RESTART_CMD:-auto}")" \
             < deploy/remote.sh

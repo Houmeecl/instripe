@@ -98,6 +98,8 @@ cat <<OUT
 VPS_HOST          $ip
 VPS_PORT          $ssh_port
 VPS_USER          $user
+VPS_APP_DIR       $app_dir
+VPS_RESTART_CMD   sudo systemctl restart instripe
 VPS_KNOWN_HOSTS   (las líneas entre las marcas)
 ---8<---
 $known
