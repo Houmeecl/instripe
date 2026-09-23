@@ -1137,15 +1137,15 @@ function adminGlobalAccounts() {
   const notice = companies.reduce(
     (found, company) => found || (company.globalAccounts && company.globalAccounts.notice) || "",
     "",
-  ) || "La documentación pública de Global66 lista movimientos y pagos, no la apertura de cuentas. La solicitud queda pendiente y no tiene número de cuenta.";
+  ) || "Las cuentas para depositar en otros países quedan pendientes. Global66 abre cuentas en otros países para depositar; la documentación pública lista movimientos y pagos, no la apertura, así que no hay número de cuenta. La cuenta de Stripe permanece en España.";
   const body = companies.length
     ? companies.map((company) => globalAccountsBox(company)).join("")
     : `<div class="empty">${icon("inbox")}<div>Todavía no hay empresas. El débito se abre en Débito.</div></div>`;
   return `<div class="card" style="margin-bottom:20px">
-    <div class="card-head"><h3>Cuenta virtual y cuenta puente</h3></div>
+    <div class="card-head"><h3>Cuentas para depositar en otros países</h3></div>
     <div class="card-body">
       <p class="funds-note">${escapeAttr(notice)}</p>
-      <p class="hint">La cuenta puente recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.</p>
+      <p class="hint">Estilo Global66: el dinero se deposita en cuentas de otros países. La cuenta de Stripe permanece en España.</p>
       ${body}
     </div>
   </div>`;
@@ -1160,23 +1160,25 @@ function globalAccountsBox(company) {
           (account) => `<article>
             <div class="account-head"><h3>${escapeAttr(account.label)}</h3><span class="pill amber">Pendiente</span></div>
             <p class="hint">${escapeAttr(account.purpose)}</p>
-            <p class="funds-note">Sin número de cuenta</p>
+            <p class="funds-note">Sin número de cuenta. Para depositar en otro país.</p>
           </article>`,
         )
         .join("")}</div>`
     : `<div class="account-pair">
         <article>
-          <div class="account-head"><h3>Cuenta virtual</h3></div>
-          <p class="hint">Cuenta de la propia empresa.</p>
+          <div class="account-head"><h3>Cuenta para depositar en otro país</h3></div>
+          <p class="hint">Se deposita en una cuenta de otro país, al estilo Global66.</p>
+          <p class="funds-note">Sin número de cuenta</p>
         </article>
         <article>
-          <div class="account-head"><h3>Cuenta puente</h3></div>
-          <p class="hint">Recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.</p>
+          <div class="account-head"><h3>Cuenta para depositar en otro país</h3></div>
+          <p class="hint">El depósito entra a la cuenta del otro país. La cuenta de Stripe permanece en España.</p>
+          <p class="funds-note">Sin número de cuenta</p>
         </article>
       </div>`;
   const action = accounts.length >= 2
     ? `<p class="hint">La solicitud ya está pendiente. No hay número de cuenta.</p>`
-    : `<button class="btn btn-primary" data-global-accounts="${escapeAttr(company.id)}">${icon("plus")} Solicitar cuenta virtual y cuenta puente</button>`;
+    : `<button class="btn btn-primary" data-global-accounts="${escapeAttr(company.id)}">${icon("plus")} Solicitar cuentas para depositar en otros países</button>`;
   return `<section>
     <h2 class="section-title">${escapeAttr(company.name)}</h2>
     ${rows}

@@ -201,12 +201,15 @@ export interface GiftView {
 }
 
 /**
- * Global66's public docs list GET /b2b/movements/{accountId} and
- * POST /b2b/transactions/payments. They do not document opening an account.
+ * Global66 opens accounts in other countries so money can be deposited into them.
+ * Public docs list movements and payments, not account opening.
  * https://documents-b2b.global66.com/available-apis/movements/
+ * The local request stays pending. Stripe stays in Spain and receives nothing here.
  */
+export const DEPOSIT_ACCOUNTS_LABEL = "Cuentas para depositar en otros países";
+
 export const GLOBAL66_DOCS_NOTICE =
-  "La documentación pública de Global66 lista movimientos y pagos, no la apertura de cuentas. La solicitud queda pendiente y no tiene número de cuenta.";
+  "Las cuentas para depositar en otros países quedan pendientes. Global66 abre cuentas en otros países para depositar; la documentación pública lista movimientos y pagos, no la apertura, así que no hay número de cuenta. La cuenta de Stripe permanece en España.";
 
 export type GlobalAccountKind = "cuenta_virtual" | "cuenta_puente";
 
@@ -215,6 +218,8 @@ export interface GlobalAccountView {
   kind: GlobalAccountKind;
   label: string;
   purpose: string;
+  /** Money is deposited into the account in another country. */
+  direction: "deposito";
   status: "pending";
   /** Absent on purpose: Global66 did not return an account id. */
   externalId: null;
@@ -239,12 +244,12 @@ interface GlobalAccountRecord {
 
 const GLOBAL_ACCOUNT_COPY: Record<GlobalAccountKind, { label: string; purpose: string }> = {
   cuenta_virtual: {
-    label: "Cuenta virtual",
-    purpose: "Cuenta de la propia empresa.",
+    label: "Cuenta para depositar en otro país",
+    purpose: "Se deposita en una cuenta de otro país, al estilo Global66.",
   },
   cuenta_puente: {
-    label: "Cuenta puente",
-    purpose: "Recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.",
+    label: "Cuenta para depositar en otro país",
+    purpose: "El depósito entra a la cuenta del otro país. La cuenta de Stripe permanece en España.",
   },
 };
 
@@ -642,13 +647,12 @@ export class EmpresasModule {
   }
 
   /**
-   * Local request for the company's cuenta virtual and cuenta puente.
-   * Global66 does not document an account-opening call, so nothing is sent
-   * and no account number is invented. Debit balances stay untouched.
+   * Local request for deposit accounts in other countries, Global66-style.
+   * Nothing is sent to Global66, Prometeo, or Stripe. Debit cards stay on their own ledger.
    */
   requestGlobalAccounts(actor: CompanyActor, companyId: string): { company: CompanyView; created: boolean } {
     const company = this.require(companyId);
-    if (actor.role !== "operacion") throw new PlatformError("Solo operación solicita la cuenta virtual y la cuenta puente", 403);
+    if (actor.role !== "operacion") throw new PlatformError("Solo operación solicita las cuentas para depositar en otros países", 403);
     const existing = this.globalAccounts.filter((account) => account.companyId === company.id);
     const createdAt = new Date().toISOString();
     let created = false;
@@ -824,14 +828,15 @@ export class EmpresasModule {
   private globalAccountsOf(companyId: string): GlobalAccountView[] {
     const order: Record<GlobalAccountKind, number> = { cuenta_virtual: 0, cuenta_puente: 1 };
     return this.globalAccounts
-      .filter((account) => account.companyId === companyId)
+      .filter((account): account is GlobalAccountRecord & { kind: GlobalAccountKind } => account.companyId === companyId && account.kind in order)
       .sort((left, right) => order[left.kind] - order[right.kind])
       .map((account) => ({
         id: account.id,
         kind: account.kind,
-        label: account.label,
-        purpose: account.purpose,
-        status: "pending",
+        label: GLOBAL_ACCOUNT_COPY[account.kind].label,
+        purpose: GLOBAL_ACCOUNT_COPY[account.kind].purpose,
+        direction: "deposito" as const,
+        status: "pending" as const,
         externalId: null,
         createdAt: account.createdAt,
       }));
