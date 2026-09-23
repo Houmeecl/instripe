@@ -47,7 +47,7 @@ export class Platform {
     this.cobros = new CobrosModule(this.payments, this.store);
     this.seguros = new SegurosModule(this.payments, this.store);
     this.connect = new ConnectModule(this.payments, config, this.store);
-    this.treasury = new TreasuryModule(this.payments, config);
+    this.treasury = new TreasuryModule(this.payments, config, this.store);
     this.tarjetas = new TarjetasModule(this.payments, config, this.store);
     this.diseno = new DisenoModule(this.payments, this.connect, config, this.store);
     this.apps = new AppsModule(config.appManifestPath);

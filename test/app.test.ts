@@ -1603,12 +1603,12 @@ describe("instripe BaaS platform", () => {
     expect(JSON.stringify(accounts)).not.toContain("solo para transferir");
     const deposit = accounts.find((account: { kind: string }) => account.kind === "cuenta_puente");
     expect(deposit.label).toBe("Cuenta para depositar en otro país");
-    expect(deposit.purpose).toBe("El depósito entra a la cuenta del otro país. La cuenta de Stripe permanece en España.");
+    expect(deposit.purpose).toBe("El depósito entra a la cuenta del otro país. La cuenta de Stripe no cambia.");
     expect(deposit.direction).toBe("deposito");
     expect(accounts.find((account: { kind: string }) => account.kind === "cuenta_virtual").purpose).toBe("Se deposita en una cuenta de otro país, al estilo Global66.");
     expect(requested.body.company.globalAccounts.notice).toContain("depositar en otros países");
     expect(requested.body.company.globalAccounts.notice).toContain("no hay número de cuenta");
-    expect(requested.body.company.globalAccounts.notice).toContain("La cuenta de Stripe permanece en España");
+    expect(requested.body.company.globalAccounts.notice).toContain("La cuenta de Stripe no cambia");
     expect(requested.body.company.card.kind).toBe("debito");
     expect(requested.body.company.workers[0].kind).toBe("debito");
     expect(requested.body.company.card.id).not.toBe(deposit.id);

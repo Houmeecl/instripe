@@ -204,12 +204,12 @@ export interface GiftView {
  * Global66 opens accounts in other countries so money can be deposited into them.
  * Public docs list movements and payments, not account opening.
  * https://documents-b2b.global66.com/available-apis/movements/
- * The local request stays pending. Stripe stays in Spain and receives nothing here.
+ * The local request stays pending. Stripe receives nothing here.
  */
 export const DEPOSIT_ACCOUNTS_LABEL = "Cuentas para depositar en otros países";
 
 export const GLOBAL66_DOCS_NOTICE =
-  "Las cuentas para depositar en otros países quedan pendientes. Global66 abre cuentas en otros países para depositar; la documentación pública lista movimientos y pagos, no la apertura, así que no hay número de cuenta. La cuenta de Stripe permanece en España.";
+  "Las cuentas para depositar en otros países quedan pendientes. Global66 abre cuentas en otros países para depositar; la documentación pública lista movimientos y pagos, no la apertura, así que no hay número de cuenta. La cuenta de Stripe no cambia.";
 
 export type GlobalAccountKind = "cuenta_virtual" | "cuenta_puente";
 
@@ -249,7 +249,7 @@ const GLOBAL_ACCOUNT_COPY: Record<GlobalAccountKind, { label: string; purpose: s
   },
   cuenta_puente: {
     label: "Cuenta para depositar en otro país",
-    purpose: "El depósito entra a la cuenta del otro país. La cuenta de Stripe permanece en España.",
+    purpose: "El depósito entra a la cuenta del otro país. La cuenta de Stripe no cambia.",
   },
 };
 
