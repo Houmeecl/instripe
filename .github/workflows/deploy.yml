@@ -1,0 +1,82 @@
+name: CI y despliegue al VPS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - name: Empaquetar release
+        run: tar -czf release.tgz dist public package.json package-lock.json stripe-app.json .env.example
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release.tgz
+          retention-days: 7
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+      - name: Configurar SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$VPS_HOST" ] || [ -z "$VPS_SSH_KEY" ]; then
+            echo "::error::Faltan los secretos VPS_HOST y VPS_SSH_KEY. Ver deploy/README.md."
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          if [ -n "$VPS_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::VPS_KNOWN_HOSTS no está definido; se confía en la llave que entregue el host."
+            ssh-keyscan -p "${VPS_PORT:-22}" "$VPS_HOST" > ~/.ssh/known_hosts
+          fi
+      - name: Subir y activar release
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+          VPS_RESTART_CMD: ${{ secrets.VPS_RESTART_CMD }}
+        run: |
+          target="${VPS_USER:-deploy}@$VPS_HOST"
+          port="${VPS_PORT:-22}"
+          remote_tgz="/tmp/instripe-${GITHUB_SHA}.tgz"
+          scp -i ~/.ssh/id_deploy -P "$port" -o BatchMode=yes release.tgz "$target:$remote_tgz"
+          ssh -i ~/.ssh/id_deploy -p "$port" -o BatchMode=yes "$target" bash -s -- \
+            "$(printf %q "${VPS_APP_DIR:-auto}")" \
+            "$(printf %q "$remote_tgz")" \
+            "$(printf %q "$GITHUB_SHA")" \
+            "$(printf %q "${VPS_RESTART_CMD:-auto}")" \
+            < deploy/remote.sh

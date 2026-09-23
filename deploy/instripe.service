@@ -1,0 +1,17 @@
+# Copiar a /etc/systemd/system/instripe.service y ajustar User y WorkingDirectory.
+[Unit]
+Description=instripe
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/instripe
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

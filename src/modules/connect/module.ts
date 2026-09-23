@@ -63,38 +63,34 @@ export class ConnectModule {
     };
 
     if (this.stripe) {
+      // Stripe rejects the call when the account has not signed up for Connect; that message becomes the notice.
       try {
-        const platform = await platformAccount(this.stripe);
-        if (platform.controller?.type !== "application") {
-          account.notice = "Esta cuenta no es una plataforma Connect. El comercio queda en el registro local.";
-        } else {
-          const country = await this.country();
-          const created = await this.stripe.accounts.create({
-            country,
-            email,
-            controller: {
-              stripe_dashboard: { type: "express" },
-              fees: { payer: "application" },
-              losses: { payments: "application" },
-            },
-            capabilities: {
-              transfers: { requested: true },
-            },
-            metadata: { module: MODULE, reference: account.id, businessName },
-          });
-          const link = await this.stripe.accountLinks.create({
-            account: created.id,
-            type: "account_onboarding",
-            refresh_url: `${this.config.publicBaseUrl}/?connect=refresh`,
-            return_url: `${this.config.publicBaseUrl}/?connect=return`,
-          });
-          account.country = country;
-          account.stripeAccountId = created.id;
-          account.onboardingUrl = link.url;
-          account.mode = created.payouts_enabled ? "live" : "pending";
-          if (!created.payouts_enabled) {
-            account.notice = "La cuenta existe en Stripe y todavía no puede recibir pagos.";
-          }
+        const country = await this.country(this.stripe);
+        const created = await this.stripe.accounts.create({
+          country,
+          email,
+          controller: {
+            stripe_dashboard: { type: "express" },
+            fees: { payer: "application" },
+            losses: { payments: "application" },
+          },
+          capabilities: {
+            transfers: { requested: true },
+          },
+          metadata: { module: MODULE, reference: account.id, businessName },
+        });
+        const link = await this.stripe.accountLinks.create({
+          account: created.id,
+          type: "account_onboarding",
+          refresh_url: `${this.config.publicBaseUrl}/?connect=refresh`,
+          return_url: `${this.config.publicBaseUrl}/?connect=return`,
+        });
+        account.country = country;
+        account.stripeAccountId = created.id;
+        account.onboardingUrl = link.url;
+        account.mode = created.payouts_enabled ? "live" : "pending";
+        if (!created.payouts_enabled) {
+          account.notice = "La cuenta existe en Stripe y todavía no puede recibir pagos.";
         }
       } catch (error) {
         account.notice = stripeMessage(error);
@@ -137,11 +133,11 @@ export class ConnectModule {
     return copy;
   }
 
-  private async country(): Promise<string> {
+  private async country(stripe: Stripe): Promise<string> {
     if (this.platformCountry) return this.platformCountry;
-    if (!this.stripe) return "ES";
-    const account = await platformAccount(this.stripe);
-    this.platformCountry = account.country ?? "ES";
+    const account = await platformAccount(stripe);
+    if (!account.country) throw new PlatformError("Stripe no informó el país de la cuenta de la plataforma", 502);
+    this.platformCountry = account.country;
     return this.platformCountry;
   }
 }

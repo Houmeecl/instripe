@@ -959,7 +959,8 @@ function viewTreasury() {
 
 function viewCards() {
   const rows = state.cards;
-  const note = state.issuing ? `<p class="hint">${escapeAttr(state.issuing.detail)}</p>` : "";
+  const funding = state.issuing && state.issuing.funding ? `<p class="hint">${escapeAttr(state.issuing.funding)}</p>` : "";
+  const note = state.issuing ? `<p class="hint">${escapeAttr(state.issuing.detail)}</p>${funding}` : "";
   if (!rows.length) {
     return `<div class="card"><div class="card-head"><h3>Tarjetas</h3><button class="btn btn-primary btn-sm" data-new-card>${icon("plus")} Emitir tarjeta</button></div><div class="card-body">${note}<div class="empty">${icon("card")}<div>No hay tarjetas emitidas. El cupo es el crédito que puede cubrir el seguro.</div></div></div></div>`;
   }
@@ -1139,7 +1140,7 @@ function adminGlobalAccounts() {
   const notice = companies.reduce(
     (found, company) => found || (company.globalAccounts && company.globalAccounts.notice) || "",
     "",
-  ) || "Las cuentas para depositar en otros países quedan pendientes. Global66 abre cuentas en otros países para depositar; la documentación pública lista movimientos y pagos, no la apertura, así que no hay número de cuenta. La cuenta de Stripe permanece en España.";
+  ) || "Las cuentas para depositar en otros países quedan pendientes. Global66 abre cuentas en otros países para depositar; la documentación pública lista movimientos y pagos, no la apertura, así que no hay número de cuenta. La cuenta de Stripe no cambia.";
   const body = companies.length
     ? companies.map((company) => globalAccountsBox(company)).join("")
     : `<div class="empty">${icon("inbox")}<div>Todavía no hay empresas. El débito se abre en Débito.</div></div>`;
@@ -1147,7 +1148,7 @@ function adminGlobalAccounts() {
     <div class="card-head"><h3>Cuentas para depositar en otros países</h3></div>
     <div class="card-body">
       <p class="funds-note">${escapeAttr(notice)}</p>
-      <p class="hint">Estilo Global66: el dinero se deposita en cuentas de otros países. La cuenta de Stripe permanece en España.</p>
+      <p class="hint">Estilo Global66: el dinero se deposita en cuentas de otros países. La cuenta de Stripe no cambia.</p>
       ${body}
     </div>
   </div>`;
@@ -1174,7 +1175,7 @@ function globalAccountsBox(company) {
         </article>
         <article>
           <div class="account-head"><h3>Cuenta para depositar en otro país</h3></div>
-          <p class="hint">El depósito entra a la cuenta del otro país. La cuenta de Stripe permanece en España.</p>
+          <p class="hint">El depósito entra a la cuenta del otro país. La cuenta de Stripe no cambia.</p>
           <p class="funds-note">Sin número de cuenta</p>
         </article>
       </div>`;

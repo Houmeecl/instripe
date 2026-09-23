@@ -4,6 +4,7 @@ import type { AppConfig } from "../../config.js";
 import { PlatformError } from "../../errors.js";
 import type { Payments } from "../../payments/service.js";
 import { createStripe, platformAccount, stripeMessage } from "../../stripe/client.js";
+import { issuingFundingHint } from "../../stripe/country.js";
 import type { PlatformStore } from "../../store/db.js";
 
 export interface IssuedCard {
@@ -28,6 +29,10 @@ export interface IssuingStatus {
   active: boolean;
   chargesEnabled: boolean;
   currency?: string;
+  /** Country of the platform's Stripe account. It decides how the Issuing balance is funded. */
+  country?: string;
+  /** How money reaches the Issuing balance for that country. */
+  funding?: string;
   detail: string;
 }
 
@@ -79,11 +84,14 @@ export class TarjetasModule {
       const currency = (account.default_currency ?? "eur").toLowerCase();
       const chargesEnabled = account.charges_enabled === true;
       const active = cardIssuingActive(account);
+      const country = account.country ?? undefined;
       return {
         stripeConfigured: true,
         active,
         chargesEnabled,
         currency,
+        country,
+        funding: country ? issuingFundingHint(country) : undefined,
         detail: active
           ? `Issuing está activo. La tarjeta virtual se crea en Stripe, en ${currency.toUpperCase()}, y gasta el saldo de Issuing. El número no se guarda aquí.`
           : "Stripe ya puede cobrar con tarjeta. La tarjeta virtual real pide Issuing activo: en el Dashboard hay que abrir Issuing y aceptar los términos. Hasta entonces no se crea ninguna tarjeta.",

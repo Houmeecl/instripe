@@ -48,6 +48,10 @@ npm install
 npm run dev      # http://localhost:3000
 ```
 
+## Despliegue
+
+Cada push a `main` se prueba y se sube al VPS. Ver [`deploy/README.md`](deploy/README.md).
+
 ## Configuración
 
 Copia `.env.example` a `.env` (opcional). El servidor lo carga al arrancar y no pisa variables que ya vengan del entorno. Todo tiene valores por defecto seguros:

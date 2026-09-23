@@ -4,8 +4,10 @@ import type { GatewayName } from "../../config.js";
 import { PlatformError } from "../../errors.js";
 import type { Payments } from "../../payments/service.js";
 import type { ChargeResult } from "../../gateways/types.js";
-import { createStripe, stripeMessage } from "../../stripe/client.js";
+import { createStripe, platformAccount, stripeMessage } from "../../stripe/client.js";
+import { treasuryAvailability } from "../../stripe/country.js";
 import type { AppConfig } from "../../config.js";
+import type { PlatformStore } from "../../store/db.js";
 
 export interface FinancialAccount {
   id: string;
@@ -32,7 +34,7 @@ const MODULE = "treasury";
 
 /**
  * Treasury financial accounts. Funding is a collection through payments.
- * Stripe Treasury is used when the platform account has it enabled.
+ * Stripe Treasury is used only where Stripe offers it for the platform's country.
  */
 export class TreasuryModule {
   readonly id = MODULE;
@@ -44,8 +46,11 @@ export class TreasuryModule {
   constructor(
     private readonly payments: Payments,
     config: AppConfig,
+    private readonly store: PlatformStore,
   ) {
     this.stripe = createStripe(config);
+    for (const account of store.list<FinancialAccount>("treasury_accounts")) this.accounts.set(account.id, account);
+    for (const inbound of store.list<TreasuryInbound>("treasury_inbounds")) this.inbounds.set(inbound.id, inbound);
     payments.onSettled((movement) => {
       if (movement.module !== MODULE || movement.kind !== "collect") return;
       const inbound = this.inbounds.get(movement.reference);
@@ -55,6 +60,10 @@ export class TreasuryModule {
       account.balance += inbound.amount;
       inbound.status = "paid";
       inbound.paymentId = movement.id;
+      this.store.transaction(() => {
+        this.store.put("treasury_accounts", account.id, account);
+        this.store.put("treasury_inbounds", inbound.id, inbound);
+      });
     });
   }
 
@@ -79,6 +88,12 @@ export class TreasuryModule {
       account.notice = "Treasury no se abre en CLP. El abono queda en el libro local.";
     } else if (this.stripe) {
       try {
+        const platform = await platformAccount(this.stripe);
+        const availability = treasuryAvailability(platform.country ?? "");
+        if (!availability.usable) {
+          account.notice = availability.detail;
+          return this.remember(account);
+        }
         const created = await this.stripe.treasury.financialAccounts.create({
           supported_currencies: [account.currency],
           nickname,
@@ -94,7 +109,12 @@ export class TreasuryModule {
       }
     }
 
+    return this.remember(account);
+  }
+
+  private remember(account: FinancialAccount): FinancialAccount {
     this.accounts.set(account.id, account);
+    this.store.put("treasury_accounts", account.id, account);
     return account;
   }
 
@@ -115,6 +135,7 @@ export class TreasuryModule {
       createdAt: new Date().toISOString(),
     };
     this.inbounds.set(inbound.id, inbound);
+    this.store.put("treasury_inbounds", inbound.id, inbound);
     const movement = this.payments.openCollect({
       module: MODULE,
       reference: inbound.id,
@@ -122,6 +143,7 @@ export class TreasuryModule {
       description: `Abono Treasury ${account.nickname}`,
     });
     inbound.paymentId = movement.id;
+    this.store.put("treasury_inbounds", inbound.id, inbound);
     try {
       const charge = await this.payments.chargeOpen(
         MODULE,
@@ -132,6 +154,7 @@ export class TreasuryModule {
       return { account, inbound, charge };
     } catch (error) {
       this.inbounds.delete(inbound.id);
+      this.store.delete("treasury_inbounds", inbound.id);
       this.payments.drop(MODULE, inbound.id);
       throw error;
     }
