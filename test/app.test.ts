@@ -585,12 +585,13 @@ describe("instripe BaaS platform", () => {
 
     const comercio = await signedIn(server, "caja@taller.cl");
     const comercioSession = await comercio.get("/api/session");
-    expect(comercioSession.body.user.options).toEqual(["overview", "accounts", "cobros", "connect", "empresas", "clases"]);
+    expect(comercioSession.body.user.options).toEqual(["overview", "empresas", "clases"]);
     const comercioOverview = await comercio.get("/api/overview");
     expect(comercioOverview.status).toBe(200);
-    expect(comercioOverview.body.accounts).toBeDefined();
-    expect(comercioOverview.body.cobros).toBeDefined();
-    expect(comercioOverview.body.connect).toBeDefined();
+    expect(comercioOverview.body.inicio).toBeDefined();
+    expect(comercioOverview.body.accounts).toBeUndefined();
+    expect(comercioOverview.body.cobros).toBeUndefined();
+    expect(comercioOverview.body.connect).toBeUndefined();
     expect(comercioOverview.body.payments).toBeUndefined();
     expect(comercioOverview.body.cards).toBeUndefined();
     expect(comercioOverview.body.policies).toBeUndefined();
@@ -598,23 +599,22 @@ describe("instripe BaaS platform", () => {
     expect(blocked.status).toBe(403);
     expect(blocked.body.error).toBe("Esta opción no está en tu rol");
     expect((await comercio.get("/api/tarjetas")).status).toBe(403);
+    expect((await comercio.get("/api/cuentas")).status).toBe(403);
+    expect((await comercio.get("/api/cobros")).status).toBe(403);
+    expect((await comercio.get("/api/connect")).status).toBe(403);
+    expect((await comercio.get("/api/frosting")).status).toBe(403);
     expect((await comercio.get("/api/gateways")).status).toBe(200);
 
     const titular = await signedIn(server, "ana@proveedorregional.cl");
-    expect((await titular.get("/api/session")).body.user.options).toEqual([
-      "overview",
-      "plans",
-      "policies",
-      "claims",
-      "cards",
-      "empresas",
-      "clases",
-    ]);
-    expect((await titular.get("/api/tarjetas")).status).toBe(200);
+    expect((await titular.get("/api/session")).body.user.options).toEqual(["overview", "empresas", "clases"]);
+    expect((await titular.get("/api/tarjetas")).status).toBe(403);
     expect((await titular.get("/api/cuentas")).status).toBe(403);
+    expect((await titular.get("/api/plans")).status).toBe(403);
+    expect((await titular.get("/api/policies")).status).toBe(403);
     const titularOverview = await titular.get("/api/overview");
-    expect(titularOverview.body.cards).toBeDefined();
-    expect(titularOverview.body.policies).toBeDefined();
+    expect(titularOverview.body.inicio).toBeDefined();
+    expect(titularOverview.body.cards).toBeUndefined();
+    expect(titularOverview.body.policies).toBeUndefined();
     expect(titularOverview.body.accounts).toBeUndefined();
 
     const changed = await titular.post("/api/session/password").send({
@@ -646,23 +646,30 @@ describe("instripe BaaS platform", () => {
     })).status).toBe(200);
   });
 
-  it("keeps company prepaid on its own card and lets a worker transfer it back", async () => {
+  it("keeps company prepaid on its own card and lets operación move it", async () => {
     const server = app();
     const comercio = await signedIn(server, "caja@taller.cl");
-    const created = await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" });
+    const operacion = await signedIn(server);
+    expect((await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" })).status).toBe(403);
+    const created = await operacion.post("/api/empresas").send({
+      name: "Taller Sur",
+      color: "#0e3e66",
+      ownerEmail: "caja@taller.cl",
+    });
     expect(created.status).toBe(201);
     expect(created.body.company.balance).toBe(0);
     expect(created.body.company.last4).toMatch(/^\d{4}$/);
     expect(created.body.company.color).toBe("#0e3e66");
+    expect(created.body.company.canManage).toBe(true);
     const id = created.body.company.id;
 
     const titular = await signedIn(server, "ana@proveedorregional.cl");
     const denied = await titular.post("/api/empresas").send({ name: "Ana", color: "#112233" });
     expect(denied.status).toBe(403);
+    expect(denied.body.error).toBe("Solo operación configura la cuenta");
     expect((await comercio.post(`/api/empresas/${id}/abono`).send({ amount: 50_000 })).status).toBe(403);
-    expect((await comercio.post("/api/empresas").send({ name: "Sin color", color: "azul" })).status).toBe(400);
+    expect((await operacion.post("/api/empresas").send({ name: "Sin color", color: "azul", ownerEmail: "caja@taller.cl" })).status).toBe(400);
 
-    const operacion = await signedIn(server);
     const funded = await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 50_000 });
     expect(funded.status).toBe(200);
     expect(funded.body.company.balance).toBe(50_000);
@@ -671,24 +678,27 @@ describe("instripe BaaS platform", () => {
     const other = await signedIn(server, "pago@norte.cl");
     expect((await other.get("/api/empresas")).body.companies).toEqual([]);
     expect((await other.post(`/api/empresas/${id}/trabajadores`).send({ name: "Ana Díaz", email: "ana@proveedorregional.cl" })).status).toBe(403);
+    expect((await comercio.post(`/api/empresas/${id}/trabajadores`).send({ name: "Ana Díaz", email: "ana@proveedorregional.cl" })).status).toBe(403);
 
-    const withWorker = await comercio.post(`/api/empresas/${id}/trabajadores`).send({
+    const withWorker = await operacion.post(`/api/empresas/${id}/trabajadores`).send({
       name: "Ana Díaz",
       email: "ana@proveedorregional.cl",
     });
     expect(withWorker.status).toBe(201);
     const workerId = withWorker.body.company.workers[0].id;
-    const moved = await comercio.post(`/api/empresas/${id}/transferencias`).send({
+    const moved = await operacion.post(`/api/empresas/${id}/transferencias`).send({
       workerId,
       amount: 20_000,
       direction: "to_worker",
     });
     expect(moved.status).toBe(200);
     expect(moved.body.company.balance).toBe(30_000);
-    expect(moved.body.company.canManage).toBe(true);
-    expect(moved.body.company.workers[0].displayBalance).toBe("—");
-    expect(moved.body.company.workers[0].balance).toBe(0);
-    expect((await operacion.get("/api/empresas")).body.companies[0].workers[0].balance).toBe(20_000);
+    expect(moved.body.company.workers[0].balance).toBe(20_000);
+    expect((await comercio.post(`/api/empresas/${id}/transferencias`).send({
+      workerId,
+      amount: 1_000,
+      direction: "to_worker",
+    })).status).toBe(403);
 
     const own = await titular.get("/api/empresas");
     expect(own.status).toBe(200);
@@ -697,36 +707,43 @@ describe("instripe BaaS platform", () => {
     expect(own.body.companies[0].displayBalance).toBe("—");
     expect(own.body.companies[0].workers).toHaveLength(1);
     expect(own.body.companies[0].workers[0].balance).toBe(20_000);
-    expect(own.body.companies[0].transfers.every((item: { kind: string }) => item.kind !== "abono")).toBe(true);
+    expect(own.body.companies[0].workers[0].email).toBe("ana@proveedorregional.cl");
+    expect(own.body.companies[0].transfers).toEqual([]);
+    expect(own.body.companies[0].users).toEqual([]);
+    expect(JSON.stringify(own.body)).not.toContain("caja@taller.cl");
 
-    const back = await titular.post(`/api/empresas/${id}/transferencias`).send({
+    expect((await titular.post(`/api/empresas/${id}/transferencias`).send({
       workerId,
       amount: 5_000,
       direction: "to_company",
-    });
-    expect(back.status).toBe(200);
-    expect(back.body.company.workers[0].balance).toBe(15_000);
-    expect(back.body.company.displayBalance).toBe("—");
-
-    const tooMuch = await titular.post(`/api/empresas/${id}/transferencias`).send({
+    })).status).toBe(403);
+    const tooMuch = await operacion.post(`/api/empresas/${id}/transferencias`).send({
       workerId,
       amount: 999_999,
       direction: "to_company",
     });
     expect(tooMuch.status).toBe(422);
     expect(tooMuch.body.error).toBe("Saldo insuficiente en la tarjeta");
-    expect((await titular.post(`/api/empresas/${id}/transferencias`).send({
+    const back = await operacion.post(`/api/empresas/${id}/transferencias`).send({
       workerId,
-      amount: 1_000,
-      direction: "to_worker",
-    })).status).toBe(403);
+      amount: 5_000,
+      direction: "to_company",
+    });
+    expect(back.status).toBe(200);
+    expect(back.body.company.balance).toBe(35_000);
+    expect(back.body.company.workers[0].balance).toBe(15_000);
     expect((await operacion.get("/api/overview")).body.float.balance).toBe(0);
-    expect((await operacion.get("/api/empresas")).body.companies[0].balance).toBe(35_000);
-    expect((await operacion.get("/api/empresas")).body.companies[0].workers[0].balance).toBe(15_000);
     const companyView = await comercio.get("/api/empresas");
+    expect(companyView.body.canCreate).toBe(false);
+    expect(companyView.body.companies).toHaveLength(1);
     expect(companyView.body.companies[0].balance).toBe(35_000);
-    expect(companyView.body.companies[0].workers[0].displayBalance).toBe("—");
-    expect(companyView.body.companies[0].workers[0].balance).toBe(0);
+    expect(companyView.body.companies[0].canManage).toBe(false);
+    expect(companyView.body.companies[0].workers).toEqual([]);
+    expect(companyView.body.companies[0].users).toEqual([]);
+    expect(companyView.body.companies[0].transfers).toEqual([]);
+    expect(JSON.stringify(companyView.body)).not.toContain("ana@proveedorregional.cl");
+    const workerAfter = await titular.get("/api/inicio");
+    expect(workerAfter.body.card.balance).toBe(15_000);
   });
 
   it("does not let a demo collection fund a Transfer, and reverses a rejected one", async () => {
@@ -815,10 +832,9 @@ describe("instripe BaaS platform", () => {
 
     const norte = await signedIn(server, "pago@norte.cl");
     const taller = await signedIn(server, "caja@taller.cl");
-    const accounts = await taller.get("/api/cuentas");
-    const own = accounts.body.accounts.find((account: { email: string }) => account.email === "caja@taller.cl");
-    expect(own.memberId).toBe("reg_taller");
-    expect((await norte.post(`/api/cuentas/${own.id}/retiro`).send({ amount: 1, destination: "x", gateway: "chile" })).status).toBe(403);
+    expect((await taller.get("/api/cuentas")).status).toBe(403);
+    expect((await norte.get("/api/cuentas")).status).toBe(403);
+    expect((await norte.post("/api/cuentas").send({ name: "Ajena", email: "pago@norte.cl" })).status).toBe(403);
   });
 
   it("shows each client their own virtual debit card and keeps demo money out of available funds", async () => {
@@ -826,10 +842,15 @@ describe("instripe BaaS platform", () => {
     const comercio = await signedIn(server, "caja@taller.cl");
     const titular = await signedIn(server, "ana@proveedorregional.cl");
     const operacion = await signedIn(server);
-    const created = await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" });
+    const created = await operacion.post("/api/empresas").send({
+      name: "Taller Sur",
+      color: "#0e3e66",
+      ownerEmail: "caja@taller.cl",
+    });
     const id = created.body.company.id;
     const logo = "https://cdn.ejemplo.cl/taller.png";
-    const withLogo = await comercio.post(`/api/empresas/${id}/logo`).send({ logo });
+    expect((await comercio.post(`/api/empresas/${id}/logo`).send({ logo })).status).toBe(403);
+    const withLogo = await operacion.post(`/api/empresas/${id}/logo`).send({ logo });
     expect(withLogo.status).toBe(200);
     expect(withLogo.body.company.logo).toBe(logo);
     expect(withLogo.body.company.card.logo).toBe(logo);
@@ -837,13 +858,13 @@ describe("instripe BaaS platform", () => {
     expect(withLogo.body.company.card.plastic).toBe(false);
 
     await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 50_000 });
-    const withWorkers = await comercio.post(`/api/empresas/${id}/trabajadores`).send({
+    const withWorkers = await operacion.post(`/api/empresas/${id}/trabajadores`).send({
       name: "Ana Díaz",
       email: "ana@proveedorregional.cl",
     });
     const workerId = withWorkers.body.company.workers[0].id;
-    await comercio.post(`/api/empresas/${id}/trabajadores`).send({ name: "Luis Soto", email: "luis@proveedorregional.cl" });
-    await comercio.post(`/api/empresas/${id}/transferencias`).send({ workerId, amount: 20_000, direction: "to_worker" });
+    await operacion.post(`/api/empresas/${id}/trabajadores`).send({ name: "Luis Soto", email: "luis@proveedorregional.cl" });
+    await operacion.post(`/api/empresas/${id}/transferencias`).send({ workerId, amount: 20_000, direction: "to_worker" });
 
     const companyHome = await comercio.get("/api/inicio");
     expect(companyHome.body).toMatchObject({
@@ -858,16 +879,18 @@ describe("instripe BaaS platform", () => {
     expect(companyHome.body.card.realFunds).toBe(false);
     expect(companyHome.body.card.logo).toBe(logo);
     expect(companyHome.body.workers).toBeUndefined();
+    expect(JSON.stringify(companyHome.body)).not.toContain("luis@proveedorregional.cl");
+    expect(JSON.stringify(companyHome.body)).not.toContain("ana@proveedorregional.cl");
 
     const companyList = await comercio.get("/api/empresas");
     const company = companyList.body.companies[0];
-    expect(company.workers).toHaveLength(2);
-    expect(company.workers.every((worker: { balance: number; displayBalance: string; movements: unknown[]; receipts: unknown[] }) => {
-      return worker.balance === 0 && worker.displayBalance === "—" && worker.movements.length === 0 && worker.receipts.length === 0;
-    })).toBe(true);
+    expect(company.workers).toEqual([]);
+    expect(company.users).toEqual([]);
+    expect(company.canManage).toBe(false);
     expect(company.card.balance).toBe(30_000);
     expect(company.card.available).toBe(0);
     expect(company.card.movements.length).toBeGreaterThan(0);
+    expect(JSON.stringify(companyList.body)).not.toContain("luis@proveedorregional.cl");
 
     const workerHome = await titular.get("/api/inicio");
     expect(workerHome.body.name).toBe("Ana Díaz");
@@ -878,6 +901,8 @@ describe("instripe BaaS platform", () => {
     expect(workerHome.body.card.kind).toBe("debito");
     expect(workerHome.body.companyBalance).toBeUndefined();
     expect(workerHome.body.workers).toBeUndefined();
+    expect(JSON.stringify(workerHome.body)).not.toContain("luis@proveedorregional.cl");
+    expect(JSON.stringify(workerHome.body)).not.toContain("caja@taller.cl");
 
     const own = await titular.get("/api/empresas");
     expect(own.body.companies[0].balance).toBe(0);
@@ -888,8 +913,17 @@ describe("instripe BaaS platform", () => {
     expect(own.body.companies[0].workers[0].logo).toBe(logo);
     expect(own.body.companies[0].workers[0].movements.length).toBeGreaterThan(0);
     expect(own.body.companies[0].workers[0].receipts.length).toBeGreaterThan(0);
+    expect(JSON.stringify(own.body)).not.toContain("luis@proveedorregional.cl");
 
-    const options = await comercio.post(`/api/empresas/${id}/tarjetas/${id}`).send({
+    expect((await comercio.post(`/api/empresas/${id}/tarjetas/${id}`).send({
+      spendLimit: 8_000,
+      categories: ["transporte"],
+      period: "mensual",
+      blocked: false,
+      alerts: true,
+    })).status).toBe(403);
+    expect((await titular.post(`/api/empresas/${id}/tarjetas/${workerId}`).send({ blocked: true })).status).toBe(403);
+    const options = await operacion.post(`/api/empresas/${id}/tarjetas/${id}`).send({
       spendLimit: 8_000,
       categories: ["transporte"],
       period: "mensual",
@@ -897,7 +931,7 @@ describe("instripe BaaS platform", () => {
       alerts: true,
     });
     expect(options.status).toBe(200);
-    const workerOptions = await comercio.post(`/api/empresas/${id}/tarjetas/${workerId}`).send({
+    const workerOptions = await operacion.post(`/api/empresas/${id}/tarjetas/${workerId}`).send({
       spendLimit: 4_000,
       categories: ["salud"],
       period: "siempre",
@@ -905,7 +939,7 @@ describe("instripe BaaS platform", () => {
       alerts: false,
     });
     expect(workerOptions.status).toBe(200);
-    expect(workerOptions.body.company.workers.find((worker: { id: string }) => worker.id === workerId).balance).toBe(0);
+    expect(workerOptions.body.company.workers.find((worker: { id: string }) => worker.id === workerId).balance).toBe(20_000);
     const saved = await comercio.get("/api/empresas");
     expect(saved.body.companies[0].card.options).toMatchObject({
       spendLimit: 8_000,
@@ -914,15 +948,12 @@ describe("instripe BaaS platform", () => {
       period: "mensual",
       categories: ["transporte"],
     });
-    expect(saved.body.companies[0].workers.find((worker: { id: string }) => worker.id === workerId).options).toMatchObject({
-      spendLimit: 4_000,
-      blocked: true,
-      categories: ["salud"],
-    });
+    expect(saved.body.companies[0].workers).toEqual([]);
     const workerSaved = await titular.get("/api/empresas");
     expect(workerSaved.body.companies[0].workers[0].options).toMatchObject({ spendLimit: 4_000, blocked: true });
+    expect(workerSaved.body.companies[0].card.options.spendLimit).toBeNull();
     expect((await titular.post(`/api/empresas/${id}/tarjetas/${id}`).send({ blocked: true })).status).toBe(403);
-    const blockedBack = await titular.post(`/api/empresas/${id}/transferencias`).send({
+    const blockedBack = await operacion.post(`/api/empresas/${id}/transferencias`).send({
       workerId,
       amount: 1_000,
       direction: "to_company",
@@ -1002,6 +1033,10 @@ describe("instripe BaaS platform", () => {
     const medio = classes.body.classes.find((item: { id: string; rate: number }) => item.id === "medio");
     expect(medio.rate).toBe(3_200);
 
+    expect((await titular.get("/api/frosting")).status).toBe(403);
+    const comercio = await signedIn(server, "caja@taller.cl");
+    expect((await comercio.get("/api/frosting")).status).toBe(403);
+    expect((await comercio.post("/api/actuarial").send({ classId: "medio", rate: 1 })).status).toBe(403);
     const denied = await titular.post("/api/frosting").send({
       holderName: "Ana Díaz",
       email: "ana@proveedorregional.cl",
@@ -1058,7 +1093,12 @@ describe("instripe BaaS platform", () => {
     const server = app();
     const comercio = await signedIn(server, "caja@taller.cl");
     const titular = await signedIn(server, "ana@proveedorregional.cl");
-    const created = await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" });
+    const operacion = await signedIn(server);
+    const created = await operacion.post("/api/empresas").send({
+      name: "Taller Sur",
+      color: "#0e3e66",
+      ownerEmail: "caja@taller.cl",
+    });
     expect(created.status).toBe(201);
     const companyContract = created.body.company.contract;
     expect(companyContract.holderName).toBe("Taller Sur");
@@ -1080,7 +1120,7 @@ describe("instripe BaaS platform", () => {
     expect(companyHome.body.contract.text).toBe(companyContract.text);
     expect(companyHome.body.card.contract.text).toBe(companyContract.text);
 
-    const withWorker = await comercio.post(`/api/empresas/${created.body.company.id}/trabajadores`).send({
+    const withWorker = await operacion.post(`/api/empresas/${created.body.company.id}/trabajadores`).send({
       name: "Ana Díaz",
       email: "ana@proveedorregional.cl",
     });
@@ -1108,15 +1148,19 @@ describe("instripe BaaS platform", () => {
     const comercio = await signedIn(server, "caja@taller.cl");
     const titular = await signedIn(server, "ana@proveedorregional.cl");
     const operacion = await signedIn(server);
-    const created = await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" });
+    const created = await operacion.post("/api/empresas").send({
+      name: "Taller Sur",
+      color: "#0e3e66",
+      ownerEmail: "caja@taller.cl",
+    });
     const id = created.body.company.id;
     await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 50_000 });
-    const withWorker = await comercio.post(`/api/empresas/${id}/trabajadores`).send({
+    const withWorker = await operacion.post(`/api/empresas/${id}/trabajadores`).send({
       name: "Ana Díaz",
       email: "ana@proveedorregional.cl",
     });
     const workerId = withWorker.body.company.workers[0].id;
-    await comercio.post(`/api/empresas/${id}/transferencias`).send({ workerId, amount: 20_000, direction: "to_worker" });
+    await operacion.post(`/api/empresas/${id}/transferencias`).send({ workerId, amount: 20_000, direction: "to_worker" });
 
     const beforeCompany = await comercio.get("/api/empresas");
     const beforeWorker = await titular.get("/api/inicio");
@@ -1129,7 +1173,7 @@ describe("instripe BaaS platform", () => {
     }) as typeof fetch;
     let gift;
     try {
-      gift = await comercio.post(`/api/empresas/${id}/regalos`).send({
+      gift = await operacion.post(`/api/empresas/${id}/regalos`).send({
         title: "Almuerzo",
         note: "Para el equipo",
         recipientId: workerId,
@@ -1160,11 +1204,8 @@ describe("instripe BaaS platform", () => {
     expect(afterCompany.body.companies[0].card.balance).toBe(30_000);
     expect(afterCompany.body.companies[0].card.available).toBe(0);
     expect(afterCompany.body.companies[0].card.realFunds).toBe(false);
-    expect(afterCompany.body.companies[0].workers[0].balance).toBe(0);
-    expect(afterCompany.body.companies[0].workers[0].displayBalance).toBe("—");
-    expect(afterCompany.body.companies[0].gifts).toEqual([
-      expect.objectContaining({ id: gift.body.gift.id, status: "pending", recipientId: workerId }),
-    ]);
+    expect(afterCompany.body.companies[0].workers).toEqual([]);
+    expect(afterCompany.body.companies[0].gifts).toEqual([]);
     const afterBook = await operacion.get("/api/payments");
     expect(afterBook.body.wallet.balance).toBe(beforeBook.body.wallet.balance);
     expect(afterBook.body.transferable.balance).toBe(0);
@@ -1175,32 +1216,33 @@ describe("instripe BaaS platform", () => {
       expect.objectContaining({ id: gift.body.gift.id, recipientId: workerId }),
     ]);
 
-    const ownGift = await comercio.post(`/api/empresas/${id}/regalos`).send({
+    const ownGift = await operacion.post(`/api/empresas/${id}/regalos`).send({
       title: "Para la empresa",
       note: "Uso interno",
       recipientId: id,
     });
     expect(ownGift.status).toBe(201);
     const companyHome = await comercio.get("/api/inicio");
-    expect(companyHome.body.gifts).toHaveLength(2);
+    expect(companyHome.body.gifts.map((item: { recipientId: string }) => item.recipientId)).toEqual([id]);
     const workerSees = await titular.get("/api/inicio");
     expect(workerSees.body.gifts.map((item: { recipientId: string }) => item.recipientId)).toEqual([workerId]);
     const workerCompany = await titular.get("/api/empresas");
     expect(workerCompany.body.companies[0].gifts).toHaveLength(1);
     expect(workerCompany.body.companies[0].balance).toBe(0);
     expect(workerCompany.body.companies[0].displayBalance).toBe("—");
+    expect(JSON.stringify(workerCompany.body)).not.toContain("Para la empresa");
 
     expect((await titular.post(`/api/empresas/${id}/regalos`).send({
       title: "No",
       note: "No",
       recipientId: workerId,
     })).status).toBe(403);
-    expect((await operacion.post(`/api/empresas/${id}/regalos`).send({
-      title: "No",
-      note: "No",
-      recipientId: id,
-    })).status).toBe(403);
     expect((await comercio.post(`/api/empresas/${id}/regalos`).send({
+      title: "Fuera",
+      note: "Nadie",
+      recipientId: "wrk_missing",
+    })).status).toBe(403);
+    expect((await operacion.post(`/api/empresas/${id}/regalos`).send({
       title: "Fuera",
       note: "Nadie",
       recipientId: "wrk_missing",
@@ -1282,15 +1324,19 @@ describe("instripe BaaS platform", () => {
     const comercio = await signedIn(server, "caja@taller.cl");
     const titular = await signedIn(server, "ana@proveedorregional.cl");
     const operacion = await signedIn(server);
-    const created = await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" });
+    const created = await operacion.post("/api/empresas").send({
+      name: "Taller Sur",
+      color: "#0e3e66",
+      ownerEmail: "caja@taller.cl",
+    });
     const id = created.body.company.id;
     await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 40_000 });
-    const withWorker = await comercio.post(`/api/empresas/${id}/trabajadores`).send({
+    const withWorker = await operacion.post(`/api/empresas/${id}/trabajadores`).send({
       name: "Ana Díaz",
       email: "ana@proveedorregional.cl",
     });
     const workerId = withWorker.body.company.workers[0].id;
-    await comercio.post(`/api/empresas/${id}/transferencias`).send({ workerId, amount: 15_000, direction: "to_worker" });
+    await operacion.post(`/api/empresas/${id}/transferencias`).send({ workerId, amount: 15_000, direction: "to_worker" });
     const beforeBook = await operacion.get("/api/payments");
 
     const fetchCalls: string[] = [];
@@ -1301,7 +1347,7 @@ describe("instripe BaaS platform", () => {
     }) as typeof fetch;
     let gift;
     try {
-      gift = await comercio.post(`/api/empresas/${id}/regalos`).send({
+      gift = await operacion.post(`/api/empresas/${id}/regalos`).send({
         title: "Once",
         note: "Para Ana",
         recipientId: workerId,
@@ -1320,14 +1366,14 @@ describe("instripe BaaS platform", () => {
     expect(waiting.body.card.balance).toBe(15_000);
 
     expect((await titular.post(`/api/empresas/${id}/regalos/${gift.body.gift.id}/activar`)).status).toBe(403);
-    expect((await operacion.post(`/api/empresas/${id}/regalos/${gift.body.gift.id}/activar`)).status).toBe(403);
+    expect((await comercio.post(`/api/empresas/${id}/regalos/${gift.body.gift.id}/activar`)).status).toBe(403);
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       fetchCalls.push(String(input));
       throw new Error("Stripe no debe llamarse");
     }) as typeof fetch;
     let activated;
     try {
-      activated = await comercio.post(`/api/empresas/${id}/regalos/${gift.body.gift.id}/activar`);
+      activated = await operacion.post(`/api/empresas/${id}/regalos/${gift.body.gift.id}/activar`);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1343,9 +1389,9 @@ describe("instripe BaaS platform", () => {
     expect(afterCompany.body.companies[0].card.balance).toBe(25_000);
     expect(afterCompany.body.companies[0].card.available).toBe(0);
     expect(afterCompany.body.companies[0].card.realFunds).toBe(false);
-    expect(afterCompany.body.companies[0].workers[0].balance).toBe(0);
-    expect(afterCompany.body.companies[0].workers[0].displayBalance).toBe("—");
-    expect(afterCompany.body.companies[0].gifts[0].active).toBe(true);
+    expect(afterCompany.body.companies[0].workers).toEqual([]);
+    expect(afterCompany.body.companies[0].gifts).toEqual([]);
+    expect((await operacion.get("/api/empresas")).body.companies[0].gifts[0].active).toBe(true);
     const afterBook = await operacion.get("/api/payments");
     expect(afterBook.body.wallet.balance).toBe(beforeBook.body.wallet.balance);
     expect(afterBook.body.transferable.balance).toBe(0);
@@ -1362,13 +1408,29 @@ describe("instripe BaaS platform", () => {
     const taller = await signedIn(server, "caja@taller.cl");
     const norte = await signedIn(server, "pago@norte.cl");
     const operacion = await signedIn(server);
-    const companyA = await taller.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" });
-    const companyB = await norte.post("/api/empresas").send({ name: "Oficina Norte", color: "#14532d" });
+    expect((await taller.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" })).status).toBe(403);
+    expect((await norte.post("/api/empresas").send({ name: "Oficina Norte", color: "#14532d" })).status).toBe(403);
+    const companyA = await operacion.post("/api/empresas").send({
+      name: "Taller Sur",
+      color: "#0e3e66",
+      ownerEmail: "caja@taller.cl",
+    });
+    const companyB = await operacion.post("/api/empresas").send({
+      name: "Oficina Norte",
+      color: "#14532d",
+      ownerEmail: "pago@norte.cl",
+    });
     const idA = companyA.body.company.id;
     const idB = companyB.body.company.id;
     const password = "Empresa.1831";
 
-    const staff = await taller.post(`/api/empresas/${idA}/usuarios`).send({
+    expect((await taller.post(`/api/empresas/${idA}/usuarios`).send({
+      name: "Caja Sur",
+      email: "caja.sur@taller.cl",
+      role: "comercio",
+      password,
+    })).status).toBe(403);
+    const staff = await operacion.post(`/api/empresas/${idA}/usuarios`).send({
       name: "Caja Sur",
       email: "caja.sur@taller.cl",
       role: "comercio",
@@ -1387,7 +1449,7 @@ describe("instripe BaaS platform", () => {
       "caja.sur@taller.cl",
     ]);
 
-    const client = await taller.post(`/api/empresas/${idA}/usuarios`).send({
+    const client = await operacion.post(`/api/empresas/${idA}/usuarios`).send({
       name: "Luz Soto",
       email: "luz.sur@taller.cl",
       role: "titular",
@@ -1399,19 +1461,13 @@ describe("instripe BaaS platform", () => {
     expect(luzCard.contract.companyName).toBe("Taller Sur");
     expect(luzCard.contract.text).toContain("débito virtual, sin crédito");
 
-    const norteClient = await norte.post(`/api/empresas/${idB}/usuarios`).send({
+    const norteClient = await operacion.post(`/api/empresas/${idB}/usuarios`).send({
       name: "Pablo Norte",
       email: "pablo.norte@norte.cl",
       role: "titular",
       password,
     });
     expect(norteClient.status).toBe(201);
-    expect((await operacion.post(`/api/empresas/${idA}/usuarios`).send({
-      name: "Mesa",
-      email: "mesa.sur@taller.cl",
-      role: "comercio",
-      password,
-    })).status).toBe(403);
     expect((await norte.post(`/api/empresas/${idA}/usuarios`).send({
       name: "Intruso",
       email: "intruso@norte.cl",
@@ -1419,6 +1475,12 @@ describe("instripe BaaS platform", () => {
       password,
     })).status).toBe(403);
     expect((await taller.post(`/api/empresas/${idA}/usuarios`).send({
+      name: "Pablo",
+      email: "pablo.norte@norte.cl",
+      role: "titular",
+      password,
+    })).status).toBe(403);
+    expect((await operacion.post(`/api/empresas/${idA}/usuarios`).send({
       name: "Pablo",
       email: "pablo.norte@norte.cl",
       role: "titular",
@@ -1431,8 +1493,10 @@ describe("instripe BaaS platform", () => {
     expect(visible.body.canCreate).toBe(false);
     expect(JSON.stringify(visible.body)).not.toContain("Oficina Norte");
     expect(JSON.stringify(visible.body)).not.toContain("pablo.norte@norte.cl");
-    expect(visible.body.companies[0].workers.map((worker: { email: string }) => worker.email)).toEqual(["luz.sur@taller.cl"]);
-    expect(visible.body.companies[0].workers[0].displayBalance).toBe("—");
+    expect(visible.body.companies[0].workers).toEqual([]);
+    expect(visible.body.companies[0].users).toEqual([]);
+    expect(visible.body.companies[0].canManage).toBe(false);
+    expect(JSON.stringify(visible.body)).not.toContain("luz.sur@taller.cl");
     const surHome = await sur.get("/api/inicio");
     expect(surHome.body.companyName).toBe("Taller Sur");
     expect(surHome.body.contract.companyName).toBe("Taller Sur");
@@ -1447,7 +1511,7 @@ describe("instripe BaaS platform", () => {
       name: "Ajeno",
       email: "ajeno@norte.cl",
     })).status).toBe(403);
-    expect((await sur.get("/api/cuentas")).body.accounts).toEqual([]);
+    expect((await sur.get("/api/cuentas")).status).toBe(403);
 
     const luz = await signedIn(server, "luz.sur@taller.cl", password);
     const luzHome = await luz.get("/api/inicio");
@@ -1481,22 +1545,29 @@ describe("instripe BaaS platform", () => {
   it("stores a pending cuenta virtual and cuenta puente without moving debit balances", async () => {
     const server = app();
     const comercio = await signedIn(server, "caja@taller.cl");
-    const created = await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" });
+    const operacion = await signedIn(server);
+    expect((await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" })).status).toBe(403);
+    const created = await operacion.post("/api/empresas").send({
+      name: "Taller Sur",
+      color: "#0e3e66",
+      ownerEmail: "caja@taller.cl",
+    });
     expect(created.status).toBe(201);
     const id = created.body.company.id;
-    expect(created.body.company.globalAccounts).toBeUndefined();
-    expect(JSON.stringify(created.body)).not.toContain("cuenta_puente");
+    expect(created.body.company.globalAccounts.accounts).toEqual([]);
+    const hidden = await comercio.get("/api/empresas");
+    expect(hidden.body.companies[0].globalAccounts).toBeUndefined();
+    expect(JSON.stringify(hidden.body)).not.toContain("cuenta_puente");
     expect((await comercio.post(`/api/empresas/${id}/cuentas-virtuales`)).status).toBe(403);
 
-    const operacion = await signedIn(server);
     const funded = await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 40_000 });
     expect(funded.body.company.balance).toBe(40_000);
-    const withWorker = await comercio.post(`/api/empresas/${id}/trabajadores`).send({
+    const withWorker = await operacion.post(`/api/empresas/${id}/trabajadores`).send({
       name: "Ana Díaz",
       email: "ana@proveedorregional.cl",
     });
     const workerId = withWorker.body.company.workers[0].id;
-    const moved = await comercio.post(`/api/empresas/${id}/transferencias`).send({
+    const moved = await operacion.post(`/api/empresas/${id}/transferencias`).send({
       workerId,
       amount: 12_000,
       direction: "to_worker",
@@ -1551,9 +1622,14 @@ describe("instripe BaaS platform", () => {
 
     const other = await signedIn(server, "pago@norte.cl");
     expect((await other.post(`/api/empresas/${id}/cuentas-virtuales`)).status).toBe(403);
-    const otherCreated = await other.post("/api/empresas").send({ name: "Oficina Norte", color: "#112233" });
+    expect((await other.post("/api/empresas").send({ name: "Oficina Norte", color: "#112233" })).status).toBe(403);
+    const otherCreated = await operacion.post("/api/empresas").send({
+      name: "Oficina Norte",
+      color: "#112233",
+      ownerEmail: "pago@norte.cl",
+    });
     const otherId = otherCreated.body.company.id;
-    expect(otherCreated.body.company.globalAccounts).toBeUndefined();
+    expect(otherCreated.body.company.globalAccounts.accounts).toEqual([]);
     const otherRequest = await operacion.post(`/api/empresas/${otherId}/cuentas-virtuales`);
     expect(otherRequest.status).toBe(201);
     const otherAccounts = otherRequest.body.company.globalAccounts.accounts;
@@ -1583,9 +1659,18 @@ describe("instripe BaaS platform", () => {
 
     const panel = await request(server).get("/app.js");
     const companyBlock = panel.text.slice(panel.text.indexOf("function companyBlock"), panel.text.indexOf("function viewEmpresas"));
+    const personal = panel.text.slice(panel.text.indexOf("function personalAccount"), panel.text.indexOf("function companyBlock"));
+    const clientHome = panel.text.slice(panel.text.indexOf("function viewClientHome"), panel.text.indexOf("function contractBox"));
     const home = panel.text.slice(panel.text.indexOf("function viewOperacionHome"), panel.text.indexOf("function viewAccounts"));
     expect(companyBlock).not.toContain("globalAccountsBox");
     expect(companyBlock).not.toContain("data-global-accounts");
+    expect(personal).not.toContain("data-save-card");
+    expect(personal).not.toContain("data-create-user");
+    expect(personal).not.toContain("data-add-worker");
+    expect(personal).not.toContain("data-frosting");
+    expect(personal).not.toContain("data-activate-gift");
+    expect(personal).not.toContain("data-create-gift");
+    expect(clientHome).not.toContain("usersSection");
     expect(home).toContain("adminGlobalAccounts()");
     expect(panel.text).toContain("Solicitar cuenta virtual y cuenta puente");
     expect(panel.text).toContain("Recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.");

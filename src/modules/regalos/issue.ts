@@ -47,7 +47,7 @@ export interface IssuedGift {
 }
 
 export const GIFT_DISCLAIMER = "Este regalo es virtual. No es una cuenta de débito y no es dinero.";
-export const INACTIVE_GIFT = "Inactivo. La empresa lo activa cuando quiera.";
+export const INACTIVE_GIFT = "Inactivo. Operación lo activa.";
 const PENDING = "Stripe no está configurado. El regalo queda pendiente, sin código y sin identificador de Stripe.";
 const NFC = "Este código se puede copiar después en una etiqueta NFC.";
 

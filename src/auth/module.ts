@@ -26,8 +26,8 @@ export type Role = "operacion" | "comercio" | "titular";
 
 const ROLE_OPTIONS: Record<Role, readonly Option[]> = {
   operacion: OPTIONS,
-  comercio: ["overview", "accounts", "cobros", "connect", "empresas", "clases"],
-  titular: ["overview", "plans", "policies", "claims", "cards", "empresas", "clases"],
+  comercio: ["overview", "empresas", "clases"],
+  titular: ["overview", "empresas", "clases"],
 };
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -109,7 +109,7 @@ export function requiredOption(pathname: string): Option | "any" | "deny" {
     [/^\/api\/clases(?:\/.*)?$/, "clases"],
     [/^\/api\/configuracion$/, "configuracion"],
     [/^\/api\/actuarial$/, "actuarial"],
-    [/^\/api\/frosting$/, "empresas"],
+    [/^\/api\/frosting$/, "actuarial"],
     [/^\/api\/treasury(?:\/.*)?$/, "treasury"],
     [/^\/api\/tarjetas$/, "cards"],
     [/^\/api\/diseno$/, "design"],
@@ -147,6 +147,20 @@ export class AuthModule {
   emailTaken(email: string): boolean {
     const normalized = email.trim().toLowerCase();
     return this.store.list<AuthUserRecord>("auth_users").some((user) => user.email.toLowerCase() === normalized);
+  }
+
+  /** Looks up a login without returning the password. */
+  findLogin(email: string): { id: string; email: string; name: string; role: Role; companyId?: string } | null {
+    const normalized = email.trim().toLowerCase();
+    const record = this.store.list<AuthUserRecord>("auth_users").find((user) => user.email.toLowerCase() === normalized);
+    if (!record) return null;
+    return {
+      id: record.id,
+      email: record.email,
+      name: record.name,
+      role: record.role,
+      companyId: record.companyId,
+    };
   }
 
   /**

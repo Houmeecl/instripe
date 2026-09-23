@@ -304,7 +304,7 @@ export class EmpresasModule {
   list(actor: CompanyActor): { companies: CompanyView[]; canCreate: boolean } {
     const visible = [...this.companies.values()].filter((company) => this.canSee(actor, company));
     return {
-      canCreate: actor.role === "operacion" || (actor.role === "comercio" && !actor.companyId),
+      canCreate: actor.role === "operacion",
       companies: visible.map((company) => this.present(actor, company)),
     };
   }
@@ -373,23 +373,26 @@ export class EmpresasModule {
     };
   }
 
-  create(actor: CompanyActor, input: { name: string; color: string; commune?: string; logo?: string }): CompanyView {
-    if (actor.role === "titular") throw new PlatformError("Un trabajador no abre la empresa", 403);
-    if (actor.companyId) throw new PlatformError("Un usuario de empresa no abre otra empresa", 403);
+  create(
+    actor: CompanyActor,
+    input: { name: string; color: string; commune?: string; logo?: string; owner?: { id: string; email: string; name: string } },
+  ): CompanyView {
+    this.requireAdmin(actor);
     const name = input.name.trim();
     const color = input.color.trim();
     if (!name) throw new PlatformError("El nombre de la empresa es requerido", 400);
     if (!COLOR.test(color)) throw new PlatformError("El color de la tarjeta debe ser hexadecimal", 400);
+    const owner = input.owner ?? { id: actor.id, email: actor.email, name: actor.name || name };
     const ledger = this.payments.ledger.createAccount({
       name,
-      email: actor.email,
+      email: owner.email,
       currency: this.payments.walletAccount.currency,
     });
     const company: CompanyRecord = {
       id: `emp_${randomUUID().slice(0, 8)}`,
       name,
-      ownerUserId: actor.id,
-      ownerEmail: actor.email,
+      ownerUserId: owner.id,
+      ownerEmail: owner.email,
       color,
       logo: input.logo ? normalizeLogo(input.logo) : null,
       commune: cleanCommune(input.commune),
@@ -407,13 +410,13 @@ export class EmpresasModule {
       companyName: company.name,
       openedAt: company.createdAt,
     }));
-    if (actor.role === "comercio") {
+    if (input.owner) {
       this.rememberMember({
-        id: memberKey(company.id, actor.id),
-        userId: actor.id,
+        id: memberKey(company.id, owner.id),
+        userId: owner.id,
         companyId: company.id,
-        name: actor.name || company.name,
-        email: actor.email.toLowerCase(),
+        name: owner.name || company.name,
+        email: owner.email.toLowerCase(),
         role: "comercio",
         createdAt: company.createdAt,
       });
@@ -423,7 +426,7 @@ export class EmpresasModule {
 
   setLogo(actor: CompanyActor, companyId: string, logo: string): CompanyView {
     const company = this.require(companyId);
-    if (!this.canManage(actor, company)) throw new PlatformError("Esta empresa no está en tu rol", 403);
+    this.requireAdmin(actor);
     company.logo = normalizeLogo(logo);
     this.companies.set(company.id, company);
     this.store.put("companies", company.id, company);
@@ -432,16 +435,10 @@ export class EmpresasModule {
 
   updateCard(actor: CompanyActor, companyId: string, cardId: string, input: CardOptionsInput): CompanyView {
     const company = this.require(companyId);
-    if (!this.canSee(actor, company)) throw new PlatformError("Esta empresa no está en tu rol", 403);
+    this.requireAdmin(actor);
     const worker = this.workers.get(cardId);
     const companyCard = cardId === company.id;
     if (!companyCard && (!worker || worker.companyId !== company.id)) throw new PlatformError("Tarjeta desconocida", 404);
-    if (companyCard && !this.canManage(actor, company)) {
-      throw new PlatformError("Solo la empresa gestiona su tarjeta", 403);
-    }
-    if (!companyCard && worker && !this.canManage(actor, company) && !this.isWorker(actor, worker)) {
-      throw new PlatformError("Solo puedes usar tu tarjeta", 403);
-    }
     const next = mergeOptions(cardOptions(companyCard ? company.options : worker?.options), input);
     if (companyCard) company.options = next;
     else if (worker) worker.options = next;
@@ -452,7 +449,7 @@ export class EmpresasModule {
 
   addWorker(actor: CompanyActor, companyId: string, input: { name: string; email: string }): CompanyView {
     const company = this.require(companyId);
-    if (!this.canManage(actor, company)) throw new PlatformError("Esta empresa no está en tu rol", 403);
+    this.requireAdmin(actor);
     const name = input.name.trim();
     const email = input.email.trim().toLowerCase();
     if (!name || !email.includes("@")) throw new PlatformError("Nombre y correo del trabajador son requeridos", 400);
@@ -494,9 +491,7 @@ export class EmpresasModule {
     stripe: GiftStripe | undefined,
   ): Promise<GiftView> {
     const company = this.require(companyId);
-    if (!this.companyCommerce(actor, company)) {
-      throw new PlatformError("Solo la empresa crea regalos virtuales", 403);
-    }
+    this.requireAdmin(actor);
     const title = input.title.trim();
     const note = input.note.trim();
     const recipientId = input.recipientId.trim();
@@ -535,9 +530,7 @@ export class EmpresasModule {
     stripe: GiftActivationStripe | undefined,
   ): Promise<GiftView> {
     const company = this.require(companyId);
-    if (!this.companyCommerce(actor, company)) {
-      throw new PlatformError("Solo la empresa activa regalos virtuales", 403);
-    }
+    this.requireAdmin(actor);
     const gift = this.gifts.get(giftId);
     if (!gift || gift.companyId !== company.id) throw new PlatformError("Regalo desconocido", 404);
     if (gift.active !== true) {
@@ -555,8 +548,8 @@ export class EmpresasModule {
   }
 
   assertCompanyUsers(actor: CompanyActor, companyId: string): void {
-    const company = this.require(companyId);
-    if (!this.companyCommerce(actor, company)) throw new PlatformError("Solo la empresa administra sus usuarios", 403);
+    this.require(companyId);
+    this.requireAdmin(actor);
   }
 
   registerMember(
@@ -565,7 +558,7 @@ export class EmpresasModule {
     input: { id: string; name: string; email: string; role: "comercio" | "titular" },
   ): CompanyView {
     const company = this.require(companyId);
-    if (!this.companyCommerce(actor, company)) throw new PlatformError("Solo la empresa administra sus usuarios", 403);
+    this.requireAdmin(actor);
     this.rememberMember({
       id: memberKey(company.id, input.id),
       userId: input.id,
@@ -616,15 +609,11 @@ export class EmpresasModule {
     input: { workerId: string; amount: number; direction: "to_worker" | "to_company" },
   ): CompanyView {
     const company = this.require(companyId);
+    this.requireAdmin(actor);
     const worker = this.workers.get(input.workerId);
     if (!worker || worker.companyId !== company.id) throw new PlatformError("Trabajador desconocido", 404);
     this.assertAmount(input.amount);
-    if (!this.canSee(actor, company)) throw new PlatformError("Esta empresa no está en tu rol", 403);
     const toWorker = input.direction === "to_worker";
-    if (toWorker && !this.canManage(actor, company)) throw new PlatformError("Solo la empresa transfiere hacia el prepago", 403);
-    if (!toWorker && !this.canManage(actor, company) && !this.isWorker(actor, worker)) {
-      throw new PlatformError("Solo puedes transferir tu propio prepago", 403);
-    }
     if (toWorker && cardOptions(company.options).blocked) {
       throw new PlatformError("La tarjeta de la empresa está bloqueada", 422);
     }
@@ -672,44 +661,44 @@ export class EmpresasModule {
   }
 
   private present(actor: CompanyActor, company: CompanyRecord): CompanyView {
-    const manage = this.canManage(actor, company);
+    const manage = actor.role === "operacion";
+    const seeCompanyMoney = manage || this.isHolder(actor, company);
     const currency = this.payments.walletAccount.currency;
     const workers = [...this.workers.values()].filter((worker) => worker.companyId === company.id);
     const own = workers.find((worker) => this.isWorker(actor, worker));
-    const visibleWorkers = manage ? workers : workers.filter((worker) => worker.id === own?.id);
+    const visibleWorkers = manage ? workers : own ? [own] : [];
     const logo = company.logo ?? null;
     const card = this.cardView(
       company.id,
       company.name,
-      company.ownerEmail,
-      company.last4,
+      seeCompanyMoney ? company.ownerEmail : "",
+      seeCompanyMoney ? company.last4 : "",
       company.ledgerAccountId,
       currency,
       logo,
-      company.options,
-      manage,
+      seeCompanyMoney ? company.options : undefined,
+      seeCompanyMoney,
     );
-    const hideWorkerBalance = actor.role === "comercio";
+    if (!seeCompanyMoney) card.contract = null;
     const view: CompanyView = {
       id: company.id,
       name: company.name,
       color: company.color,
       logo,
-      commune: company.commune ?? null,
-      last4: company.last4,
-      balance: manage ? card.balance : 0,
-      displayBalance: manage ? card.displayBalance : "—",
-      available: manage ? card.available : 0,
-      displayAvailable: manage ? card.displayAvailable : "—",
-      realFunds: manage ? card.realFunds : false,
+      commune: seeCompanyMoney ? company.commune ?? null : null,
+      last4: seeCompanyMoney ? company.last4 : "",
+      balance: seeCompanyMoney ? card.balance : 0,
+      displayBalance: seeCompanyMoney ? card.displayBalance : "—",
+      available: seeCompanyMoney ? card.available : 0,
+      displayAvailable: seeCompanyMoney ? card.displayAvailable : "—",
+      realFunds: seeCompanyMoney ? card.realFunds : false,
       canManage: manage,
-      canFund: actor.role === "operacion",
+      canFund: manage,
       ownWorkerId: own?.id,
       contract: card.contract,
       card,
-      workers: visibleWorkers.map((worker) => {
-        const visible = !hideWorkerBalance;
-        return this.cardView(
+      workers: visibleWorkers.map((worker) =>
+        this.cardView(
           worker.id,
           worker.name,
           worker.email,
@@ -718,17 +707,18 @@ export class EmpresasModule {
           currency,
           logo,
           worker.options,
-          visible,
-        );
-      }),
+          manage || worker.id === own?.id,
+        ),
+      ),
       gifts: this.visibleGifts(actor, company),
       users: manage ? this.membersOf(company.id) : [],
-      transfers: this.transfers
-        .filter((transfer) => transfer.companyId === company.id)
-        .filter((transfer) => manage || transfer.workerId === own?.id)
-        .slice(-12)
-        .reverse()
-        .map((transfer) => ({ ...transfer, displayAmount: formatAmount(transfer.amount, currency) })),
+      transfers: manage
+        ? this.transfers
+            .filter((transfer) => transfer.companyId === company.id)
+            .slice(-12)
+            .reverse()
+            .map((transfer) => ({ ...transfer, displayAmount: formatAmount(transfer.amount, currency) }))
+        : [],
     };
     if (actor.role === "operacion") {
       view.globalAccounts = {
@@ -788,12 +778,11 @@ export class EmpresasModule {
       }));
   }
 
-  private canManage(actor: CompanyActor, company: CompanyRecord): boolean {
-    if (actor.companyId && actor.companyId !== company.id) return false;
-    return actor.role === "operacion" || company.ownerUserId === actor.id || this.companyCommerce(actor, company);
+  private requireAdmin(actor: CompanyActor): void {
+    if (actor.role !== "operacion") throw new PlatformError("Solo operación configura la cuenta", 403);
   }
 
-  private companyCommerce(actor: CompanyActor, company: CompanyRecord): boolean {
+  private isHolder(actor: CompanyActor, company: CompanyRecord): boolean {
     if (actor.role !== "comercio") return false;
     if (actor.companyId && actor.companyId !== company.id) return false;
     return company.ownerUserId === actor.id || actor.companyId === company.id;
@@ -801,7 +790,8 @@ export class EmpresasModule {
 
   private canSee(actor: CompanyActor, company: CompanyRecord): boolean {
     if (actor.companyId && actor.companyId !== company.id) return false;
-    if (this.canManage(actor, company)) return true;
+    if (actor.role === "operacion") return true;
+    if (this.isHolder(actor, company)) return true;
     return [...this.workers.values()].some((worker) => worker.companyId === company.id && this.isWorker(actor, worker));
   }
 
@@ -863,11 +853,14 @@ export class EmpresasModule {
   private visibleGifts(actor: CompanyActor, company: CompanyRecord): GiftView[] {
     const rows = [...this.gifts.values()].filter((gift) => gift.companyId === company.id);
     const own = [...this.workers.values()].find((worker) => worker.companyId === company.id && this.isWorker(actor, worker));
-    const reveal = this.companyCommerce(actor, company);
-    const visible = this.canManage(actor, company) ? rows : rows.filter((gift) => gift.recipientId === own?.id);
+    const holder = this.isHolder(actor, company);
+    const admin = actor.role === "operacion";
+    const visible = admin
+      ? rows
+      : rows.filter((gift) => (own && gift.recipientId === own.id) || (holder && gift.recipientId === company.id));
     return visible
       .sort((left, right) => (left.createdAt < right.createdAt ? 1 : -1))
-      .map((gift) => presentGift(gift, { reveal: reveal || gift.active === true, canActivate: reveal && gift.active !== true }));
+      .map((gift) => presentGift(gift, { reveal: admin || gift.active === true, canActivate: admin && gift.active !== true }));
   }
 
   private rememberMember(member: CompanyMemberRecord): void {

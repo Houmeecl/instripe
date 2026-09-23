@@ -496,9 +496,19 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   app.post("/api/empresas", (req: Request, res: Response) => {
     const body = req.body ?? {};
     try {
+      const ownerEmail = String(body.ownerEmail ?? "").trim();
+      let owner: { id: string; email: string; name: string } | undefined;
+      if (ownerEmail) {
+        const found = platform.auth.findLogin(ownerEmail);
+        if (!found || found.role !== "comercio" || found.companyId) {
+          throw new PlatformError("El titular de la empresa tiene que ser un comercio sin otra empresa", 400);
+        }
+        owner = { id: found.id, email: found.email, name: found.name };
+      }
       const company = platform.empresas.create(companyActor(res), {
         name: String(body.name ?? ""),
         color: String(body.color ?? ""),
+        owner,
       });
       res.status(201).json({ company });
     } catch (error) {

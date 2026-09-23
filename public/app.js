@@ -107,8 +107,10 @@ function allowed(option) {
 
 function visibleGroups() {
   const options = new Set((state.user && state.user.options) || []);
+  const accountHolder = state.user && state.user.role !== "operacion";
   return NAV.map((group) => ({
     ...group,
+    group: accountHolder && group.group === "Operación" ? "Cuenta" : group.group,
     items: group.items.filter((item) => options.has(item.route)),
   })).filter((group) => group.items.length);
 }
@@ -408,12 +410,11 @@ async function refresh() {
     const empresas = await api("/api/empresas");
     state.companies = empresas.companies || [];
     state.canCreateCompany = Boolean(empresas.canCreate);
-    state.frosting = await api("/api/frosting");
   } else {
     state.companies = [];
     state.canCreateCompany = false;
-    state.frosting = null;
   }
+  state.frosting = allowed("actuarial") ? await api("/api/frosting") : null;
   state.courses = allowed("clases") ? (await api("/api/clases")).courses || [] : [];
   state.sicr3p = allowed("configuracion") ? (await api("/api/configuracion")).sicr3p || null : null;
   state.actuarial = allowed("actuarial") ? (await api("/api/actuarial")).classes || [] : [];
@@ -592,7 +593,7 @@ function viewClientHome() {
     .join("");
   const card = inicio.card
     ? virtualCard(inicio.card, color, "Débito virtual")
-    : `<article class="plastic vcard vcard-empty"><b>Todavía no hay tarjeta</b><span>${state.user && state.user.role === "titular" ? "La empresa abre tu prepago con tu correo." : "Abre la tarjeta de la empresa en Débito."}</span></article>`;
+    : `<article class="plastic vcard vcard-empty"><b>Todavía no hay tarjeta</b><span>Operación abre tu cuenta.</span></article>`;
   const note = inicio.card && inicio.card.balance > 0 && !inicio.card.realFunds
     ? `<p class="funds-note">Este abono está en el libro. No es dinero disponible: Stripe todavía no lo liquidó.</p>`
     : `<p class="funds-note">Disponible es solo el dinero que Stripe ya liquidó. La tarjeta es virtual y de débito.</p>`;
@@ -614,7 +615,6 @@ function viewClientHome() {
       ${moves}
     </div>
   </section>
-  ${usersSection(company)}
   ${giftSection(inicio.gifts)}`;
 }
 
@@ -644,7 +644,7 @@ function giftCard(gift) {
   const pending = gift.pendingMessage ? `<p class="funds-note">${escapeAttr(gift.pendingMessage)}</p>` : "";
   const inactive = gift.active
     ? ""
-    : `<p class="funds-note">${escapeAttr(gift.inactiveMessage || "Inactivo. La empresa lo activa cuando quiera.")}</p>`;
+    : `<p class="funds-note">${escapeAttr(gift.inactiveMessage || "Inactivo. Operación lo activa.")}</p>`;
   const activate = gift.canActivate
     ? `<button class="btn btn-primary btn-sm" data-activate-gift="${escapeAttr(gift.companyId)}:${escapeAttr(gift.id)}">Activar</button>`
     : "";
@@ -675,7 +675,7 @@ function qrSvg(matrix) {
 }
 
 function usersSection(company) {
-  if (!company || !company.canManage || company.canFund) return "";
+  if (!company || !company.canManage) return "";
   const rows = (company.users || [])
     .map(
       (user) => `<div class="row"><div><div class="who">${escapeAttr(user.name)}</div><div class="meta">${escapeAttr(user.email)}</div></div><div class="push"><span class="pill">${escapeAttr(user.roleLabel || "")}</span></div></div>`,
@@ -701,7 +701,7 @@ function usersSection(company) {
 }
 
 function giftForm(company) {
-  if (!company.canManage || company.canFund) return "";
+  if (!company.canManage) return "";
   const people = [`<option value="${escapeAttr(company.id)}">${escapeAttr(company.name)}</option>`]
     .concat((company.workers || []).map((worker) => `<option value="${escapeAttr(worker.id)}">${escapeAttr(worker.name)}</option>`))
     .join("");
@@ -1096,7 +1096,7 @@ function cardFeed(rows) {
 
 function cardControls(company, card) {
   const options = card.options || {};
-  const editable = company.canManage || card.id === company.ownWorkerId;
+  const editable = Boolean(company.canManage);
   const selected = new Set(options.categories || []);
   const checks = SPEND_CATEGORIES.map(
     ([id, label]) =>
@@ -1234,24 +1234,31 @@ function frostingBox(company) {
     </div>`;
 }
 
-function companyBlock(company) {
-  if (!company.canManage && company.ownWorkerId) {
-    const card = company.workers.find((worker) => worker.id === company.ownWorkerId) || company.workers[0];
-    if (!card) {
-      return `<div class="card"><div class="card-body"><div class="empty">${icon("card")}<div>Todavía no tienes un prepago.</div></div></div></div>`;
-    }
-    return `<div class="card company-block">
-      <div class="card-head"><h3>${escapeAttr(card.name)}</h3><span class="pill">${escapeAttr(company.name)}</span></div>
-      <div class="card-body">
-        <div class="vcard-layout">${virtualCard(card, company.color, "Débito virtual")}</div>
-        ${contractBox(card.contract)}
-        ${giftList(company.gifts)}
-        ${cardControls(company, card)}
-        <h2 class="section-title">Devolver prepago a la empresa</h2>
-        ${transferForm(company)}
-      </div>
-    </div>`;
+function personalAccount(company) {
+  const card = company.ownWorkerId
+    ? (company.workers || []).find((worker) => worker.id === company.ownWorkerId)
+    : company.card;
+  if (!card || card.displayBalance === "—") {
+    return `<div class="card"><div class="card-body"><div class="empty">${icon("card")}<div>Operación abre tu cuenta.</div></div></div></div>`;
   }
+  const blocked = card.options && card.options.blocked ? `<p class="funds-note">Esta tarjeta está bloqueada.</p>` : "";
+  return `<div class="card company-block">
+    <div class="card-head"><h3>${escapeAttr(card.name)}</h3><span class="pill">${escapeAttr(company.name)}</span></div>
+    <div class="card-body">
+      <div class="vcard-layout">${virtualCard(card, company.color, "Débito virtual")}</div>
+      ${blocked}
+      ${contractBox(card.contract)}
+      <h2 class="section-title">Movimientos</h2>
+      ${cardFeed(card.movements)}
+      <h2 class="section-title">Comprobantes</h2>
+      ${cardFeed(card.receipts)}
+      ${giftList(company.gifts)}
+    </div>
+  </div>`;
+}
+
+function companyBlock(company) {
+  if (!company.canManage) return personalAccount(company);
   const workers = company.workers.length
     ? company.workers
         .map(
@@ -1301,6 +1308,7 @@ function companyBlock(company) {
       ${transfer}
       ${frostingBox(company)}
       ${giftForm(company)}
+      ${usersSection(company)}
       <h2 class="section-title">Revisar</h2>
       ${moves}
     </div>
@@ -1316,6 +1324,7 @@ function viewEmpresas() {
           <p class="hint">La tarjeta es virtual y de débito. El color y el logo son de la empresa cliente. El prepago queda en el libro y no sale por Stripe.</p>
           <div class="inline-form">
             <div class="field"><label>Nombre</label><input id="emp-name" placeholder="Taller Sur" /></div>
+            <div class="field"><label>Correo del comercio</label><input id="emp-owner" type="email" placeholder="caja@taller.cl" /></div>
             <div class="field"><label>Color de la tarjeta</label><input id="emp-color" type="color" value="#0e3e66" /></div>
             <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-create-company>${icon("plus")} Crear empresa</button></div>
           </div>
@@ -1325,7 +1334,7 @@ function viewEmpresas() {
   if (!companies.length) {
     const empty = state.canCreateCompany
       ? "Todavía no hay empresas con prepago."
-      : "Todavía no tienes un prepago. La empresa te agrega con tu correo.";
+      : "Operación abre tu cuenta.";
     return `${create}<div class="card"><div class="card-body"><div class="empty">${icon("card")}<div>${empty}</div></div></div></div>`;
   }
   return create + companies.map((company) => companyBlock(company)).join("");
@@ -1472,6 +1481,7 @@ async function createCompany() {
       body: JSON.stringify({
         name: document.getElementById("emp-name").value,
         color: document.getElementById("emp-color").value,
+        ownerEmail: document.getElementById("emp-owner").value,
       }),
     });
     await reloadEmpresas("Empresa creada");

@@ -95,7 +95,7 @@ export class SegurosModule {
   }
 
   holdFrosting(input: Omit<FrostingInput, "gateway"> & { actorRole: Role }): { account: Account; policy: Policy } {
-    if (input.actorRole === "titular") throw new PlatformError("El trabajador no contrata Frosting", 403);
+    if (input.actorRole !== "operacion") throw new PlatformError("Solo operación configura la cuenta", 403);
     const holderName = input.holderName.trim();
     const email = input.email.trim();
     const companyName = input.companyName.trim();
