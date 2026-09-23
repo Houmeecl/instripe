@@ -614,6 +614,7 @@ function viewClientHome() {
       ${moves}
     </div>
   </section>
+  ${usersSection(company)}
   ${giftSection(inicio.gifts)}`;
 }
 
@@ -641,13 +642,21 @@ function giftCard(gift) {
     ? `<p class="gift-code">${escapeAttr(gift.code)}</p>${qrSvg(gift.qr)}`
     : "";
   const pending = gift.pendingMessage ? `<p class="funds-note">${escapeAttr(gift.pendingMessage)}</p>` : "";
+  const inactive = gift.active
+    ? ""
+    : `<p class="funds-note">${escapeAttr(gift.inactiveMessage || "Inactivo. La empresa lo activa cuando quiera.")}</p>`;
+  const activate = gift.canActivate
+    ? `<button class="btn btn-primary btn-sm" data-activate-gift="${escapeAttr(gift.companyId)}:${escapeAttr(gift.id)}">Activar</button>`
+    : "";
   const nfc = gift.nfcNote ? `<p class="funds-note">${escapeAttr(gift.nfcNote)}</p>` : "";
   return `<article class="gift-card">
-    <h3>${escapeAttr(gift.title)}</h3>
+    <h3>${escapeAttr(gift.title)} ${gift.active ? `<span class="pill">Activo</span>` : `<span class="pill amber">Inactivo</span>`}</h3>
     <p>${escapeAttr(gift.note)}</p>
     <p class="meta">Para ${escapeAttr(gift.recipientName)}</p>
     ${code}
     ${pending}
+    ${inactive}
+    ${activate}
     ${nfc}
     <p class="funds-note">${escapeAttr(gift.disclaimer || "Este regalo es virtual. No es una cuenta de débito y no es dinero.")}</p>
   </article>`;
@@ -665,13 +674,39 @@ function qrSvg(matrix) {
   return `<svg class="gift-qr" viewBox="0 0 ${size} ${size}" role="img" aria-label="Código del regalo">${cells.join("")}</svg>`;
 }
 
+function usersSection(company) {
+  if (!company || !company.canManage || company.canFund) return "";
+  const rows = (company.users || [])
+    .map(
+      (user) => `<div class="row"><div><div class="who">${escapeAttr(user.name)}</div><div class="meta">${escapeAttr(user.email)}</div></div><div class="push"><span class="pill">${escapeAttr(user.roleLabel || "")}</span></div></div>`,
+    )
+    .join("");
+  const list = rows
+    ? `<div class="rowlist">${rows}</div>`
+    : `<p class="hint">Esta empresa todavía no tiene usuarios propios.</p>`;
+  return `<section class="card gift-section">
+    <div class="card-head"><h3>Usuarios de la empresa</h3></div>
+    <div class="card-body">
+      <p class="hint">Cada empresa y cada cliente tiene su propio usuario. No comparten el acceso con otra empresa.</p>
+      ${list}
+      <div class="inline-form">
+        <div class="field"><label>Nombre</label><input id="user-name-${company.id}" placeholder="Ana Díaz" /></div>
+        <div class="field"><label>Correo</label><input id="user-email-${company.id}" type="email" placeholder="ana.sur@taller.cl" /></div>
+        <div class="field"><label>Rol</label><select id="user-role-${company.id}"><option value="comercio">Usuario de la empresa</option><option value="titular">Cliente</option></select></div>
+        <div class="field"><label>Clave inicial</label><input id="user-password-${company.id}" type="password" autocomplete="new-password" placeholder="Mínimo 8 caracteres" /></div>
+        <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-create-user="${company.id}">${icon("plus")} Crear usuario</button></div>
+      </div>
+    </div>
+  </section>`;
+}
+
 function giftForm(company) {
   if (!company.canManage || company.canFund) return "";
   const people = [`<option value="${escapeAttr(company.id)}">${escapeAttr(company.name)}</option>`]
     .concat((company.workers || []).map((worker) => `<option value="${escapeAttr(worker.id)}">${escapeAttr(worker.name)}</option>`))
     .join("");
   return `<h2 class="section-title">Regalo virtual</h2>
-    <p class="hint">No es dinero y no descuenta el débito. El código, cuando Stripe lo emite, se puede copiar después en una etiqueta NFC.</p>
+    <p class="hint">No es dinero y no descuenta el débito. Queda inactivo hasta que lo actives. El código, cuando Stripe lo emite y lo activas, se puede copiar después en una etiqueta NFC.</p>
     <div class="inline-form">
       <div class="field"><label>Título</label><input id="gift-title-${company.id}" placeholder="Almuerzo de equipo" /></div>
       <div class="field"><label>Nota</label><input id="gift-note-${company.id}" placeholder="Para celebrar el mes" /></div>
@@ -1405,6 +1440,36 @@ async function fundCompany(companyId) {
   }
 }
 
+async function createCompanyUser(companyId) {
+  try {
+    await api(`/api/empresas/${encodeURIComponent(companyId)}/usuarios`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: document.getElementById(`user-name-${companyId}`).value,
+        email: document.getElementById(`user-email-${companyId}`).value,
+        role: document.getElementById(`user-role-${companyId}`).value,
+        password: document.getElementById(`user-password-${companyId}`).value,
+      }),
+    });
+    await reloadEmpresas("Usuario de la empresa creado");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function activateGift(key) {
+  const [companyId, giftId] = String(key || "").split(":");
+  try {
+    await api(`/api/empresas/${encodeURIComponent(companyId)}/regalos/${encodeURIComponent(giftId)}/activar`, {
+      method: "POST",
+    });
+    await reloadEmpresas("Regalo activado");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
 async function createGift(companyId) {
   try {
     await api(`/api/empresas/${encodeURIComponent(companyId)}/regalos`, {
@@ -1574,6 +1639,12 @@ function wireView(r) {
     document.querySelectorAll("[data-confirm-exit]").forEach((btn) => {
       btn.onclick = () => confirmPendingExit(btn.dataset.confirmExit, btn);
     });
+    document.querySelectorAll("[data-activate-gift]").forEach((btn) => {
+      btn.onclick = () => activateGift(btn.dataset.activateGift);
+    });
+    document.querySelectorAll("[data-create-user]").forEach((btn) => {
+      btn.onclick = () => createCompanyUser(btn.dataset.createUser);
+    });
   }
   if (r === "accounts") {
     const open = document.querySelector("[data-open-account]");
@@ -1642,6 +1713,12 @@ function wireView(r) {
     });
     document.querySelectorAll("[data-create-gift]").forEach((btn) => {
       btn.onclick = () => createGift(btn.dataset.createGift);
+    });
+    document.querySelectorAll("[data-activate-gift]").forEach((btn) => {
+      btn.onclick = () => activateGift(btn.dataset.activateGift);
+    });
+    document.querySelectorAll("[data-create-user]").forEach((btn) => {
+      btn.onclick = () => createCompanyUser(btn.dataset.createUser);
     });
   }
   if (r === "clases") {

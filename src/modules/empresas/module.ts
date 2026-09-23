@@ -3,7 +3,14 @@ import type { Role } from "../../auth/module.js";
 import { PlatformError } from "../../errors.js";
 import { formatAmount } from "../../money.js";
 import type { Payments } from "../../payments/service.js";
-import { GIFT_DISCLAIMER, issueVirtualGift, type GiftStripe, type IssuedGift } from "../regalos/issue.js";
+import {
+  GIFT_DISCLAIMER,
+  activateVirtualGift,
+  issueVirtualGift,
+  type GiftActivationStripe,
+  type GiftStripe,
+  type IssuedGift,
+} from "../regalos/issue.js";
 import type { PlatformStore } from "../../store/db.js";
 
 export interface CompanyActor {
@@ -11,6 +18,7 @@ export interface CompanyActor {
   email: string;
   role: Role;
   name?: string;
+  companyId?: string;
 }
 
 export const SPEND_CATEGORIES = ["alimentacion", "transporte", "combustible", "salud", "oficina", "otros"] as const;
@@ -85,6 +93,16 @@ interface GiftRecord extends IssuedGift {
   money: false;
 }
 
+interface CompanyMemberRecord {
+  id: string;
+  userId: string;
+  companyId: string;
+  name: string;
+  email: string;
+  role: "comercio" | "titular";
+  createdAt: string;
+}
+
 export interface PrepaidCardView {
   id: string;
   name: string;
@@ -129,6 +147,7 @@ export interface CompanyView {
   workers: PrepaidCardView[];
   transfers: Array<TransferRecord & { displayAmount: string }>;
   gifts: GiftView[];
+  users: CompanyMemberView[];
 }
 
 export interface HomeView {
@@ -165,15 +184,27 @@ export interface GiftView {
   title: string;
   note: string;
   status: "pending" | "issued";
+  active: boolean;
+  canActivate: boolean;
   code: string | null;
   stripeCouponId: string | null;
   stripePromotionCodeId: string | null;
   pendingMessage: string | null;
+  inactiveMessage: string | null;
   nfcNote: string | null;
   disclaimer: string;
   qr: boolean[][] | null;
   createdAt: string;
   money: false;
+}
+
+export interface CompanyMemberView {
+  id: string;
+  name: string;
+  email: string;
+  role: "comercio" | "titular";
+  roleLabel: string;
+  companyId: string;
 }
 
 export interface CardOptionsInput {
@@ -204,6 +235,7 @@ export class EmpresasModule {
   private readonly contracts = new Map<string, DebitContract>();
   private readonly contractByCard = new Map<string, DebitContract>();
   private readonly gifts = new Map<string, GiftRecord>();
+  private readonly members = new Map<string, CompanyMemberRecord>();
 
   constructor(
     private readonly payments: Payments,
@@ -214,12 +246,13 @@ export class EmpresasModule {
     this.transfers.push(...store.list<TransferRecord>("company_transfers"));
     for (const contract of store.list<DebitContract>("debit_contracts")) this.rememberContract(contract, false);
     for (const gift of store.list<GiftRecord>("virtual_gifts")) this.gifts.set(gift.id, gift);
+    for (const member of store.list<CompanyMemberRecord>("company_users")) this.members.set(member.id, member);
   }
 
   list(actor: CompanyActor): { companies: CompanyView[]; canCreate: boolean } {
     const visible = [...this.companies.values()].filter((company) => this.canSee(actor, company));
     return {
-      canCreate: actor.role === "operacion" || actor.role === "comercio",
+      canCreate: actor.role === "operacion" || (actor.role === "comercio" && !actor.companyId),
       companies: visible.map((company) => this.present(actor, company)),
     };
   }
@@ -261,7 +294,9 @@ export class EmpresasModule {
         gifts: view.gifts,
       };
     }
-    const owned = [...this.companies.values()].find((company) => company.ownerUserId === actor.id);
+    const owned = actor.companyId
+      ? this.companies.get(actor.companyId)
+      : [...this.companies.values()].find((company) => company.ownerUserId === actor.id);
     if (!owned) {
       return {
         ...base,
@@ -288,6 +323,7 @@ export class EmpresasModule {
 
   create(actor: CompanyActor, input: { name: string; color: string; commune?: string; logo?: string }): CompanyView {
     if (actor.role === "titular") throw new PlatformError("Un trabajador no abre la empresa", 403);
+    if (actor.companyId) throw new PlatformError("Un usuario de empresa no abre otra empresa", 403);
     const name = input.name.trim();
     const color = input.color.trim();
     if (!name) throw new PlatformError("El nombre de la empresa es requerido", 400);
@@ -319,6 +355,17 @@ export class EmpresasModule {
       companyName: company.name,
       openedAt: company.createdAt,
     }));
+    if (actor.role === "comercio") {
+      this.rememberMember({
+        id: memberKey(company.id, actor.id),
+        userId: actor.id,
+        companyId: company.id,
+        name: actor.name || company.name,
+        email: actor.email.toLowerCase(),
+        role: "comercio",
+        createdAt: company.createdAt,
+      });
+    }
     return this.present(actor, company);
   }
 
@@ -359,6 +406,8 @@ export class EmpresasModule {
     if (!name || !email.includes("@")) throw new PlatformError("Nombre y correo del trabajador son requeridos", 400);
     const taken = [...this.workers.values()].some((worker) => worker.companyId === company.id && worker.email === email);
     if (taken) throw new PlatformError("Ese trabajador ya tiene prepago en la empresa", 409);
+    const otherCompany = [...this.workers.values()].some((worker) => worker.email === email && worker.companyId !== company.id);
+    if (otherCompany) throw new PlatformError("Ese cliente ya pertenece a otra empresa", 409);
     const ledger = this.payments.ledger.createAccount({
       name,
       email,
@@ -393,7 +442,7 @@ export class EmpresasModule {
     stripe: GiftStripe | undefined,
   ): Promise<GiftView> {
     const company = this.require(companyId);
-    if (actor.role !== "comercio" || company.ownerUserId !== actor.id) {
+    if (!this.companyCommerce(actor, company)) {
       throw new PlatformError("Solo la empresa crea regalos virtuales", 403);
     }
     const title = input.title.trim();
@@ -424,7 +473,73 @@ export class EmpresasModule {
     };
     this.gifts.set(gift.id, gift);
     this.store.put("virtual_gifts", gift.id, gift);
-    return presentGift(gift);
+    return presentGift(gift, { reveal: true, canActivate: true });
+  }
+
+  async activateGift(
+    actor: CompanyActor,
+    companyId: string,
+    giftId: string,
+    stripe: GiftActivationStripe | undefined,
+  ): Promise<GiftView> {
+    const company = this.require(companyId);
+    if (!this.companyCommerce(actor, company)) {
+      throw new PlatformError("Solo la empresa activa regalos virtuales", 403);
+    }
+    const gift = this.gifts.get(giftId);
+    if (!gift || gift.companyId !== company.id) throw new PlatformError("Regalo desconocido", 404);
+    if (gift.active !== true) {
+      try {
+        await activateVirtualGift(stripe, gift.stripePromotionCodeId);
+      } catch {
+        throw new PlatformError("Stripe no pudo activar el regalo virtual", 502);
+      }
+      gift.active = true;
+      gift.inactiveMessage = null;
+      this.gifts.set(gift.id, gift);
+      this.store.put("virtual_gifts", gift.id, gift);
+    }
+    return presentGift(gift, { reveal: true, canActivate: false });
+  }
+
+  assertCompanyUsers(actor: CompanyActor, companyId: string): void {
+    const company = this.require(companyId);
+    if (!this.companyCommerce(actor, company)) throw new PlatformError("Solo la empresa administra sus usuarios", 403);
+  }
+
+  registerMember(
+    actor: CompanyActor,
+    companyId: string,
+    input: { id: string; name: string; email: string; role: "comercio" | "titular" },
+  ): CompanyView {
+    const company = this.require(companyId);
+    if (!this.companyCommerce(actor, company)) throw new PlatformError("Solo la empresa administra sus usuarios", 403);
+    this.rememberMember({
+      id: memberKey(company.id, input.id),
+      userId: input.id,
+      companyId: company.id,
+      name: input.name.trim(),
+      email: input.email.trim().toLowerCase(),
+      role: input.role,
+      createdAt: new Date().toISOString(),
+    });
+    return this.present(actor, company);
+  }
+
+  removeMember(companyId: string, userId: string): void {
+    const id = memberKey(companyId, userId);
+    this.members.delete(id);
+    this.store.delete("company_users", id);
+  }
+
+  hasWorker(companyId: string, email: string): boolean {
+    const normalized = email.trim().toLowerCase();
+    return [...this.workers.values()].some((worker) => worker.companyId === companyId && worker.email === normalized);
+  }
+
+  workerCompanyId(email: string): string | undefined {
+    const normalized = email.trim().toLowerCase();
+    return [...this.workers.values()].find((worker) => worker.email === normalized)?.companyId;
   }
 
   fund(actor: CompanyActor, companyId: string, amount: number): CompanyView {
@@ -536,6 +651,7 @@ export class EmpresasModule {
         );
       }),
       gifts: this.visibleGifts(actor, company),
+      users: manage ? this.membersOf(company.id) : [],
       transfers: this.transfers
         .filter((transfer) => transfer.companyId === company.id)
         .filter((transfer) => manage || transfer.workerId === own?.id)
@@ -595,16 +711,26 @@ export class EmpresasModule {
   }
 
   private canManage(actor: CompanyActor, company: CompanyRecord): boolean {
-    return actor.role === "operacion" || company.ownerUserId === actor.id;
+    if (actor.companyId && actor.companyId !== company.id) return false;
+    return actor.role === "operacion" || company.ownerUserId === actor.id || this.companyCommerce(actor, company);
+  }
+
+  private companyCommerce(actor: CompanyActor, company: CompanyRecord): boolean {
+    if (actor.role !== "comercio") return false;
+    if (actor.companyId && actor.companyId !== company.id) return false;
+    return company.ownerUserId === actor.id || actor.companyId === company.id;
   }
 
   private canSee(actor: CompanyActor, company: CompanyRecord): boolean {
+    if (actor.companyId && actor.companyId !== company.id) return false;
     if (this.canManage(actor, company)) return true;
     return [...this.workers.values()].some((worker) => worker.companyId === company.id && this.isWorker(actor, worker));
   }
 
   private isWorker(actor: CompanyActor, worker: WorkerRecord): boolean {
-    return actor.role === "titular" && worker.email === actor.email.toLowerCase();
+    if (actor.role !== "titular" || worker.email !== actor.email.toLowerCase()) return false;
+    if (actor.companyId && actor.companyId !== worker.companyId) return false;
+    return true;
   }
 
   private require(id: string): CompanyRecord {
@@ -638,8 +764,29 @@ export class EmpresasModule {
   private visibleGifts(actor: CompanyActor, company: CompanyRecord): GiftView[] {
     const rows = [...this.gifts.values()].filter((gift) => gift.companyId === company.id);
     const own = [...this.workers.values()].find((worker) => worker.companyId === company.id && this.isWorker(actor, worker));
+    const reveal = this.companyCommerce(actor, company);
     const visible = this.canManage(actor, company) ? rows : rows.filter((gift) => gift.recipientId === own?.id);
-    return visible.sort((left, right) => (left.createdAt < right.createdAt ? 1 : -1)).map((gift) => presentGift(gift));
+    return visible
+      .sort((left, right) => (left.createdAt < right.createdAt ? 1 : -1))
+      .map((gift) => presentGift(gift, { reveal: reveal || gift.active === true, canActivate: reveal && gift.active !== true }));
+  }
+
+  private rememberMember(member: CompanyMemberRecord): void {
+    this.members.set(member.id, member);
+    this.store.put("company_users", member.id, member);
+  }
+
+  private membersOf(companyId: string): CompanyMemberView[] {
+    return [...this.members.values()]
+      .filter((member) => member.companyId === companyId)
+      .map((member) => ({
+        id: member.userId,
+        name: member.name,
+        email: member.email,
+        role: member.role,
+        roleLabel: member.role === "titular" ? "Cliente" : "Usuario de la empresa",
+        companyId: member.companyId,
+      }));
   }
 }
 
@@ -679,7 +826,9 @@ function openDebitContract(input: {
   };
 }
 
-function presentGift(gift: GiftRecord): GiftView {
+function presentGift(gift: GiftRecord, access: { reveal: boolean; canActivate: boolean }): GiftView {
+  const active = gift.active === true;
+  const showCode = access.reveal || active;
   return {
     id: gift.id,
     companyId: gift.companyId,
@@ -689,16 +838,23 @@ function presentGift(gift: GiftRecord): GiftView {
     title: gift.title,
     note: gift.note,
     status: gift.status,
-    code: gift.code,
-    stripeCouponId: gift.stripeCouponId,
-    stripePromotionCodeId: gift.stripePromotionCodeId,
+    active,
+    canActivate: access.canActivate && !active,
+    code: showCode ? gift.code : null,
+    stripeCouponId: showCode ? gift.stripeCouponId : null,
+    stripePromotionCodeId: showCode ? gift.stripePromotionCodeId : null,
     pendingMessage: gift.pendingMessage,
-    nfcNote: gift.nfcNote,
+    inactiveMessage: active ? null : gift.inactiveMessage,
+    nfcNote: showCode ? gift.nfcNote : null,
     disclaimer: gift.disclaimer,
-    qr: gift.qr,
+    qr: showCode ? gift.qr : null,
     createdAt: gift.createdAt,
     money: false,
   };
+}
+
+function memberKey(companyId: string, userId: string): string {
+  return `${companyId}:${userId}`;
 }
 
 function defaultOptions(): CardOptions {

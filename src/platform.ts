@@ -160,10 +160,48 @@ export class Platform {
     return this.seguros.fileClaim(input);
   }
 
-  inicio(actor: { id: string; email: string; role: Role; name: string }) {
+  inicio(actor: { id: string; email: string; role: Role; name: string; companyId?: string }) {
     const commune =
       this.registro.list().find((member) => member.email.toLowerCase() === actor.email.toLowerCase())?.city ?? null;
     return this.empresas.home(actor, commune);
+  }
+
+  createCompanyUser(
+    actor: { id: string; email: string; role: Role; name: string; companyId?: string },
+    companyId: string,
+    input: { name: string; email: string; role: "comercio" | "titular"; password: string },
+  ) {
+    this.empresas.assertCompanyUsers(actor, companyId);
+    const email = input.email.trim().toLowerCase();
+    const name = input.name.trim();
+    if (!name || !email.includes("@")) throw new PlatformError("Nombre y correo son requeridos", 400);
+    if (input.role !== "comercio" && input.role !== "titular") throw new PlatformError("El rol del usuario no es válido", 400);
+    if (this.auth.emailTaken(email)) throw new PlatformError("Ese correo ya tiene usuario", 409);
+    const other = this.empresas.workerCompanyId(email);
+    if (other && other !== companyId) throw new PlatformError("Ese cliente ya pertenece a otra empresa", 409);
+    const user = this.auth.createScopedUser({
+      name,
+      email,
+      role: input.role,
+      companyId,
+      password: input.password,
+    });
+    try {
+      const company = this.empresas.registerMember(actor, companyId, {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: input.role,
+      });
+      if (input.role === "titular" && !this.empresas.hasWorker(companyId, email)) {
+        return { user, company: this.empresas.addWorker(actor, companyId, { name, email }) };
+      }
+      return { user, company };
+    } catch (error) {
+      this.auth.deleteUser(user.id);
+      this.empresas.removeMember(companyId, user.id);
+      throw error;
+    }
   }
 
   subscribeFrosting(input: FrostingInput & { actorRole: Role }) {

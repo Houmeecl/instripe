@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app.js";
 import { DEFAULT_SEED_PASSWORD, loadConfig } from "../src/config.js";
-import { issueVirtualGift } from "../src/modules/regalos/issue.js";
+import { activateVirtualGift, issueVirtualGift } from "../src/modules/regalos/issue.js";
 import { Platform } from "../src/platform.js";
 
 const TEST_PASSWORD = "Operacion.1831";
@@ -14,13 +14,17 @@ function app(env: NodeJS.ProcessEnv = {}) {
   return createApp(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:", ...env }));
 }
 
-async function signedIn(server: ReturnType<typeof app>, email = "operacion@proveedorregional.cl") {
+async function signedIn(
+  server: ReturnType<typeof app>,
+  email = "operacion@proveedorregional.cl",
+  password = DEFAULT_SEED_PASSWORD,
+) {
   const agent = request.agent(server);
-  const login = await agent.post("/api/session").send({ email, password: DEFAULT_SEED_PASSWORD });
+  const login = await agent.post("/api/session").send({ email, password });
   expect(login.status).toBe(201);
   if (login.body.user.mustChangePassword) {
     const changed = await agent.post("/api/session/password").send({
-      currentPassword: DEFAULT_SEED_PASSWORD,
+      currentPassword: password,
       newPassword: TEST_PASSWORD,
     });
     expect(changed.status).toBe(200);
@@ -1223,11 +1227,13 @@ describe("instripe BaaS platform", () => {
     const pending = await issueVirtualGift(undefined, "Pendiente");
     expect(pending).toMatchObject({
       status: "pending",
+      active: false,
       code: null,
       stripeCouponId: null,
       stripePromotionCodeId: null,
       qr: null,
     });
+    await activateVirtualGift(undefined, null);
     const calls: string[] = [];
     const issued = await issueVirtualGift({
       coupons: {
@@ -1245,6 +1251,7 @@ describe("instripe BaaS platform", () => {
         create: async (params) => {
           calls.push("promotion");
           expect(params.promotion).toEqual({ type: "coupon", coupon: "coupon_stub" });
+          expect(params.active).toBe(false);
           expect(params.max_redemptions).toBe(1);
           return { id: "promo_stub", code: params.code ?? "" };
         },
@@ -1252,10 +1259,222 @@ describe("instripe BaaS platform", () => {
     }, "Almuerzo");
     expect(calls).toEqual(["coupon", "promotion"]);
     expect(issued.status).toBe("issued");
+    expect(issued.active).toBe(false);
     expect(issued.code).toMatch(/^RG-[A-Z2-9]{6}$/);
     expect(issued.stripeCouponId).toBe("coupon_stub");
     expect(issued.stripePromotionCodeId).toBe("promo_stub");
     expect(issued.nfcNote).toContain("etiqueta NFC");
     expect(issued.qr?.[0]).toHaveLength(21);
+    const updates: Array<{ id: string; active: boolean }> = [];
+    await activateVirtualGift({
+      promotionCodes: {
+        update: async (id, params) => {
+          updates.push({ id, active: params.active });
+          return { id };
+        },
+      },
+    }, issued.stripePromotionCodeId);
+    expect(updates).toEqual([{ id: "promo_stub", active: true }]);
+  });
+
+  it("keeps a gift inactive until Activar and does not move balances", async () => {
+    const server = app();
+    const comercio = await signedIn(server, "caja@taller.cl");
+    const titular = await signedIn(server, "ana@proveedorregional.cl");
+    const operacion = await signedIn(server);
+    const created = await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" });
+    const id = created.body.company.id;
+    await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 40_000 });
+    const withWorker = await comercio.post(`/api/empresas/${id}/trabajadores`).send({
+      name: "Ana Díaz",
+      email: "ana@proveedorregional.cl",
+    });
+    const workerId = withWorker.body.company.workers[0].id;
+    await comercio.post(`/api/empresas/${id}/transferencias`).send({ workerId, amount: 15_000, direction: "to_worker" });
+    const beforeBook = await operacion.get("/api/payments");
+
+    const fetchCalls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      fetchCalls.push(String(input));
+      throw new Error("Stripe no debe llamarse");
+    }) as typeof fetch;
+    let gift;
+    try {
+      gift = await comercio.post(`/api/empresas/${id}/regalos`).send({
+        title: "Once",
+        note: "Para Ana",
+        recipientId: workerId,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(fetchCalls).toEqual([]);
+    expect(gift.status).toBe(201);
+    expect(gift.body.gift.active).toBe(false);
+    expect(gift.body.gift.canActivate).toBe(true);
+    expect(gift.body.gift.code).toBeNull();
+    expect(gift.body.gift.inactiveMessage).toContain("Inactivo");
+    const waiting = await titular.get("/api/inicio");
+    expect(waiting.body.gifts[0]).toMatchObject({ id: gift.body.gift.id, active: false, canActivate: false, code: null });
+    expect(waiting.body.card.balance).toBe(15_000);
+
+    expect((await titular.post(`/api/empresas/${id}/regalos/${gift.body.gift.id}/activar`)).status).toBe(403);
+    expect((await operacion.post(`/api/empresas/${id}/regalos/${gift.body.gift.id}/activar`)).status).toBe(403);
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      fetchCalls.push(String(input));
+      throw new Error("Stripe no debe llamarse");
+    }) as typeof fetch;
+    let activated;
+    try {
+      activated = await comercio.post(`/api/empresas/${id}/regalos/${gift.body.gift.id}/activar`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(fetchCalls).toEqual([]);
+    expect(activated.status).toBe(200);
+    expect(activated.body.gift.active).toBe(true);
+    expect(activated.body.gift.canActivate).toBe(false);
+    expect(activated.body.gift.inactiveMessage).toBeNull();
+    expect(activated.body.gift.stripeCouponId).toBeNull();
+    expect(activated.body.gift.stripePromotionCodeId).toBeNull();
+
+    const afterCompany = await comercio.get("/api/empresas");
+    expect(afterCompany.body.companies[0].card.balance).toBe(25_000);
+    expect(afterCompany.body.companies[0].card.available).toBe(0);
+    expect(afterCompany.body.companies[0].card.realFunds).toBe(false);
+    expect(afterCompany.body.companies[0].workers[0].balance).toBe(0);
+    expect(afterCompany.body.companies[0].workers[0].displayBalance).toBe("—");
+    expect(afterCompany.body.companies[0].gifts[0].active).toBe(true);
+    const afterBook = await operacion.get("/api/payments");
+    expect(afterBook.body.wallet.balance).toBe(beforeBook.body.wallet.balance);
+    expect(afterBook.body.transferable.balance).toBe(0);
+    const afterWorker = await titular.get("/api/inicio");
+    expect(afterWorker.body.card.balance).toBe(15_000);
+    expect(afterWorker.body.gifts[0].active).toBe(true);
+    const panel = await request(server).get("/app.js");
+    expect(panel.text).toContain("Activar");
+    expect(panel.text).toContain("Inactivo");
+  });
+
+  it("scopes company users so one company cannot read another", async () => {
+    const server = app();
+    const taller = await signedIn(server, "caja@taller.cl");
+    const norte = await signedIn(server, "pago@norte.cl");
+    const operacion = await signedIn(server);
+    const companyA = await taller.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" });
+    const companyB = await norte.post("/api/empresas").send({ name: "Oficina Norte", color: "#14532d" });
+    const idA = companyA.body.company.id;
+    const idB = companyB.body.company.id;
+    const password = "Empresa.1831";
+
+    const staff = await taller.post(`/api/empresas/${idA}/usuarios`).send({
+      name: "Caja Sur",
+      email: "caja.sur@taller.cl",
+      role: "comercio",
+      password,
+    });
+    expect(staff.status).toBe(201);
+    expect(staff.body.user).toMatchObject({
+      email: "caja.sur@taller.cl",
+      role: "comercio",
+      roleLabel: "Usuario de la empresa",
+      companyId: idA,
+    });
+    expect(JSON.stringify(staff.body)).not.toContain(password);
+    expect(staff.body.company.users.map((user: { email: string }) => user.email)).toEqual([
+      "caja@taller.cl",
+      "caja.sur@taller.cl",
+    ]);
+
+    const client = await taller.post(`/api/empresas/${idA}/usuarios`).send({
+      name: "Luz Soto",
+      email: "luz.sur@taller.cl",
+      role: "titular",
+      password,
+    });
+    expect(client.status).toBe(201);
+    const luzCard = client.body.company.workers.find((worker: { email: string }) => worker.email === "luz.sur@taller.cl");
+    expect(luzCard.contract.holderName).toBe("Luz Soto");
+    expect(luzCard.contract.companyName).toBe("Taller Sur");
+    expect(luzCard.contract.text).toContain("débito virtual, sin crédito");
+
+    const norteClient = await norte.post(`/api/empresas/${idB}/usuarios`).send({
+      name: "Pablo Norte",
+      email: "pablo.norte@norte.cl",
+      role: "titular",
+      password,
+    });
+    expect(norteClient.status).toBe(201);
+    expect((await operacion.post(`/api/empresas/${idA}/usuarios`).send({
+      name: "Mesa",
+      email: "mesa.sur@taller.cl",
+      role: "comercio",
+      password,
+    })).status).toBe(403);
+    expect((await norte.post(`/api/empresas/${idA}/usuarios`).send({
+      name: "Intruso",
+      email: "intruso@norte.cl",
+      role: "comercio",
+      password,
+    })).status).toBe(403);
+    expect((await taller.post(`/api/empresas/${idA}/usuarios`).send({
+      name: "Pablo",
+      email: "pablo.norte@norte.cl",
+      role: "titular",
+      password,
+    })).status).toBe(409);
+
+    const sur = await signedIn(server, "caja.sur@taller.cl", password);
+    const visible = await sur.get("/api/empresas");
+    expect(visible.body.companies.map((company: { id: string }) => company.id)).toEqual([idA]);
+    expect(visible.body.canCreate).toBe(false);
+    expect(JSON.stringify(visible.body)).not.toContain("Oficina Norte");
+    expect(JSON.stringify(visible.body)).not.toContain("pablo.norte@norte.cl");
+    expect(visible.body.companies[0].workers.map((worker: { email: string }) => worker.email)).toEqual(["luz.sur@taller.cl"]);
+    expect(visible.body.companies[0].workers[0].displayBalance).toBe("—");
+    const surHome = await sur.get("/api/inicio");
+    expect(surHome.body.companyName).toBe("Taller Sur");
+    expect(surHome.body.contract.companyName).toBe("Taller Sur");
+    expect(JSON.stringify(surHome.body)).not.toContain("Oficina Norte");
+    expect((await sur.post("/api/empresas").send({ name: "Otra", color: "#112233" })).status).toBe(403);
+    expect((await sur.post(`/api/empresas/${idB}/regalos`).send({
+      title: "Ajeno",
+      note: "No",
+      recipientId: idB,
+    })).status).toBe(403);
+    expect((await sur.post(`/api/empresas/${idB}/trabajadores`).send({
+      name: "Ajeno",
+      email: "ajeno@norte.cl",
+    })).status).toBe(403);
+    expect((await sur.get("/api/cuentas")).body.accounts).toEqual([]);
+
+    const luz = await signedIn(server, "luz.sur@taller.cl", password);
+    const luzHome = await luz.get("/api/inicio");
+    expect(luzHome.body.name).toBe("Luz Soto");
+    expect(luzHome.body.companyName).toBe("Taller Sur");
+    expect(luzHome.body.contract.holderName).toBe("Luz Soto");
+    expect(luzHome.body.workers).toBeUndefined();
+    const luzCompanies = await luz.get("/api/empresas");
+    expect(luzCompanies.body.companies).toHaveLength(1);
+    expect(luzCompanies.body.companies[0].id).toBe(idA);
+    expect(luzCompanies.body.companies[0].workers).toHaveLength(1);
+    expect(luzCompanies.body.companies[0].displayBalance).toBe("—");
+    expect(luzCompanies.body.companies[0].users).toEqual([]);
+    expect(JSON.stringify(luzCompanies.body)).not.toContain("pablo.norte@norte.cl");
+    expect(JSON.stringify(luzCompanies.body)).not.toContain(idB);
+
+    await sur.post("/api/clases/tarjeta-debito/alumnos").send({ name: "Caja Sur", email: "caja.sur@taller.cl" });
+    await norte.post("/api/clases/tarjeta-debito/alumnos").send({ name: "Oficina Norte", email: "pago@norte.cl" });
+    const surCourses = await sur.get("/api/clases");
+    const surStudents = surCourses.body.courses.find((course: { id: string }) => course.id === "tarjeta-debito").students;
+    expect(surStudents.map((student: { email: string }) => student.email)).toEqual(["caja.sur@taller.cl"]);
+    const norteCourses = await norte.get("/api/clases");
+    const norteStudents = norteCourses.body.courses.find((course: { id: string }) => course.id === "tarjeta-debito").students;
+    expect(norteStudents.map((student: { email: string }) => student.email)).not.toContain("caja.sur@taller.cl");
+
+    const panel = await request(server).get("/app.js");
+    expect(panel.text).toContain("Usuario de la empresa");
+    expect(panel.text).toContain("Cada empresa y cada cliente tiene su propio usuario");
   });
 });

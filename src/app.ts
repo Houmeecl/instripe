@@ -6,7 +6,7 @@ import { requiredOption, type SessionUser } from "./auth/module.js";
 import { loadConfig, isStripeConfigured, isChileConfigured, type AppConfig, type GatewayName } from "./config.js";
 import { createStripe } from "./stripe/client.js";
 import { formatAmount } from "./money.js";
-import type { GiftStripe } from "./modules/regalos/issue.js";
+import type { GiftActivationStripe, GiftStripe } from "./modules/regalos/issue.js";
 import { planDisplayRate } from "./modules/seguros/catalog.js";
 import { Platform, PlatformError } from "./platform.js";
 
@@ -406,7 +406,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   app.get("/api/clases", (_req: Request, res: Response) => {
-    res.json(platform.laboral.courses());
+    res.json(platform.laboral.courses({ companyId: companyActor(res).companyId }));
   });
 
   app.post("/api/clases/:id/alumnos", (req: Request, res: Response) => {
@@ -416,7 +416,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       const course = platform.laboral.enroll(String(req.params.id), {
         name: String(body.name || user.name),
         email: String(body.email || user.email),
-      });
+      }, { companyId: user.companyId });
       res.status(201).json({ course });
     } catch (error) {
       handleError(error, res);
@@ -569,6 +569,40 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         createStripe(config) as GiftStripe | undefined,
       );
       res.status(201).json({ gift });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/empresas/:id/regalos/:giftId/activar", async (req: Request, res: Response) => {
+    try {
+      const gift = await platform.empresas.activateGift(
+        companyActor(res),
+        String(req.params.id),
+        String(req.params.giftId),
+        createStripe(config) as GiftActivationStripe | undefined,
+      );
+      res.status(200).json({ gift });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/empresas/:id/usuarios", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    const role = body.role === "titular" || body.role === "comercio" ? body.role : "";
+    if (!body.name || !body.email || !role || !body.password) {
+      res.status(400).json({ error: "Nombre, correo, rol y clave son requeridos" });
+      return;
+    }
+    try {
+      const result = platform.createCompanyUser(companyActor(res), String(req.params.id), {
+        name: String(body.name),
+        email: String(body.email),
+        role,
+        password: String(body.password),
+      });
+      res.status(201).json(result);
     } catch (error) {
       handleError(error, res);
     }
@@ -870,7 +904,7 @@ function withPublishableKey<T extends { charge: { clientSecret?: string } }>(
 
 function companyActor(res: Response) {
   const user = res.locals.user as SessionUser;
-  return { id: user.id, email: user.email, role: user.role, name: user.name };
+  return { id: user.id, email: user.email, role: user.role, name: user.name, companyId: user.companyId };
 }
 
 function handleError(error: unknown, res: Response): void {

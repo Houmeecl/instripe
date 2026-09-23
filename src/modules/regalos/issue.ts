@@ -19,6 +19,7 @@ export interface GiftStripe {
   promotionCodes: {
     create(params: {
       code?: string;
+      active?: boolean;
       max_redemptions?: number;
       metadata?: Record<string, string>;
       promotion: { type: "coupon"; coupon?: string };
@@ -26,17 +27,27 @@ export interface GiftStripe {
   };
 }
 
+/** Stripe surface used only when the company activates a promotion code. */
+export interface GiftActivationStripe {
+  promotionCodes: {
+    update(id: string, params: { active: boolean }): Promise<{ id: string }>;
+  };
+}
+
 export interface IssuedGift {
   status: "pending" | "issued";
+  active: boolean;
   code: string | null;
   stripeCouponId: string | null;
   stripePromotionCodeId: string | null;
   pendingMessage: string | null;
+  inactiveMessage: string | null;
   nfcNote: string | null;
   qr: boolean[][] | null;
 }
 
 export const GIFT_DISCLAIMER = "Este regalo es virtual. No es una cuenta de débito y no es dinero.";
+export const INACTIVE_GIFT = "Inactivo. La empresa lo activa cuando quiera.";
 const PENDING = "Stripe no está configurado. El regalo queda pendiente, sin código y sin identificador de Stripe.";
 const NFC = "Este código se puede copiar después en una etiqueta NFC.";
 
@@ -48,10 +59,12 @@ export async function issueVirtualGift(stripe: GiftStripe | undefined, title: st
   if (!stripe) {
     return {
       status: "pending",
+      active: false,
       code: null,
       stripeCouponId: null,
       stripePromotionCodeId: null,
       pendingMessage: PENDING,
+      inactiveMessage: INACTIVE_GIFT,
       nfcNote: null,
       qr: null,
     };
@@ -67,19 +80,35 @@ export async function issueVirtualGift(stripe: GiftStripe | undefined, title: st
   const promotion = await stripe.promotionCodes.create({
     promotion: { type: "coupon", coupon: coupon.id },
     code,
+    active: false,
     max_redemptions: 1,
     metadata: { kind: "regalo_virtual", money: "false" },
   });
   const shown = promotion.code || code;
   return {
     status: "issued",
+    active: false,
     code: shown,
     stripeCouponId: coupon.id,
     stripePromotionCodeId: promotion.id,
     pendingMessage: null,
+    inactiveMessage: INACTIVE_GIFT,
     nfcNote: NFC,
     qr: qrMatrix(shown),
   };
+}
+
+/**
+ * Turns on the Stripe promotion code. A gift with no code is only marked
+ * active by the caller and does not invent a Stripe id.
+ */
+export async function activateVirtualGift(
+  stripe: GiftActivationStripe | undefined,
+  promotionCodeId: string | null,
+): Promise<void> {
+  if (!promotionCodeId) return;
+  if (!stripe) throw new Error("Stripe no está configurado");
+  await stripe.promotionCodes.update(promotionCodeId, { active: true });
 }
 
 function shortCode(): string {

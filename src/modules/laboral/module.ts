@@ -35,6 +35,7 @@ interface EnrollmentRecord {
   courseId: string;
   name: string;
   email: string;
+  companyId?: string;
   enrolledAt: string;
 }
 
@@ -102,19 +103,19 @@ export class LaboralModule {
     this.ownHost = hostnameOf(publicBaseUrl);
   }
 
-  courses(): { courses: CourseView[] } {
+  courses(scope?: { companyId?: string }): { courses: CourseView[] } {
     return {
       courses: COURSES.map((course) => ({
         ...course,
         lessons: course.lessons.map((lesson) => ({ ...lesson })),
         students: this.enrollments
-          .filter((row) => row.courseId === course.id)
+          .filter((row) => row.courseId === course.id && sameCompany(row.companyId, scope?.companyId))
           .map((row) => ({ name: row.name, email: row.email, enrolledAt: row.enrolledAt })),
       })),
     };
   }
 
-  enroll(courseId: string, input: { name: string; email: string }): CourseView {
+  enroll(courseId: string, input: { name: string; email: string }, scope?: { companyId?: string }): CourseView {
     const course = COURSES.find((item) => item.id === courseId);
     if (!course) throw new PlatformError("Curso desconocido", 404);
     const name = input.name.trim();
@@ -127,12 +128,13 @@ export class LaboralModule {
         courseId: course.id,
         name,
         email,
+        ...(scope?.companyId ? { companyId: scope.companyId } : {}),
         enrolledAt: new Date().toISOString(),
       };
       this.enrollments.push(row);
       this.store.put("course_enrollments", row.id, row);
     }
-    const view = this.courses().courses.find((item) => item.id === course.id);
+    const view = this.courses(scope).courses.find((item) => item.id === course.id);
     if (!view) throw new PlatformError("Curso desconocido", 404);
     return view;
   }
@@ -192,6 +194,10 @@ export class LaboralModule {
     }
     return url.toString();
   }
+}
+
+function sameCompany(rowCompanyId: string | undefined, scopeCompanyId: string | undefined): boolean {
+  return scopeCompanyId ? rowCompanyId === scopeCompanyId : !rowCompanyId;
 }
 
 function hostnameOf(value: string): string {
