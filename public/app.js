@@ -13,6 +13,10 @@ const state = {
   issuing: null,
   companies: [],
   canCreateCompany: false,
+  courses: [],
+  sicr3p: null,
+  actuarial: [],
+  frosting: null,
   design: null,
   appManifest: null,
   stripeEvents: [],
@@ -46,7 +50,10 @@ const NAV = [
   {
     group: "Operación",
     items: [
-      { route: "overview", label: "Inicio", icon: "home", title: "Inicio", sub: "Cuentas, cobros y crédito. El espacio ya está ocupado." },
+      { route: "overview", label: "Inicio", icon: "home", title: "Inicio", sub: "Tus datos y la entrada a cursos." },
+      { route: "clases", label: "Cursos", icon: "layers", title: "Cursos", sub: "Gestión financiera, débito, gastos, seguros y riesgos." },
+      { route: "configuracion", label: "Configuración", icon: "file", title: "Configuración", sub: "SICR3P es un sitio externo. Este panel no reenvía su tráfico." },
+      { route: "actuarial", label: "Tasas", icon: "activity", title: "Vista actuarial", sub: "Clases de riesgo de Frosting. Aparte de los cursos." },
     ],
   },
   {
@@ -70,9 +77,9 @@ const NAV = [
     ],
   },
   {
-    group: "Prepago",
+    group: "Débito",
     items: [
-      { route: "empresas", label: "Empresas", icon: "card", title: "Empresas", sub: "Tarjeta de la empresa, prepago de cada trabajador y transferencias" },
+      { route: "empresas", label: "Débito", icon: "card", title: "Tarjetas virtuales", sub: "Débito prepago. Sin plástico y sin línea de crédito." },
     ],
   },
   {
@@ -401,10 +408,15 @@ async function refresh() {
     const empresas = await api("/api/empresas");
     state.companies = empresas.companies || [];
     state.canCreateCompany = Boolean(empresas.canCreate);
+    state.frosting = await api("/api/frosting");
   } else {
     state.companies = [];
     state.canCreateCompany = false;
+    state.frosting = null;
   }
+  state.courses = allowed("clases") ? (await api("/api/clases")).courses || [] : [];
+  state.sicr3p = allowed("configuracion") ? (await api("/api/configuracion")).sicr3p || null : null;
+  state.actuarial = allowed("actuarial") ? (await api("/api/actuarial")).classes || [] : [];
   if (allowed("design")) {
     state.design = (await api("/api/diseno")).design;
     applyDesign(state.design);
@@ -444,8 +456,14 @@ function currentRoute() {
 function route() {
   const r = currentRoute();
   const meta = navItems().find((n) => n.route === r);
-  document.getElementById("page-title").textContent = meta.title;
-  document.getElementById("page-subtitle").textContent = meta.sub;
+  let title = meta.title;
+  let sub = meta.sub;
+  if (r === "overview" && state.user && state.user.role === "operacion") {
+    title = "Inicio";
+    sub = "Resumen de la plataforma";
+  }
+  document.getElementById("page-title").textContent = title;
+  document.getElementById("page-subtitle").textContent = sub;
   document.querySelectorAll("#nav a").forEach((a) => {
     a.classList.toggle("active", a.dataset.route === r);
   });
@@ -466,6 +484,9 @@ const VIEWS = {
   treasury: viewTreasury,
   cards: viewCards,
   empresas: viewEmpresas,
+  clases: viewClases,
+  configuracion: viewConfiguracion,
+  actuarial: viewActuarial,
   design: viewDesign,
   apps: viewApps,
   payments: viewPayments,
@@ -551,6 +572,50 @@ function pendingExitsCard() {
 }
 
 function viewOverview() {
+  if (!state.user || state.user.role === "operacion") return viewOperacionHome();
+  return viewClientHome();
+}
+
+function viewClientHome() {
+  const inicio = state.overview.inicio || {};
+  const company = (state.companies || []).find((item) => item.card && inicio.card && item.card.id === inicio.card.id)
+    || (state.companies || []).find((item) => item.ownWorkerId && inicio.card && item.ownWorkerId === inicio.card.id)
+    || (state.companies || [])[0];
+  const color = company ? company.color : "#0e3e66";
+  const rows = [];
+  rows.push(["Nombre", inicio.name || (state.user && state.user.name) || ""]);
+  if (state.user && state.user.role === "comercio") rows.push(["Comuna", inicio.commune || "Sin comuna"]);
+  if (inicio.companyName && state.user && state.user.role === "titular") rows.push(["Empresa", inicio.companyName]);
+  rows.push(["Correo", inicio.email || (state.user && state.user.email) || ""]);
+  const identity = rows
+    .map(([label, value]) => `<div><span>${label}</span><b>${escapeAttr(value)}</b></div>`)
+    .join("");
+  const card = inicio.card
+    ? virtualCard(inicio.card, color, "Débito virtual")
+    : `<article class="plastic vcard vcard-empty"><b>Todavía no hay tarjeta</b><span>${state.user && state.user.role === "titular" ? "La empresa abre tu prepago con tu correo." : "Abre la tarjeta de la empresa en Débito."}</span></article>`;
+  const note = inicio.card && inicio.card.balance > 0 && !inicio.card.realFunds
+    ? `<p class="funds-note">Este abono está en el libro. No es dinero disponible: Stripe todavía no lo liquidó.</p>`
+    : `<p class="funds-note">Disponible es solo el dinero que Stripe ya liquidó. La tarjeta es virtual y de débito.</p>`;
+  const moves = inicio.card && inicio.card.displayBalance !== "—"
+    ? `<div class="card" style="margin-top:16px"><div class="card-head"><h3>Movimientos</h3></div><div class="card-body flush">${cardFeed(inicio.card.movements)}</div></div>`
+    : "";
+  return `<section class="home-board">
+    <div class="home-identity">
+      <p class="home-kicker">${escapeAttr(state.user.roleLabel)}</p>
+      <h2>${escapeAttr(inicio.name || state.user.name)}</h2>
+      <div class="identity-list">${identity}</div>
+      <a class="btn btn-primary" href="#/clases">${icon("layers")} Entrar a cursos</a>
+      ${allowed("empresas") ? `<a class="btn btn-ghost" href="#/empresas" style="margin-left:8px">${icon("card")} Débito</a>` : ""}
+    </div>
+    <div>
+      ${card}
+      ${note}
+      ${moves}
+    </div>
+  </section>`;
+}
+
+function viewOperacionHome() {
   const o = state.overview;
   const payments = o.payments || [];
   const activePolicies = (o.policies || []).filter((p) => p.status === "active").length;
@@ -575,7 +640,9 @@ function viewOverview() {
     ["connect", "arrow", "Comercios"],
     ["treasury", "wallet", "Caja"],
     ["cards", "card", "Tarjetas"],
-    ["empresas", "card", "Empresas"],
+    ["empresas", "card", "Débito"],
+    ["configuracion", "file", "Configuración"],
+    ["clases", "layers", "Cursos"],
   ].filter(([route]) => allowed(route));
   const activity = allowed("payments")
     ? `<div class="card"><div class="card-head"><h3>Actividad reciente</h3><a class="btn btn-ghost btn-sm" href="#/payments">Admin técnico</a></div><div class="card-body flush">${movementFeed(payments, false)}</div></div>`
@@ -584,7 +651,10 @@ function viewOverview() {
     .map(([route, ic, label], index) => `<a class="btn btn-ghost btn-block" href="#/${route}"${index ? ' style="margin-top:10px"' : ""}>${icon(ic)} ${label}</a>`)
     .join("");
 
-  return `${workflowStrip()}${pendingExitsCard()}${kpis.length ? `<div class="grid-kpi">${kpis.join("")}</div>` : ""}
+  const configCard = allowed("configuracion")
+    ? `<div class="card" style="margin-bottom:20px"><div class="card-head"><h3>SICR3P</h3></div><div class="card-body"><p class="hint">${state.sicr3p && state.sicr3p.configured ? "La URL externa ya está guardada." : "Falta la URL de SICR3P. Configúrala para salir a ese sitio."}</p><a class="btn btn-primary" href="#/configuracion">${icon("file")} Ir a configuración</a></div></div>`
+    : "";
+  return `${configCard}${workflowStrip()}${pendingExitsCard()}${kpis.length ? `<div class="grid-kpi">${kpis.join("")}</div>` : ""}
     <div class="cols${activity ? "" : " single"}">
       ${activity}
       <div class="card">
@@ -645,8 +715,24 @@ function viewCobros() {
 }
 
 function viewPlans() {
-  const product = state.plans[0];
-  const rate = product ? product.displayRate : "0,60%";
+  const credit = state.plans.find((plan) => plan.id === "credito-tc") || state.plans[0];
+  const frosting = state.plans.find((plan) => plan.id === "frosting");
+  const rate = credit ? credit.displayRate : "0,60%";
+  const frostingCard = frosting
+    ? `<div class="plan">
+        <span class="ribbon">Frosting</span>
+        <h3>Seguro por trabajadores</h3>
+        <p class="plan-desc">${escapeAttr(frosting.description)}</p>
+        <div class="price"><b>${escapeAttr(frosting.displayRate)}</b><span>sin cupo</span></div>
+        <div class="coverage">No abre crédito. La tasa vive en la vista actuarial.</div>
+        <ul class="features">
+          <li>${icon("check")} Prima = trabajadores × tasa de la clase</li>
+          <li>${icon("check")} Se cobra por el libro de pagos</li>
+          <li>${icon("check")} La empresa lo contrata en Tarjetas</li>
+        </ul>
+        ${allowed("actuarial") ? `<a class="btn btn-ghost btn-block" href="#/actuarial">Ver tasas</a>` : `<p class="hint">La empresa contrata Frosting desde su tarjeta.</p>`}
+      </div>`
+    : "";
   return `<div class="plans">
     <div class="plan featured">
       <span class="ribbon">Crédito TC</span>
@@ -661,6 +747,7 @@ function viewPlans() {
       </ul>
       <button class="btn btn-primary btn-block" data-credito>${icon("plus")} Asegurar un crédito</button>
     </div>
+    ${frostingCard}
   </div>`;
 }
 
@@ -677,14 +764,16 @@ function viewPolicies() {
         <div class="avatar">${initials(p.holderName)}</div>
         <div>
           <div class="who">${p.holderName}</div>
-          <div class="meta">${p.cardLabel || "Tarjeta"} · crédito ${money(p.cupo || p.coverage)}</div>
+          <div class="meta">${p.planId === "frosting" ? `${p.workers || 0} trabajadores · ${escapeAttr(p.companyName || "Frosting")}` : `${p.cardLabel || "Tarjeta"} · crédito ${money(p.cupo || p.coverage)}`}</div>
         </div>
         <div class="push">
           <span class="pill ${pending ? "amber" : ""}">${pending ? "Pago pendiente" : "Al día"}</span>
           ${
             pending
               ? `<span class="meta">Esperando el pago</span>`
-              : `<button class="btn btn-ghost btn-sm" data-claim="${p.id}">${icon("zap")} Dispersar siniestro</button>`
+              : p.planId === "frosting"
+                ? `<span class="meta">Sin crédito</span>`
+                : `<button class="btn btn-ghost btn-sm" data-claim="${p.id}">${icon("zap")} Dispersar siniestro</button>`
           }
         </div>
       </div>`;
@@ -861,17 +950,84 @@ function viewApps() {
   </div>`;
 }
 
+const SPEND_CATEGORIES = [
+  ["alimentacion", "Alimentación"],
+  ["transporte", "Transporte"],
+  ["combustible", "Combustible"],
+  ["salud", "Salud"],
+  ["oficina", "Oficina"],
+  ["otros", "Otros"],
+];
+
 function safeColor(color) {
   return /^#[0-9a-fA-F]{6}$/.test(color || "") ? color : "#0e3e66";
 }
 
-function prepaidPlastic(card, color, kicker) {
-  return `<article class="plastic prepaid" style="background:linear-gradient(145deg, ${safeColor(color)}, #102033)">
-    <span class="prepaid-kicker">${escapeAttr(kicker)}</span>
-    <b>${escapeAttr(card.name)}</b>
-    <em>•••• ${escapeAttr(card.last4)}</em>
-    <strong class="prepaid-balance">${escapeAttr(card.displayBalance)}</strong>
+function virtualCard(card, color, kicker) {
+  const logo = card.logo
+    ? `<img class="vcard-logo" src="${escapeAttr(card.logo)}" alt="" />`
+    : `<span class="vcard-mark">${escapeAttr(initials(card.name || "PR"))}</span>`;
+  const book = card.displayBalance === "—" ? "" : `<div><span>Saldo en libro</span><b>${escapeAttr(card.displayBalance)}</b></div>`;
+  const available = card.displayAvailable || (card.displayBalance === "—" ? "—" : money(0));
+  return `<article class="plastic vcard" style="background:linear-gradient(155deg, ${safeColor(color)} 0%, #102033 78%)">
+    <div class="vcard-top">${logo}<span class="vcard-kicker">${escapeAttr(kicker)}</span></div>
+    <div>
+      <b class="vcard-name">${escapeAttr(card.name)}</b>
+      <em>•••• ${escapeAttr(card.last4)}</em>
+    </div>
+    <div class="vcard-foot">
+      <div><span>Disponible</span><strong>${escapeAttr(String(available))}</strong></div>
+      ${book}
+    </div>
   </article>`;
+}
+
+function cardFeed(rows) {
+  if (!rows || !rows.length) {
+    return `<div class="empty">${icon("inbox")}<div>Sin movimientos en esta tarjeta.</div></div>`;
+  }
+  return `<ul class="feed">${rows
+    .map(
+      (item) => `<li><div class="fi">${icon(item.kind === "debit" ? "zap" : "card")}</div><div><div class="ft"><b>${item.kind === "debit" ? "−" : "+"}${escapeAttr(item.displayAmount)}</b> ${escapeAttr(item.reference)}</div><div class="fdate">${escapeAttr(String(item.createdAt).slice(0, 16).replace("T", " "))}</div></div></li>`,
+    )
+    .join("")}</ul>`;
+}
+
+function cardControls(company, card) {
+  const options = card.options || {};
+  const editable = company.canManage || card.id === company.ownWorkerId;
+  const selected = new Set(options.categories || []);
+  const checks = SPEND_CATEGORIES.map(
+    ([id, label]) =>
+      `<label class="checkline"><input type="checkbox" data-cat="${escapeAttr(card.id)}" value="${id}" ${selected.has(id) ? "checked" : ""} ${editable ? "" : "disabled"} /> ${label}</label>`,
+  ).join("");
+  const period = options.period || "siempre";
+  const moneyHidden = card.displayBalance === "—";
+  const ledger = moneyHidden
+    ? `<p class="hint">El saldo, los movimientos y los comprobantes los ve solo quien usa esta tarjeta.</p>`
+    : `<h2 class="section-title">Saldo y movimientos</h2><p class="hint">Disponible ${escapeAttr(card.displayAvailable || money(0))}. En el libro: ${escapeAttr(card.displayBalance)}. ${card.realFunds ? "Stripe ya liquidó este saldo." : "Un abono de demostración no es dinero disponible."}</p>${cardFeed(card.movements)}<h2 class="section-title">Comprobantes</h2>${cardFeed(card.receipts)}`;
+  return `<div class="card-options">
+    ${ledger}
+    <h2 class="section-title">Opciones de la tarjeta</h2>
+    <div class="inline-form">
+      <div class="field"><label>Límite de gasto</label><input id="limit-${card.id}" inputmode="numeric" placeholder="Sin límite" value="${options.spendLimit || ""}" ${editable ? "" : "disabled"} /></div>
+      <div class="field"><label>Período de uso</label>
+        <select id="period-${card.id}" ${editable ? "" : "disabled"}>
+          <option value="siempre" ${period === "siempre" ? "selected" : ""}>Siempre</option>
+          <option value="mensual" ${period === "mensual" ? "selected" : ""}>Mensual</option>
+          <option value="rango" ${period === "rango" ? "selected" : ""}>Rango de fechas</option>
+        </select>
+      </div>
+      <div class="field"><label>Desde</label><input id="from-${card.id}" type="date" value="${escapeAttr(options.periodFrom || "")}" ${editable ? "" : "disabled"} /></div>
+      <div class="field"><label>Hasta</label><input id="until-${card.id}" type="date" value="${escapeAttr(options.periodUntil || "")}" ${editable ? "" : "disabled"} /></div>
+    </div>
+    <div class="checkgrid">${checks}</div>
+    <div class="checkgrid">
+      <label class="checkline"><input id="block-${card.id}" type="checkbox" ${options.blocked ? "checked" : ""} ${editable ? "" : "disabled"} /> Bloquear tarjeta</label>
+      <label class="checkline"><input id="alerts-${card.id}" type="checkbox" ${options.alerts ? "checked" : ""} ${editable ? "" : "disabled"} /> Alertas</label>
+    </div>
+    ${editable ? `<button class="btn btn-primary btn-sm" data-save-card="${escapeAttr(company.id)}:${escapeAttr(card.id)}">${icon("check")} Guardar opciones</button>` : ""}
+  </div>`;
 }
 
 function transferLabel(transfer) {
@@ -880,9 +1036,75 @@ function transferLabel(transfer) {
   return `Desde ${transfer.workerName || "el trabajador"} a la empresa`;
 }
 
+function transferForm(company) {
+  if (!(company.workers.length && (company.canManage || company.ownWorkerId))) {
+    return `<p class="hint">Agrega un trabajador para transferir prepago.</p>`;
+  }
+  const options = company.workers
+    .map((worker) => `<option value="${escapeAttr(worker.id)}">${escapeAttr(worker.name)}</option>`)
+    .join("");
+  const directions = company.canManage
+    ? `<div class="field"><label>Hacia</label><select id="dir-${company.id}"><option value="to_worker">Al trabajador</option><option value="to_company">A la empresa</option></select></div>`
+    : `<input id="dir-${company.id}" type="hidden" value="to_company" />`;
+  return `<div class="inline-form">
+    <div class="field"><label>Tarjeta</label><select id="who-${company.id}">${options}</select></div>
+    <div class="field"><label>Monto</label><input id="amt-${company.id}" inputmode="numeric" placeholder="10000" /></div>
+    ${directions}
+    <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-transfer="${company.id}">${icon("arrow")} Transferir</button></div>
+  </div>
+  <p class="hint">La transferencia queda en el libro local. No sale por Stripe.</p>`;
+}
+
+function logoForm(company) {
+  if (!company.canManage) return "";
+  const saved = company.logo ? `<p class="hint">El logo ya está en las tarjetas.</p>` : "";
+  const value = company.logo && String(company.logo).startsWith("https://") ? escapeAttr(company.logo) : "";
+  return `<div class="inline-form">
+    <div class="field"><label>Logo de la empresa cliente</label><input id="logo-${company.id}" placeholder="https://…" value="${value}" /></div>
+    <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" data-save-logo="${company.id}">${icon("check")} Poner logo</button></div>
+  </div>${saved}`;
+}
+
+function frostingBox(company) {
+  if (!company.canManage || !state.frosting) return "";
+  const classes = state.frosting.classes || [];
+  const options = classes
+    .map((item) => `<option value="${escapeAttr(item.id)}">${escapeAttr(item.name)} · ${money(item.rate)} por trabajador</option>`)
+    .join("");
+  return `<h2 class="section-title">Seguro Frosting</h2>
+    <p class="hint">No abre crédito. La prima es trabajadores por la tasa de la clase y se cobra por pagos.</p>
+    <div class="inline-form">
+      <div class="field"><label>Trabajadores</label><input id="frost-workers-${company.id}" inputmode="numeric" value="${Math.max(company.workers.length, 1)}" /></div>
+      <div class="field"><label>Clase de riesgo</label><select id="frost-class-${company.id}">${options}</select></div>
+      <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-frosting="${company.id}">${icon("shield")} Cotizar y cobrar</button></div>
+    </div>`;
+}
+
 function companyBlock(company) {
+  if (!company.canManage && company.ownWorkerId) {
+    const card = company.workers.find((worker) => worker.id === company.ownWorkerId) || company.workers[0];
+    if (!card) {
+      return `<div class="card"><div class="card-body"><div class="empty">${icon("card")}<div>Todavía no tienes un prepago.</div></div></div></div>`;
+    }
+    return `<div class="card company-block">
+      <div class="card-head"><h3>${escapeAttr(card.name)}</h3><span class="pill">${escapeAttr(company.name)}</span></div>
+      <div class="card-body">
+        <div class="vcard-layout">${virtualCard(card, company.color, "Débito virtual")}</div>
+        ${cardControls(company, card)}
+        <h2 class="section-title">Devolver prepago a la empresa</h2>
+        ${transferForm(company)}
+      </div>
+    </div>`;
+  }
   const workers = company.workers.length
-    ? `<div class="prepaid-grid">${company.workers.map((worker) => prepaidPlastic(worker, company.color, "Prepago")).join("")}</div>`
+    ? company.workers
+        .map(
+          (worker) => `<section class="worker-card">
+            <div class="vcard-layout">${virtualCard(worker, company.color, "Débito virtual")}</div>
+            ${cardControls(company, worker)}
+          </section>`,
+        )
+        .join("")
     : `<div class="empty">${icon("inbox")}<div>Esta empresa todavía no tiene trabajadores con prepago.</div></div>`;
   const fund = company.canFund
     ? `<div class="inline-form">
@@ -898,21 +1120,7 @@ function companyBlock(company) {
         <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" data-add-worker="${company.id}">${icon("plus")} Agregar prepago</button></div>
       </div>`
     : "";
-  let transfer = `<p class="hint">Agrega un trabajador para transferir prepago.</p>`;
-  if (company.workers.length && (company.canManage || company.ownWorkerId)) {
-    const options = company.workers
-      .map((worker) => `<option value="${escapeAttr(worker.id)}">${escapeAttr(worker.name)}</option>`)
-      .join("");
-    const directions = company.canManage
-      ? `<div class="field"><label>Hacia</label><select id="dir-${company.id}"><option value="to_worker">Al trabajador</option><option value="to_company">A la empresa</option></select></div>`
-      : `<input id="dir-${company.id}" type="hidden" value="to_company" />`;
-    transfer = `<div class="inline-form">
-      <div class="field"><label>Tarjeta</label><select id="who-${company.id}">${options}</select></div>
-      <div class="field"><label>Monto</label><input id="amt-${company.id}" inputmode="numeric" placeholder="10000" /></div>
-      ${directions}
-      <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-transfer="${company.id}">${icon("arrow")} Transferir</button></div>
-    </div>`;
-  }
+  const transfer = transferForm(company);
   const moves = company.transfers.length
     ? `<ul class="feed">${company.transfers
         .map(
@@ -921,16 +1129,19 @@ function companyBlock(company) {
         .join("")}</ul>`
     : `<div class="empty">${icon("inbox")}<div>Sin transferencias todavía.</div></div>`;
   return `<div class="card company-block">
-    <div class="card-head"><h3>${escapeAttr(company.name)}</h3><span class="pill">Prepago interno</span></div>
+    <div class="card-head"><h3>${escapeAttr(company.name)}</h3><span class="pill">Débito virtual</span></div>
     <div class="card-body">
-      <div class="prepaid-grid">${prepaidPlastic(company.card, company.color, "Empresa")}</div>
+      <div class="vcard-layout">${virtualCard(company.card, company.color, "Empresa")}</div>
+      ${logoForm(company)}
       ${fund}
+      ${cardControls(company, company.card)}
       <h2 class="section-title">Trabajadores</h2>
-      ${company.canManage && company.workers.some((worker) => worker.displayBalance === "—") ? `<p class="hint">El saldo de cada trabajador lo ve solo esa persona. Puedes transferir igual.</p>` : ""}
+      ${company.canManage && company.workers.some((worker) => worker.displayBalance === "—") ? `<p class="hint">El saldo de cada trabajador lo ve solo esa persona. Puedes ajustar su tarjeta y transferir igual.</p>` : ""}
       ${workers}
       ${add}
       <h2 class="section-title">Transferir</h2>
       ${transfer}
+      ${frostingBox(company)}
       <h2 class="section-title">Revisar</h2>
       ${moves}
     </div>
@@ -943,7 +1154,7 @@ function viewEmpresas() {
     ? `<div class="card" style="margin-bottom:20px">
         <div class="card-head"><h3>Nueva empresa</h3></div>
         <div class="card-body">
-          <p class="hint">La tarjeta usa el color de la empresa. El prepago queda en esa tarjeta y no sale por Stripe.</p>
+          <p class="hint">La tarjeta es virtual y de débito. El color y el logo son de la empresa cliente. El prepago queda en el libro y no sale por Stripe.</p>
           <div class="inline-form">
             <div class="field"><label>Nombre</label><input id="emp-name" placeholder="Taller Sur" /></div>
             <div class="field"><label>Color de la tarjeta</label><input id="emp-color" type="color" value="#0e3e66" /></div>
@@ -966,6 +1177,82 @@ function escapeAttr(value) {
     .replace(/&/g, "&amp;")
     .replace(/"/g, "&quot;")
     .replace(/</g, "&lt;");
+}
+
+function viewClases() {
+  const courses = state.courses || [];
+  if (!courses.length) {
+    return `<div class="card"><div class="card-body"><div class="empty">${icon("layers")}<div>No hay cursos cargados.</div></div></div></div>`;
+  }
+  return `<div class="course-grid">${courses
+    .map((course) => {
+      const lessons = (course.lessons || []).map((lesson) => `<li>${escapeAttr(lesson.title)}</li>`).join("");
+      const students = (course.students || []).length
+        ? (course.students || []).map((student) => `<li>${escapeAttr(student.name)} · ${escapeAttr(student.email)}</li>`).join("")
+        : `<li>Nadie inscrito todavía.</li>`;
+      return `<article class="card course-card">
+        <div class="card-head"><h3>${escapeAttr(course.title)}</h3><span class="badge">${(course.students || []).length}</span></div>
+        <div class="card-body">
+          <h2 class="section-title">Lecciones</h2>
+          <ol class="lesson-list">${lessons}</ol>
+          <h2 class="section-title">Alumnos</h2>
+          <ul class="lesson-list">${students}</ul>
+          <div class="inline-form">
+            <div class="field"><label>Nombre</label><input id="alumno-name-${course.id}" value="${escapeAttr(state.user ? state.user.name : "")}" /></div>
+            <div class="field"><label>Correo</label><input id="alumno-email-${course.id}" type="email" value="${escapeAttr(state.user ? state.user.email : "")}" /></div>
+            <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-enroll="${escapeAttr(course.id)}">${icon("plus")} Inscribir</button></div>
+          </div>
+        </div>
+      </article>`;
+    })
+    .join("")}</div>`;
+}
+
+function viewConfiguracion() {
+  const sicr = state.sicr3p || { url: null, configured: false, secretStored: false };
+  const status = sicr.configured
+    ? `<p>SICR3P está en <a href="${escapeAttr(sicr.url)}" target="_blank" rel="noopener noreferrer">${escapeAttr(sicr.url)}</a>. El navegador abre ese sitio. Este panel no reenvía su tráfico.</p>`
+    : `<div class="empty">${icon("file")}<div>Configura la URL https de SICR3P. Tiene que ser un sitio de otro host.</div></div>`;
+  const secretNote = sicr.secretStored
+    ? `<p class="hint">Hay un secreto guardado en el servidor. No vuelve al navegador.</p>`
+    : `<p class="hint">Si guardas un secreto, se queda en el servidor.</p>`;
+  return `<div class="card">
+    <div class="card-head"><h3>SICR3P</h3><span class="pill">${sicr.configured ? "Externo" : "Sin URL"}</span></div>
+    <div class="card-body">
+      ${status}
+      <div class="inline-form">
+        <div class="field"><label>URL https</label><input id="sicr-url" placeholder="https://sicr3p.ejemplo.cl" value="${sicr.url ? escapeAttr(sicr.url) : ""}" /></div>
+        <div class="field"><label>Secreto</label><input id="sicr-secret" type="password" autocomplete="new-password" placeholder="No se muestra" /></div>
+        <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-save-sicr>${icon("check")} Guardar</button></div>
+      </div>
+      ${secretNote}
+    </div>
+  </div>`;
+}
+
+function viewActuarial() {
+  const classes = state.actuarial || [];
+  if (!classes.length) {
+    return `<div class="card"><div class="card-body"><div class="empty">${icon("activity")}<div>No hay clases de riesgo.</div></div></div></div>`;
+  }
+  const rows = classes
+    .map(
+      (item) => `<div class="row">
+        <div><div class="who">${escapeAttr(item.name)}</div><div class="meta">${escapeAttr(item.id)}</div></div>
+        <div class="push">
+          <input id="rate-${escapeAttr(item.id)}" inputmode="numeric" value="${item.rate}" />
+          <button class="btn btn-primary btn-sm" data-save-rate="${escapeAttr(item.id)}">${icon("check")} Guardar tasa</button>
+        </div>
+      </div>`,
+    )
+    .join("");
+  return `<div class="card">
+    <div class="card-head"><h3>Clases de riesgo</h3><span class="pill">Sin crédito</span></div>
+    <div class="card-body flush">
+      <p class="hint" style="padding:16px 20px 0">La prima de Frosting es trabajadores por esta tasa. Esta vista no es un curso.</p>
+      <div class="rowlist">${rows}</div>
+    </div>
+  </div>`;
 }
 
 function viewPayments() {
@@ -1063,6 +1350,119 @@ async function addWorker(companyId) {
   }
 }
 
+async function saveLogo(companyId) {
+  try {
+    await api(`/api/empresas/${encodeURIComponent(companyId)}/logo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ logo: document.getElementById(`logo-${companyId}`).value }),
+    });
+    await reloadEmpresas("Logo guardado en las tarjetas");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function saveCardOptions(key) {
+  const [companyId, cardId] = String(key || "").split(":");
+  const limitRaw = String((document.getElementById(`limit-${cardId}`) || {}).value || "").replace(/\D/g, "");
+  const categories = [...document.querySelectorAll(`[data-cat="${cardId}"]`)]
+    .filter((input) => input.checked)
+    .map((input) => input.value);
+  const period = (document.getElementById(`period-${cardId}`) || {}).value || "siempre";
+  try {
+    await api(`/api/empresas/${encodeURIComponent(companyId)}/tarjetas/${encodeURIComponent(cardId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        spendLimit: limitRaw ? Number(limitRaw) : null,
+        categories,
+        period,
+        periodFrom: period === "rango" ? (document.getElementById(`from-${cardId}`) || {}).value || null : null,
+        periodUntil: period === "rango" ? (document.getElementById(`until-${cardId}`) || {}).value || null : null,
+        blocked: Boolean((document.getElementById(`block-${cardId}`) || {}).checked),
+        alerts: Boolean((document.getElementById(`alerts-${cardId}`) || {}).checked),
+      }),
+    });
+    await reloadEmpresas("Opciones de la tarjeta guardadas");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function quoteFrosting(companyId) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company) return;
+  try {
+    const result = await api("/api/frosting", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        holderName: company.name,
+        email: company.card.email,
+        companyName: company.name,
+        workers: pesos(`frost-workers-${companyId}`),
+        riskClassId: document.getElementById(`frost-class-${companyId}`).value,
+        gateway: selectedGateway(),
+      }),
+    });
+    await reloadEmpresas(`Prima Frosting ${money(result.policy.premium)}`);
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function enrollStudent(courseId) {
+  try {
+    await api(`/api/clases/${encodeURIComponent(courseId)}/alumnos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: document.getElementById(`alumno-name-${courseId}`).value,
+        email: document.getElementById(`alumno-email-${courseId}`).value,
+      }),
+    });
+    toast("Alumno inscrito");
+    await refresh();
+    route();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function saveSicr() {
+  try {
+    const secret = document.getElementById("sicr-secret").value;
+    const body = { url: document.getElementById("sicr-url").value };
+    if (secret) body.secret = secret;
+    await api("/api/configuracion", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    toast("Configuración guardada");
+    await refresh();
+    route();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function saveRiskRate(classId) {
+  try {
+    await api("/api/actuarial", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ classId, rate: pesos(`rate-${classId}`) }),
+    });
+    toast("Tasa guardada");
+    await refresh();
+    route();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
 async function transferPrepaid(companyId) {
   try {
     await api(`/api/empresas/${encodeURIComponent(companyId)}/transferencias`, {
@@ -1142,6 +1542,29 @@ function wireView(r) {
     });
     document.querySelectorAll("[data-transfer]").forEach((btn) => {
       btn.onclick = () => transferPrepaid(btn.dataset.transfer);
+    });
+    document.querySelectorAll("[data-save-card]").forEach((btn) => {
+      btn.onclick = () => saveCardOptions(btn.dataset.saveCard);
+    });
+    document.querySelectorAll("[data-save-logo]").forEach((btn) => {
+      btn.onclick = () => saveLogo(btn.dataset.saveLogo);
+    });
+    document.querySelectorAll("[data-frosting]").forEach((btn) => {
+      btn.onclick = () => quoteFrosting(btn.dataset.frosting);
+    });
+  }
+  if (r === "clases") {
+    document.querySelectorAll("[data-enroll]").forEach((btn) => {
+      btn.onclick = () => enrollStudent(btn.dataset.enroll);
+    });
+  }
+  if (r === "configuracion") {
+    const save = document.querySelector("[data-save-sicr]");
+    if (save) save.onclick = () => saveSicr();
+  }
+  if (r === "actuarial") {
+    document.querySelectorAll("[data-save-rate]").forEach((btn) => {
+      btn.onclick = () => saveRiskRate(btn.dataset.saveRate);
     });
   }
   if (r === "design") {

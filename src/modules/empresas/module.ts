@@ -9,6 +9,30 @@ export interface CompanyActor {
   id: string;
   email: string;
   role: Role;
+  name?: string;
+}
+
+export const SPEND_CATEGORIES = ["alimentacion", "transporte", "combustible", "salud", "oficina", "otros"] as const;
+export type SpendCategory = (typeof SPEND_CATEGORIES)[number];
+export type UsagePeriod = "siempre" | "mensual" | "rango";
+
+export interface CardOptions {
+  spendLimit: number | null;
+  categories: SpendCategory[];
+  period: UsagePeriod;
+  periodFrom: string | null;
+  periodUntil: string | null;
+  blocked: boolean;
+  alerts: boolean;
+}
+
+export interface CardMovement {
+  id: string;
+  kind: "credit" | "debit";
+  amount: number;
+  displayAmount: string;
+  reference: string;
+  createdAt: string;
 }
 
 interface CompanyRecord {
@@ -17,8 +41,11 @@ interface CompanyRecord {
   ownerUserId: string;
   ownerEmail: string;
   color: string;
+  logo: string | null;
+  commune: string | null;
   last4: string;
   ledgerAccountId: string;
+  options: CardOptions;
   createdAt: string;
 }
 
@@ -29,6 +56,7 @@ interface WorkerRecord {
   email: string;
   last4: string;
   ledgerAccountId: string;
+  options: CardOptions;
   createdAt: string;
 }
 
@@ -48,17 +76,36 @@ export interface PrepaidCardView {
   name: string;
   email: string;
   last4: string;
+  /** Book balance on the local prepaid ledger. */
   balance: number;
   displayBalance: string;
+  /**
+   * Money Stripe has settled. A demo or internal abono never counts.
+   * Transfers stay on the local ledger and do not fund a Stripe Transfer.
+   */
+  available: number;
+  displayAvailable: string;
+  realFunds: boolean;
+  logo: string | null;
+  kind: "debito";
+  plastic: false;
+  options: CardOptions;
+  movements: CardMovement[];
+  receipts: CardMovement[];
 }
 
 export interface CompanyView {
   id: string;
   name: string;
   color: string;
+  logo: string | null;
+  commune: string | null;
   last4: string;
   balance: number;
   displayBalance: string;
+  available: number;
+  displayAvailable: string;
+  realFunds: boolean;
   canManage: boolean;
   canFund: boolean;
   ownWorkerId?: string;
@@ -67,11 +114,35 @@ export interface CompanyView {
   transfers: Array<TransferRecord & { displayAmount: string }>;
 }
 
+export interface HomeView {
+  role: Role;
+  name: string;
+  email: string;
+  commune: string | null;
+  companyName: string | null;
+  card: PrepaidCardView | null;
+  coursesPath: "#/clases";
+  configurationPath: "#/configuracion" | null;
+}
+
+export interface CardOptionsInput {
+  spendLimit?: number | null;
+  categories?: string[];
+  period?: string;
+  periodFrom?: string | null;
+  periodUntil?: string | null;
+  blocked?: boolean;
+  alerts?: boolean;
+}
+
 const COLOR = /^#[0-9a-fA-F]{6}$/;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const PERIODS = new Set<UsagePeriod>(["siempre", "mensual", "rango"]);
 
 /**
- * Company prepaid cards and worker cards.
- * Balances stay on their own ledger accounts. Nothing is sent to Stripe.
+ * Company and worker virtual debit cards.
+ * Balances stay on their own ledger accounts. Nothing is sent to Stripe Issuing or Transfer.
+ * Available funds are only money Stripe has settled, so a demo abono stays at zero there.
  */
 export class EmpresasModule {
   readonly id = "empresas";
@@ -97,7 +168,61 @@ export class EmpresasModule {
     };
   }
 
-  create(actor: CompanyActor, input: { name: string; color: string }): CompanyView {
+  home(actor: CompanyActor, communeFallback: string | null): HomeView {
+    const base = {
+      role: actor.role,
+      email: actor.email,
+      coursesPath: "#/clases" as const,
+      configurationPath: actor.role === "operacion" ? ("#/configuracion" as const) : null,
+    };
+    if (actor.role === "operacion") {
+      return { ...base, name: actor.name || "Operación", commune: null, companyName: null, card: null };
+    }
+    if (actor.role === "titular") {
+      const worker = [...this.workers.values()].find((item) => this.isWorker(actor, item));
+      const company = worker ? this.companies.get(worker.companyId) : undefined;
+      if (!worker || !company) {
+        return {
+          ...base,
+          name: actor.name || actor.email,
+          commune: communeFallback,
+          companyName: null,
+          card: null,
+        };
+      }
+      const view = this.present(actor, company);
+      const card = view.workers.find((item) => item.id === worker.id) ?? null;
+      return {
+        ...base,
+        name: worker.name,
+        email: worker.email,
+        commune: company.commune ?? communeFallback,
+        companyName: company.name,
+        card,
+      };
+    }
+    const owned = [...this.companies.values()].find((company) => company.ownerUserId === actor.id);
+    if (!owned) {
+      return {
+        ...base,
+        name: actor.name || actor.email,
+        commune: communeFallback,
+        companyName: null,
+        card: null,
+      };
+    }
+    const view = this.present(actor, owned);
+    return {
+      ...base,
+      name: owned.name,
+      email: owned.ownerEmail,
+      commune: owned.commune ?? communeFallback,
+      companyName: owned.name,
+      card: view.card,
+    };
+  }
+
+  create(actor: CompanyActor, input: { name: string; color: string; commune?: string; logo?: string }): CompanyView {
     if (actor.role === "titular") throw new PlatformError("Un trabajador no abre la empresa", 403);
     const name = input.name.trim();
     const color = input.color.trim();
@@ -114,12 +239,44 @@ export class EmpresasModule {
       ownerUserId: actor.id,
       ownerEmail: actor.email,
       color,
+      logo: input.logo ? normalizeLogo(input.logo) : null,
+      commune: cleanCommune(input.commune),
       last4: fourDigits(),
       ledgerAccountId: ledger.id,
+      options: defaultOptions(),
       createdAt: new Date().toISOString(),
     };
     this.companies.set(company.id, company);
     this.store.put("companies", company.id, company);
+    return this.present(actor, company);
+  }
+
+  setLogo(actor: CompanyActor, companyId: string, logo: string): CompanyView {
+    const company = this.require(companyId);
+    if (!this.canManage(actor, company)) throw new PlatformError("Esta empresa no está en tu rol", 403);
+    company.logo = normalizeLogo(logo);
+    this.companies.set(company.id, company);
+    this.store.put("companies", company.id, company);
+    return this.present(actor, company);
+  }
+
+  updateCard(actor: CompanyActor, companyId: string, cardId: string, input: CardOptionsInput): CompanyView {
+    const company = this.require(companyId);
+    if (!this.canSee(actor, company)) throw new PlatformError("Esta empresa no está en tu rol", 403);
+    const worker = this.workers.get(cardId);
+    const companyCard = cardId === company.id;
+    if (!companyCard && (!worker || worker.companyId !== company.id)) throw new PlatformError("Tarjeta desconocida", 404);
+    if (companyCard && !this.canManage(actor, company)) {
+      throw new PlatformError("Solo la empresa gestiona su tarjeta", 403);
+    }
+    if (!companyCard && worker && !this.canManage(actor, company) && !this.isWorker(actor, worker)) {
+      throw new PlatformError("Solo puedes usar tu tarjeta", 403);
+    }
+    const next = mergeOptions(cardOptions(companyCard ? company.options : worker?.options), input);
+    if (companyCard) company.options = next;
+    else if (worker) worker.options = next;
+    if (companyCard) this.store.put("companies", company.id, company);
+    else if (worker) this.store.put("company_workers", worker.id, worker);
     return this.present(actor, company);
   }
 
@@ -143,6 +300,7 @@ export class EmpresasModule {
       email,
       last4: fourDigits(),
       ledgerAccountId: ledger.id,
+      options: defaultOptions(),
       createdAt: new Date().toISOString(),
     };
     this.workers.set(worker.id, worker);
@@ -181,6 +339,12 @@ export class EmpresasModule {
     if (!toWorker && !this.canManage(actor, company) && !this.isWorker(actor, worker)) {
       throw new PlatformError("Solo puedes transferir tu propio prepago", 403);
     }
+    if (toWorker && cardOptions(company.options).blocked) {
+      throw new PlatformError("La tarjeta de la empresa está bloqueada", 422);
+    }
+    if (!toWorker && cardOptions(worker.options).blocked) {
+      throw new PlatformError("La tarjeta del trabajador está bloqueada", 422);
+    }
     const source = toWorker ? company.ledgerAccountId : worker.ledgerAccountId;
     const target = toWorker ? worker.ledgerAccountId : company.ledgerAccountId;
     if ((this.payments.ledger.getAccount(source)?.balance ?? 0) < input.amount) {
@@ -208,23 +372,48 @@ export class EmpresasModule {
     const workers = [...this.workers.values()].filter((worker) => worker.companyId === company.id);
     const own = workers.find((worker) => this.isWorker(actor, worker));
     const visibleWorkers = manage ? workers : workers.filter((worker) => worker.id === own?.id);
-    const card = this.cardView(company.id, company.name, company.ownerEmail, company.last4, company.ledgerAccountId, currency);
+    const logo = company.logo ?? null;
+    const card = this.cardView(
+      company.id,
+      company.name,
+      company.ownerEmail,
+      company.last4,
+      company.ledgerAccountId,
+      currency,
+      logo,
+      company.options,
+      manage,
+    );
     const hideWorkerBalance = actor.role === "comercio";
     return {
       id: company.id,
       name: company.name,
       color: company.color,
+      logo,
+      commune: company.commune ?? null,
       last4: company.last4,
       balance: manage ? card.balance : 0,
       displayBalance: manage ? card.displayBalance : "—",
+      available: manage ? card.available : 0,
+      displayAvailable: manage ? card.displayAvailable : "—",
+      realFunds: manage ? card.realFunds : false,
       canManage: manage,
       canFund: actor.role === "operacion",
       ownWorkerId: own?.id,
-      card: manage ? card : { ...card, balance: 0, displayBalance: "—" },
+      card,
       workers: visibleWorkers.map((worker) => {
-        const view = this.cardView(worker.id, worker.name, worker.email, worker.last4, worker.ledgerAccountId, currency);
-        if (!hideWorkerBalance) return view;
-        return { ...view, balance: 0, displayBalance: "—" };
+        const visible = !hideWorkerBalance;
+        return this.cardView(
+          worker.id,
+          worker.name,
+          worker.email,
+          worker.last4,
+          worker.ledgerAccountId,
+          currency,
+          logo,
+          worker.options,
+          visible,
+        );
       }),
       transfers: this.transfers
         .filter((transfer) => transfer.companyId === company.id)
@@ -235,9 +424,52 @@ export class EmpresasModule {
     };
   }
 
-  private cardView(id: string, name: string, email: string, last4: string, ledgerAccountId: string, currency: string): PrepaidCardView {
+  private cardView(
+    id: string,
+    name: string,
+    email: string,
+    last4: string,
+    ledgerAccountId: string,
+    currency: string,
+    logo: string | null,
+    options: CardOptions | undefined,
+    showMoney: boolean,
+  ): PrepaidCardView {
     const balance = this.payments.ledger.getAccount(ledgerAccountId)?.balance ?? 0;
-    return { id, name, email, last4, balance, displayBalance: formatAmount(balance, currency) };
+    const available = 0;
+    const movements = showMoney ? this.movements(ledgerAccountId, currency) : [];
+    return {
+      id,
+      name,
+      email,
+      last4,
+      balance: showMoney ? balance : 0,
+      displayBalance: showMoney ? formatAmount(balance, currency) : "—",
+      available: showMoney ? available : 0,
+      displayAvailable: showMoney ? formatAmount(available, currency) : "—",
+      realFunds: false,
+      logo,
+      kind: "debito",
+      plastic: false,
+      options: cardOptions(options),
+      movements,
+      receipts: movements.map((item) => ({ ...item })),
+    };
+  }
+
+  private movements(ledgerAccountId: string, currency: string): CardMovement[] {
+    return this.payments.ledger
+      .entriesFor(ledgerAccountId)
+      .slice(-12)
+      .reverse()
+      .map((entry) => ({
+        id: entry.id,
+        kind: entry.kind,
+        amount: entry.amount,
+        displayAmount: formatAmount(entry.amount, currency),
+        reference: entry.reference,
+        createdAt: entry.createdAt,
+      }));
   }
 
   private canManage(actor: CompanyActor, company: CompanyRecord): boolean {
@@ -267,6 +499,104 @@ export class EmpresasModule {
     this.transfers.push(transfer);
     this.store.put("company_transfers", transfer.id, transfer);
   }
+}
+
+function defaultOptions(): CardOptions {
+  return {
+    spendLimit: null,
+    categories: [],
+    period: "siempre",
+    periodFrom: null,
+    periodUntil: null,
+    blocked: false,
+    alerts: false,
+  };
+}
+
+function cardOptions(value: Partial<CardOptions> | undefined): CardOptions {
+  const base = defaultOptions();
+  if (!value) return base;
+  return {
+    spendLimit: value.spendLimit ?? base.spendLimit,
+    categories: Array.isArray(value.categories) ? value.categories.filter(isCategory) : base.categories,
+    period: value.period && PERIODS.has(value.period) ? value.period : base.period,
+    periodFrom: value.periodFrom ?? base.periodFrom,
+    periodUntil: value.periodUntil ?? base.periodUntil,
+    blocked: value.blocked ?? base.blocked,
+    alerts: value.alerts ?? base.alerts,
+  };
+}
+
+function mergeOptions(current: CardOptions, input: CardOptionsInput): CardOptions {
+  const next: CardOptions = { ...current, categories: [...current.categories] };
+  if (input.spendLimit !== undefined) {
+    if (input.spendLimit === null) next.spendLimit = null;
+    else if (!Number.isInteger(input.spendLimit) || input.spendLimit <= 0) {
+      throw new PlatformError("El límite de gasto tiene que ser un monto positivo", 400);
+    } else next.spendLimit = input.spendLimit;
+  }
+  if (input.categories !== undefined) {
+    if (!Array.isArray(input.categories) || input.categories.some((item) => !isCategory(item))) {
+      throw new PlatformError("Hay una categoría de gasto desconocida", 400);
+    }
+    next.categories = input.categories.filter(isCategory);
+  }
+  if (input.period !== undefined) {
+    if (!isPeriod(input.period)) throw new PlatformError("El período de uso no es válido", 400);
+    next.period = input.period;
+  }
+  if (input.periodFrom !== undefined) next.periodFrom = input.periodFrom;
+  if (input.periodUntil !== undefined) next.periodUntil = input.periodUntil;
+  if (input.blocked !== undefined) {
+    if (typeof input.blocked !== "boolean") throw new PlatformError("El bloqueo tiene que ser sí o no", 400);
+    next.blocked = input.blocked;
+  }
+  if (input.alerts !== undefined) {
+    if (typeof input.alerts !== "boolean") throw new PlatformError("Las alertas tienen que ser sí o no", 400);
+    next.alerts = input.alerts;
+  }
+  if (next.period === "rango") {
+    if (!next.periodFrom || !next.periodUntil || !DAY.test(next.periodFrom) || !DAY.test(next.periodUntil)) {
+      throw new PlatformError("El período necesita una fecha de inicio y de término", 400);
+    }
+    if (next.periodFrom > next.periodUntil) throw new PlatformError("El período termina antes de empezar", 400);
+  } else {
+    next.periodFrom = null;
+    next.periodUntil = null;
+  }
+  return next;
+}
+
+function isCategory(value: string): value is SpendCategory {
+  return (SPEND_CATEGORIES as readonly string[]).includes(value);
+}
+
+function isPeriod(value: string): value is UsagePeriod {
+  return PERIODS.has(value as UsagePeriod);
+}
+
+function cleanCommune(value: string | undefined): string | null {
+  const commune = value?.trim() ?? "";
+  if (!commune) return null;
+  if (commune.length > 80) throw new PlatformError("La comuna es demasiado larga", 400);
+  return commune;
+}
+
+export function normalizeLogo(logo: string): string | null {
+  const value = logo.trim();
+  if (!value) return null;
+  if (value.length > 120_000) throw new PlatformError("El logo es demasiado grande", 400);
+  if (/^data:image\/(png|jpeg|webp);base64,[a-z0-9+/=\s]+$/i.test(value)) return value;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new PlatformError("El logo tiene que ser una imagen https o un archivo PNG, JPEG o WebP", 400);
+  }
+  if (url.protocol !== "https:" || url.username || url.password) {
+    throw new PlatformError("El logo tiene que ser una imagen https o un archivo PNG, JPEG o WebP", 400);
+  }
+  return value;
 }
 
 function fourDigits(): string {

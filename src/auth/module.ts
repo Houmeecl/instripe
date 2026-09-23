@@ -16,6 +16,9 @@ export const OPTIONS = [
   "design",
   "apps",
   "payments",
+  "clases",
+  "configuracion",
+  "actuarial",
 ] as const;
 
 export type Option = (typeof OPTIONS)[number];
@@ -23,8 +26,8 @@ export type Role = "operacion" | "comercio" | "titular";
 
 const ROLE_OPTIONS: Record<Role, readonly Option[]> = {
   operacion: OPTIONS,
-  comercio: ["overview", "accounts", "cobros", "connect", "empresas"],
-  titular: ["overview", "plans", "policies", "claims", "cards", "empresas"],
+  comercio: ["overview", "accounts", "cobros", "connect", "empresas", "clases"],
+  titular: ["overview", "plans", "policies", "claims", "cards", "empresas", "clases"],
 };
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -89,6 +92,11 @@ export function requiredOption(pathname: string): Option | "any" | "deny" {
     [/^\/api\/claims$/, "claims"],
     [/^\/api\/connect(?:\/.*)?$/, "connect"],
     [/^\/api\/empresas(?:\/.*)?$/, "empresas"],
+    [/^\/api\/inicio$/, "overview"],
+    [/^\/api\/clases(?:\/.*)?$/, "clases"],
+    [/^\/api\/configuracion$/, "configuracion"],
+    [/^\/api\/actuarial$/, "actuarial"],
+    [/^\/api\/frosting$/, "empresas"],
     [/^\/api\/treasury(?:\/.*)?$/, "treasury"],
     [/^\/api\/tarjetas$/, "cards"],
     [/^\/api\/diseno$/, "design"],
