@@ -597,7 +597,10 @@ describe("instripe BaaS platform", () => {
     });
     expect(moved.status).toBe(200);
     expect(moved.body.company.balance).toBe(30_000);
-    expect(moved.body.company.workers[0].balance).toBe(20_000);
+    expect(moved.body.company.canManage).toBe(true);
+    expect(moved.body.company.workers[0].displayBalance).toBe("—");
+    expect(moved.body.company.workers[0].balance).toBe(0);
+    expect((await operacion.get("/api/empresas")).body.companies[0].workers[0].balance).toBe(20_000);
 
     const own = await titular.get("/api/empresas");
     expect(own.status).toBe(200);
@@ -631,5 +634,10 @@ describe("instripe BaaS platform", () => {
     })).status).toBe(403);
     expect((await operacion.get("/api/overview")).body.float.balance).toBe(0);
     expect((await operacion.get("/api/empresas")).body.companies[0].balance).toBe(35_000);
+    expect((await operacion.get("/api/empresas")).body.companies[0].workers[0].balance).toBe(15_000);
+    const companyView = await comercio.get("/api/empresas");
+    expect(companyView.body.companies[0].balance).toBe(35_000);
+    expect(companyView.body.companies[0].workers[0].displayBalance).toBe("—");
+    expect(companyView.body.companies[0].workers[0].balance).toBe(0);
   });
 });

@@ -892,6 +892,7 @@ function companyBlock(company) {
       <div class="prepaid-grid">${prepaidPlastic(company.card, company.color, "Empresa")}</div>
       ${fund}
       <h2 class="section-title">Trabajadores</h2>
+      ${company.canManage && company.workers.some((worker) => worker.displayBalance === "—") ? `<p class="hint">El saldo de cada trabajador lo ve solo esa persona. Puedes transferir igual.</p>` : ""}
       ${workers}
       ${add}
       <h2 class="section-title">Transferir</h2>

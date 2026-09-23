@@ -209,6 +209,7 @@ export class EmpresasModule {
     const own = workers.find((worker) => this.isWorker(actor, worker));
     const visibleWorkers = manage ? workers : workers.filter((worker) => worker.id === own?.id);
     const card = this.cardView(company.id, company.name, company.ownerEmail, company.last4, company.ledgerAccountId, currency);
+    const hideWorkerBalance = actor.role === "comercio";
     return {
       id: company.id,
       name: company.name,
@@ -220,9 +221,11 @@ export class EmpresasModule {
       canFund: actor.role === "operacion",
       ownWorkerId: own?.id,
       card: manage ? card : { ...card, balance: 0, displayBalance: "—" },
-      workers: visibleWorkers.map((worker) =>
-        this.cardView(worker.id, worker.name, worker.email, worker.last4, worker.ledgerAccountId, currency),
-      ),
+      workers: visibleWorkers.map((worker) => {
+        const view = this.cardView(worker.id, worker.name, worker.email, worker.last4, worker.ledgerAccountId, currency);
+        if (!hideWorkerBalance) return view;
+        return { ...view, balance: 0, displayBalance: "—" };
+      }),
       transfers: this.transfers
         .filter((transfer) => transfer.companyId === company.id)
         .filter((transfer) => manage || transfer.workerId === own?.id)
