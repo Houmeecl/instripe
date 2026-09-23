@@ -201,22 +201,29 @@ export interface GiftView {
 }
 
 /**
- * Global66's public docs list GET /b2b/movements/{accountId} and
- * POST /b2b/transactions/payments. They do not document opening an account.
- * https://documents-b2b.global66.com/available-apis/movements/
+ * Chile can require a local account, and that account only sends money out.
+ * CLP is not a virtual-account rail here, and this repo has no outbound CLP provider,
+ * so the request stays pending. No bank number, card, balance, or provider id is invented.
  */
-export const GLOBAL66_DOCS_NOTICE =
-  "La documentación pública de Global66 lista movimientos y pagos, no la apertura de cuentas. La solicitud queda pendiente y no tiene número de cuenta.";
+export const CHILE_TRANSFER_LABEL = "Cuenta en Chile solo para transferir";
 
-export type GlobalAccountKind = "cuenta_virtual" | "cuenta_puente";
+export const CHILE_TRANSFER_PURPOSE =
+  "Solo para transferir desde Chile. No recibe dinero, no emite tarjeta, no convierte a cripto y no abona a Stripe.";
+
+export const CHILE_TRANSFER_NOTICE =
+  "La cuenta en Chile queda pendiente. No hay un proveedor para transferir CLP hacia afuera, así que no tiene número de cuenta, no es tarjeta y no deposita en Stripe.";
+
+export type GlobalAccountKind = "cuenta_chile";
 
 export interface GlobalAccountView {
   id: string;
   kind: GlobalAccountKind;
   label: string;
   purpose: string;
+  /** Outbound only. This account does not receive CLP. */
+  direction: "salida";
   status: "pending";
-  /** Absent on purpose: Global66 did not return an account id. */
+  /** Absent on purpose: no provider returned an id. */
   externalId: null;
   createdAt: string;
 }
@@ -237,16 +244,10 @@ interface GlobalAccountRecord {
   createdAt: string;
 }
 
-const GLOBAL_ACCOUNT_COPY: Record<GlobalAccountKind, { label: string; purpose: string }> = {
-  cuenta_virtual: {
-    label: "Cuenta virtual",
-    purpose: "Cuenta de la propia empresa.",
-  },
-  cuenta_puente: {
-    label: "Cuenta puente",
-    purpose: "Recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.",
-  },
-};
+const CHILE_TRANSFER_COPY = {
+  label: CHILE_TRANSFER_LABEL,
+  purpose: CHILE_TRANSFER_PURPOSE,
+} as const;
 
 export interface CompanyMemberView {
   id: string;
@@ -642,22 +643,18 @@ export class EmpresasModule {
   }
 
   /**
-   * Local request for the company's cuenta virtual and cuenta puente.
-   * Global66 does not document an account-opening call, so nothing is sent
-   * and no account number is invented. Debit balances stay untouched.
+   * Local pending request for a Chilean account that can only transfer out.
+   * No outbound CLP provider is wired, so nothing is sent to Bridge, Global66,
+   * Stripe, or a bank. Debit cards stay on their own ledger.
    */
   requestGlobalAccounts(actor: CompanyActor, companyId: string): { company: CompanyView; created: boolean } {
     const company = this.require(companyId);
-    if (actor.role !== "operacion") throw new PlatformError("Solo operación solicita la cuenta virtual y la cuenta puente", 403);
-    const existing = this.globalAccounts.filter((account) => account.companyId === company.id);
-    const createdAt = new Date().toISOString();
-    let created = false;
-    for (const kind of ["cuenta_virtual", "cuenta_puente"] as const) {
-      if (existing.some((account) => account.kind === kind)) continue;
-      this.rememberGlobal(pendingGlobalAccount(company.id, kind, createdAt));
-      created = true;
+    if (actor.role !== "operacion") throw new PlatformError("Solo operación solicita la cuenta en Chile", 403);
+    const existing = this.globalAccounts.some((account) => account.companyId === company.id && account.kind === "cuenta_chile");
+    if (!existing) {
+      this.rememberGlobal(pendingGlobalAccount(company.id, new Date().toISOString()));
     }
-    return { company: this.present(actor, company), created };
+    return { company: this.present(actor, company), created: !existing };
   }
 
   private present(actor: CompanyActor, company: CompanyRecord): CompanyView {
@@ -722,7 +719,7 @@ export class EmpresasModule {
     };
     if (actor.role === "operacion") {
       view.globalAccounts = {
-        notice: GLOBAL66_DOCS_NOTICE,
+        notice: CHILE_TRANSFER_NOTICE,
         accounts: this.globalAccountsOf(company.id),
       };
     }
@@ -822,15 +819,14 @@ export class EmpresasModule {
   }
 
   private globalAccountsOf(companyId: string): GlobalAccountView[] {
-    const order: Record<GlobalAccountKind, number> = { cuenta_virtual: 0, cuenta_puente: 1 };
     return this.globalAccounts
-      .filter((account) => account.companyId === companyId)
-      .sort((left, right) => order[left.kind] - order[right.kind])
+      .filter((account) => account.companyId === companyId && account.kind === "cuenta_chile")
       .map((account) => ({
         id: account.id,
-        kind: account.kind,
-        label: account.label,
-        purpose: account.purpose,
+        kind: "cuenta_chile",
+        label: CHILE_TRANSFER_LABEL,
+        purpose: CHILE_TRANSFER_PURPOSE,
+        direction: "salida",
         status: "pending",
         externalId: null,
         createdAt: account.createdAt,
@@ -945,14 +941,13 @@ function presentGift(gift: GiftRecord, access: { reveal: boolean; canActivate: b
   };
 }
 
-function pendingGlobalAccount(companyId: string, kind: GlobalAccountKind, createdAt: string): GlobalAccountRecord {
-  const copy = GLOBAL_ACCOUNT_COPY[kind];
+function pendingGlobalAccount(companyId: string, createdAt: string): GlobalAccountRecord {
   return {
     id: `gac_${randomUUID().slice(0, 8)}`,
     companyId,
-    kind,
-    label: copy.label,
-    purpose: copy.purpose,
+    kind: "cuenta_chile",
+    label: CHILE_TRANSFER_COPY.label,
+    purpose: CHILE_TRANSFER_COPY.purpose,
     status: "pending",
     externalId: null,
     createdAt,
