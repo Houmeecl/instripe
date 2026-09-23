@@ -201,22 +201,31 @@ export interface GiftView {
 }
 
 /**
- * Global66's public docs list GET /b2b/movements/{accountId} and
- * POST /b2b/transactions/payments. They do not document opening an account.
- * https://documents-b2b.global66.com/available-apis/movements/
+ * Prometeo Borderless Banking's public page describes international accounts,
+ * pay-ins and pay-outs, and sending funds. It does not publish an API to open
+ * a Chilean account or to send a transfer, and the docs site is locked.
+ * https://prometeoapi.com/borderless-banking
+ * The local record stays pending. No Prometeo customer, bank number, or provider id.
  */
-export const GLOBAL66_DOCS_NOTICE =
-  "La documentación pública de Global66 lista movimientos y pagos, no la apertura de cuentas. La solicitud queda pendiente y no tiene número de cuenta.";
+export const PROMETEO_PASARELA_LABEL = "Pasarela (Prometeo) solo para transferir";
 
-export type GlobalAccountKind = "cuenta_virtual" | "cuenta_puente";
+export const PROMETEO_PASARELA_PURPOSE =
+  "Solo para transferir desde Chile. No recibe dinero, no es tarjeta y no abona a Stripe.";
+
+export const PROMETEO_PASARELA_NOTICE =
+  "La pasarela (Prometeo) queda pendiente. La página pública describe “abrir cuentas bancarias internacionales”, “automatizar pay-ins y pay-outs” y “envías fondos a proveedores o colaboradores”, y muestra a Chile en la cobertura. No publica un API para abrir una cuenta chilena ni para enviar una transferencia: no hay cliente de Prometeo, no hay número de cuenta y no deposita en Stripe.";
+
+export type GlobalAccountKind = "cuenta_chile";
 
 export interface GlobalAccountView {
   id: string;
   kind: GlobalAccountKind;
   label: string;
   purpose: string;
+  /** Outbound only. This pasarela does not receive CLP. */
+  direction: "salida";
   status: "pending";
-  /** Absent on purpose: Global66 did not return an account id. */
+  /** Absent on purpose: Prometeo did not return an id. */
   externalId: null;
   createdAt: string;
 }
@@ -237,16 +246,10 @@ interface GlobalAccountRecord {
   createdAt: string;
 }
 
-const GLOBAL_ACCOUNT_COPY: Record<GlobalAccountKind, { label: string; purpose: string }> = {
-  cuenta_virtual: {
-    label: "Cuenta virtual",
-    purpose: "Cuenta de la propia empresa.",
-  },
-  cuenta_puente: {
-    label: "Cuenta puente",
-    purpose: "Recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.",
-  },
-};
+const PROMETEO_PASARELA_COPY = {
+  label: PROMETEO_PASARELA_LABEL,
+  purpose: PROMETEO_PASARELA_PURPOSE,
+} as const;
 
 export interface CompanyMemberView {
   id: string;
@@ -642,22 +645,19 @@ export class EmpresasModule {
   }
 
   /**
-   * Local request for the company's cuenta virtual and cuenta puente.
-   * Global66 does not document an account-opening call, so nothing is sent
-   * and no account number is invented. Debit balances stay untouched.
+   * Local pending request for the Chilean Prometeo pasarela, transfer-out only.
+   * The public page does not let this app open a Chilean account or send a transfer,
+   * so nothing is sent to Prometeo, Bridge, Global66, Stripe, or a bank.
+   * Debit cards stay on their own ledger.
    */
   requestGlobalAccounts(actor: CompanyActor, companyId: string): { company: CompanyView; created: boolean } {
     const company = this.require(companyId);
-    if (actor.role !== "operacion") throw new PlatformError("Solo operación solicita la cuenta virtual y la cuenta puente", 403);
-    const existing = this.globalAccounts.filter((account) => account.companyId === company.id);
-    const createdAt = new Date().toISOString();
-    let created = false;
-    for (const kind of ["cuenta_virtual", "cuenta_puente"] as const) {
-      if (existing.some((account) => account.kind === kind)) continue;
-      this.rememberGlobal(pendingGlobalAccount(company.id, kind, createdAt));
-      created = true;
+    if (actor.role !== "operacion") throw new PlatformError("Solo operación solicita la pasarela", 403);
+    const existing = this.globalAccounts.some((account) => account.companyId === company.id && account.kind === "cuenta_chile");
+    if (!existing) {
+      this.rememberGlobal(pendingGlobalAccount(company.id, new Date().toISOString()));
     }
-    return { company: this.present(actor, company), created };
+    return { company: this.present(actor, company), created: !existing };
   }
 
   private present(actor: CompanyActor, company: CompanyRecord): CompanyView {
@@ -722,7 +722,7 @@ export class EmpresasModule {
     };
     if (actor.role === "operacion") {
       view.globalAccounts = {
-        notice: GLOBAL66_DOCS_NOTICE,
+        notice: PROMETEO_PASARELA_NOTICE,
         accounts: this.globalAccountsOf(company.id),
       };
     }
@@ -822,15 +822,14 @@ export class EmpresasModule {
   }
 
   private globalAccountsOf(companyId: string): GlobalAccountView[] {
-    const order: Record<GlobalAccountKind, number> = { cuenta_virtual: 0, cuenta_puente: 1 };
     return this.globalAccounts
-      .filter((account) => account.companyId === companyId)
-      .sort((left, right) => order[left.kind] - order[right.kind])
+      .filter((account) => account.companyId === companyId && account.kind === "cuenta_chile")
       .map((account) => ({
         id: account.id,
-        kind: account.kind,
-        label: account.label,
-        purpose: account.purpose,
+        kind: "cuenta_chile",
+        label: PROMETEO_PASARELA_LABEL,
+        purpose: PROMETEO_PASARELA_PURPOSE,
+        direction: "salida",
         status: "pending",
         externalId: null,
         createdAt: account.createdAt,
@@ -945,14 +944,13 @@ function presentGift(gift: GiftRecord, access: { reveal: boolean; canActivate: b
   };
 }
 
-function pendingGlobalAccount(companyId: string, kind: GlobalAccountKind, createdAt: string): GlobalAccountRecord {
-  const copy = GLOBAL_ACCOUNT_COPY[kind];
+function pendingGlobalAccount(companyId: string, createdAt: string): GlobalAccountRecord {
   return {
     id: `gac_${randomUUID().slice(0, 8)}`,
     companyId,
-    kind,
-    label: copy.label,
-    purpose: copy.purpose,
+    kind: "cuenta_chile",
+    label: PROMETEO_PASARELA_COPY.label,
+    purpose: PROMETEO_PASARELA_COPY.purpose,
     status: "pending",
     externalId: null,
     createdAt,
