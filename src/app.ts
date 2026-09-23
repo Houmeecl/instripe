@@ -3,9 +3,12 @@ import type Stripe from "stripe";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { requiredOption, type SessionUser } from "./auth/module.js";
-import { loadConfig, isStripeConfigured, isChileConfigured, type AppConfig, type GatewayName } from "./config.js";
+import { loadConfig, isStripeConfigured, isChileConfigured, isMailConfigured, type AppConfig, type GatewayName } from "./config.js";
+import { listInbox, readLetter, sendLetter } from "./mail/box.js";
 import { createStripe } from "./stripe/client.js";
 import { formatAmount } from "./money.js";
+import type { GiftActivationStripe, GiftStripe } from "./modules/regalos/issue.js";
+import { planDisplayRate } from "./modules/seguros/catalog.js";
 import { Platform, PlatformError } from "./platform.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -177,7 +180,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       currency: config.currency,
       plans: platform.plans().map((plan) => ({
         ...plan,
-        displayRate: `${(plan.rateBps / 100).toFixed(2).replace(".", ",")}%`,
+        displayRate: planDisplayRate(plan),
       })),
     });
   });
@@ -230,6 +233,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     if (options.has("design")) body.design = platform.diseno.current();
     if (options.has("apps")) body.app = platform.apps.current();
     if (options.has("empresas")) body.empresas = platform.empresas.list(companyActor(res));
+    body.inicio = platform.inicio(companyActor(res));
     res.json(body);
   });
 
@@ -398,6 +402,94 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
   });
 
+  app.get("/api/inicio", (_req: Request, res: Response) => {
+    res.json(platform.inicio(companyActor(res)));
+  });
+
+  app.get("/api/clases", (_req: Request, res: Response) => {
+    res.json(platform.laboral.courses({ companyId: companyActor(res).companyId }));
+  });
+
+  app.post("/api/clases/:id/alumnos", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    const user = res.locals.user as SessionUser;
+    try {
+      const course = platform.laboral.enroll(String(req.params.id), {
+        name: String(body.name || user.name),
+        email: String(body.email || user.email),
+      }, { companyId: user.companyId });
+      res.status(201).json({ course });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/configuracion", (_req: Request, res: Response) => {
+    try {
+      res.json(platform.laboral.configuration(companyActor(res).role));
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/configuracion", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const saved = platform.laboral.saveConfiguration(companyActor(res).role, {
+        url: String(body.url ?? ""),
+        secret: body.secret === undefined ? undefined : String(body.secret),
+      });
+      res.status(200).json(saved);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/actuarial", (_req: Request, res: Response) => {
+    res.json({ classes: platform.seguros.riskClasses(), opensCredit: false });
+  });
+
+  app.post("/api/actuarial", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const classes = platform.seguros.setRiskRate(companyActor(res).role, String(body.classId ?? ""), Number(body.rate));
+      res.status(200).json({ classes, opensCredit: false });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/frosting", (_req: Request, res: Response) => {
+    res.json({
+      planId: "frosting",
+      opensCredit: false,
+      pricing: "workers",
+      classes: platform.seguros.riskClasses(),
+    });
+  });
+
+  app.post("/api/frosting", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    if (!body.holderName || !body.email || !body.companyName || body.workers === undefined || !body.riskClassId) {
+      res.status(400).json({ error: "holderName, email, companyName, workers y riskClassId son requeridos" });
+      return;
+    }
+    try {
+      const result = await platform.subscribeFrosting({
+        holderName: String(body.holderName),
+        email: String(body.email),
+        companyName: String(body.companyName),
+        workers: Number(body.workers),
+        riskClassId: String(body.riskClassId),
+        gateway: asGateway(body.gateway, config.defaultGateway),
+        actorRole: companyActor(res).role,
+      });
+      res.status(201).json(withPublishableKey(result, config));
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
   app.get("/api/empresas", (_req: Request, res: Response) => {
     res.json(platform.empresas.list(companyActor(res)));
   });
@@ -405,11 +497,49 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   app.post("/api/empresas", (req: Request, res: Response) => {
     const body = req.body ?? {};
     try {
+      const ownerEmail = String(body.ownerEmail ?? "").trim();
+      let owner: { id: string; email: string; name: string } | undefined;
+      if (ownerEmail) {
+        const found = platform.auth.findLogin(ownerEmail);
+        if (!found || found.role !== "comercio" || found.companyId) {
+          throw new PlatformError("El titular de la empresa tiene que ser un comercio sin otra empresa", 400);
+        }
+        owner = { id: found.id, email: found.email, name: found.name };
+      }
       const company = platform.empresas.create(companyActor(res), {
         name: String(body.name ?? ""),
         color: String(body.color ?? ""),
+        owner,
       });
       res.status(201).json({ company });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/empresas/:id/logo", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const company = platform.empresas.setLogo(companyActor(res), String(req.params.id), String(body.logo ?? ""));
+      res.status(200).json({ company });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/empresas/:id/tarjetas/:cardId", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const company = platform.empresas.updateCard(companyActor(res), String(req.params.id), String(req.params.cardId), {
+        spendLimit: body.spendLimit === undefined ? undefined : body.spendLimit === null ? null : Number(body.spendLimit),
+        categories: body.categories === undefined ? undefined : Array.isArray(body.categories) ? body.categories.map(String) : [String(body.categories)],
+        period: body.period === undefined ? undefined : String(body.period),
+        periodFrom: body.periodFrom === undefined ? undefined : body.periodFrom === null ? null : String(body.periodFrom),
+        periodUntil: body.periodUntil === undefined ? undefined : body.periodUntil === null ? null : String(body.periodUntil),
+        blocked: body.blocked === undefined ? undefined : body.blocked === true,
+        alerts: body.alerts === undefined ? undefined : body.alerts === true,
+      });
+      res.status(200).json({ company });
     } catch (error) {
       handleError(error, res);
     }
@@ -428,6 +558,67 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
   });
 
+  app.post("/api/empresas/:id/regalos", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    if (body.amount !== undefined || body.currency !== undefined) {
+      res.status(400).json({ error: "Un regalo virtual no lleva monto" });
+      return;
+    }
+    if (!body.title || !body.note || !body.recipientId) {
+      res.status(400).json({ error: "Título, nota y destinatario son requeridos" });
+      return;
+    }
+    try {
+      const gift = await platform.empresas.giveGift(
+        companyActor(res),
+        String(req.params.id),
+        {
+          title: String(body.title),
+          note: String(body.note),
+          recipientId: String(body.recipientId),
+        },
+        createStripe(config) as GiftStripe | undefined,
+      );
+      res.status(201).json({ gift });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/empresas/:id/regalos/:giftId/activar", async (req: Request, res: Response) => {
+    try {
+      const gift = await platform.empresas.activateGift(
+        companyActor(res),
+        String(req.params.id),
+        String(req.params.giftId),
+        createStripe(config) as GiftActivationStripe | undefined,
+      );
+      res.status(200).json({ gift });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/empresas/:id/usuarios", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    const role = body.role === "titular" || body.role === "comercio" ? body.role : "";
+    if (!body.name || !body.email || !role || !body.password) {
+      res.status(400).json({ error: "Nombre, correo, rol y clave son requeridos" });
+      return;
+    }
+    try {
+      const result = platform.createCompanyUser(companyActor(res), String(req.params.id), {
+        name: String(body.name),
+        email: String(body.email),
+        role,
+        password: String(body.password),
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
   app.post("/api/empresas/:id/abono", (req: Request, res: Response) => {
     const body = req.body ?? {};
     if (body.amount === undefined) {
@@ -437,6 +628,15 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     try {
       const company = platform.empresas.fund(companyActor(res), String(req.params.id), Number(body.amount));
       res.status(200).json({ company });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/empresas/:id/cuentas-virtuales", (req: Request, res: Response) => {
+    try {
+      const result = platform.empresas.requestGlobalAccounts(companyActor(res), String(req.params.id));
+      res.status(result.created ? 201 : 200).json({ company: result.company });
     } catch (error) {
       handleError(error, res);
     }
@@ -651,6 +851,40 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
   });
 
+  app.get("/api/correo", async (_req: Request, res: Response) => {
+    if (!isMailConfigured(config)) {
+      res.status(503).json({ error: "El correo de la empresa no está configurado" });
+      return;
+    }
+    try {
+      res.json(await listInbox(config));
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/correo/:uid", async (req: Request, res: Response) => {
+    try {
+      res.json(await readLetter(config, Number(req.params.uid)));
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/correo", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      await sendLetter(config, {
+        to: String(body.to ?? ""),
+        subject: String(body.subject ?? ""),
+        text: String(body.text ?? ""),
+      });
+      res.status(201).json({ sent: true });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
   app.post("/api/claims", async (req: Request, res: Response) => {
     const body = req.body ?? {};
     if (!body.policyId || !body.beneficiary || body.amount === undefined) {
@@ -724,7 +958,7 @@ function withPublishableKey<T extends { charge: { clientSecret?: string } }>(
 
 function companyActor(res: Response) {
   const user = res.locals.user as SessionUser;
-  return { id: user.id, email: user.email, role: user.role };
+  return { id: user.id, email: user.email, role: user.role, name: user.name, companyId: user.companyId };
 }
 
 function handleError(error: unknown, res: Response): void {

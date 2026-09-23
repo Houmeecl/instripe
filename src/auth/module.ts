@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync, timingSafeEqual, type ScryptOptions } from "node:crypto";
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual, type ScryptOptions } from "node:crypto";
 import { PlatformError } from "../errors.js";
 import type { PlatformStore } from "../store/db.js";
 
@@ -16,6 +16,10 @@ export const OPTIONS = [
   "design",
   "apps",
   "payments",
+  "clases",
+  "configuracion",
+  "actuarial",
+  "correo",
 ] as const;
 
 export type Option = (typeof OPTIONS)[number];
@@ -23,8 +27,8 @@ export type Role = "operacion" | "comercio" | "titular";
 
 const ROLE_OPTIONS: Record<Role, readonly Option[]> = {
   operacion: OPTIONS,
-  comercio: ["overview", "accounts", "cobros", "connect", "empresas"],
-  titular: ["overview", "plans", "policies", "claims", "cards", "empresas"],
+  comercio: ["overview", "empresas", "clases"],
+  titular: ["overview", "empresas", "clases"],
 };
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -43,6 +47,8 @@ interface AuthUserRecord {
   name: string;
   role: Role;
   memberId?: string;
+  /** Set for a user created by one company. They cannot sign in to another company. */
+  companyId?: string;
   salt: string;
   passwordHash: string;
   mustChangePassword?: boolean;
@@ -61,7 +67,18 @@ export interface SessionUser {
   role: Role;
   roleLabel: string;
   memberId?: string;
+  companyId?: string;
   options: Option[];
+  mustChangePassword: boolean;
+}
+
+export interface CompanyLogin {
+  id: string;
+  email: string;
+  name: string;
+  role: "comercio" | "titular";
+  roleLabel: string;
+  companyId: string;
   mustChangePassword: boolean;
 }
 
@@ -89,6 +106,12 @@ export function requiredOption(pathname: string): Option | "any" | "deny" {
     [/^\/api\/claims$/, "claims"],
     [/^\/api\/connect(?:\/.*)?$/, "connect"],
     [/^\/api\/empresas(?:\/.*)?$/, "empresas"],
+    [/^\/api\/inicio$/, "overview"],
+    [/^\/api\/clases(?:\/.*)?$/, "clases"],
+    [/^\/api\/configuracion$/, "configuracion"],
+    [/^\/api\/actuarial$/, "actuarial"],
+    [/^\/api\/frosting$/, "actuarial"],
+    [/^\/api\/correo(?:\/.*)?$/, "correo"],
     [/^\/api\/treasury(?:\/.*)?$/, "treasury"],
     [/^\/api\/tarjetas$/, "cards"],
     [/^\/api\/diseno$/, "design"],
@@ -121,6 +144,62 @@ export class AuthModule {
         mustChangePassword: true,
       });
     }
+  }
+
+  emailTaken(email: string): boolean {
+    const normalized = email.trim().toLowerCase();
+    return this.store.list<AuthUserRecord>("auth_users").some((user) => user.email.toLowerCase() === normalized);
+  }
+
+  /** Looks up a login without returning the password. */
+  findLogin(email: string): { id: string; email: string; name: string; role: Role; companyId?: string } | null {
+    const normalized = email.trim().toLowerCase();
+    const record = this.store.list<AuthUserRecord>("auth_users").find((user) => user.email.toLowerCase() === normalized);
+    if (!record) return null;
+    return {
+      id: record.id,
+      email: record.email,
+      name: record.name,
+      role: record.role,
+      companyId: record.companyId,
+    };
+  }
+
+  /**
+   * A login that belongs to one company. The password is stored hashed and is not returned.
+   */
+  createScopedUser(input: {
+    name: string;
+    email: string;
+    role: "comercio" | "titular";
+    companyId: string;
+    password: string;
+  }): CompanyLogin {
+    const email = input.email.trim().toLowerCase();
+    const name = input.name.trim();
+    const password = input.password.trim();
+    if (!name || !email.includes("@")) throw new PlatformError("Nombre y correo son requeridos", 400);
+    if (input.role !== "comercio" && input.role !== "titular") throw new PlatformError("El rol del usuario no es válido", 400);
+    if (!input.companyId) throw new PlatformError("El usuario tiene que pertenecer a una empresa", 400);
+    if (password.length < 8) throw new PlatformError("La clave inicial necesita al menos 8 caracteres", 400);
+    if (this.emailTaken(email)) throw new PlatformError("Ese correo ya tiene usuario", 409);
+    const salt = randomBytes(16);
+    const record: AuthUserRecord = {
+      id: `usr_${randomUUID().slice(0, 8)}`,
+      email,
+      name,
+      role: input.role,
+      companyId: input.companyId,
+      salt: salt.toString("hex"),
+      passwordHash: scryptSync(password, salt, KEYLEN, SCRYPT).toString("hex"),
+      mustChangePassword: true,
+    };
+    this.store.put("auth_users", record.id, record);
+    return toCompanyLogin(record);
+  }
+
+  deleteUser(id: string): void {
+    this.store.delete("auth_users", id);
   }
 
   login(email: string, password: string): { token: string; user: SessionUser } {
@@ -198,7 +277,21 @@ function toSessionUser(record: AuthUserRecord): SessionUser {
     role: record.role,
     roleLabel: ROLE_LABEL[record.role],
     memberId: record.memberId,
+    companyId: record.companyId,
     options: [...ROLE_OPTIONS[record.role]],
+    mustChangePassword: record.mustChangePassword !== false,
+  };
+}
+
+function toCompanyLogin(record: AuthUserRecord): CompanyLogin {
+  const role = record.role === "titular" ? "titular" : "comercio";
+  return {
+    id: record.id,
+    email: record.email,
+    name: record.name,
+    role,
+    roleLabel: role === "titular" ? "Cliente" : "Usuario de la empresa",
+    companyId: record.companyId || "",
     mustChangePassword: record.mustChangePassword !== false,
   };
 }

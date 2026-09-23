@@ -7,16 +7,18 @@ import { ConnectModule } from "./modules/connect/module.js";
 import { CuentasModule } from "./modules/cuentas/module.js";
 import { DisenoModule } from "./modules/diseno/module.js";
 import { EmpresasModule } from "./modules/empresas/module.js";
-import { SegurosModule, type ClaimInput, type SubscribeInput } from "./modules/seguros/module.js";
+import { LaboralModule } from "./modules/laboral/module.js";
+import { SegurosModule, type ClaimInput, type FrostingInput, type SubscribeInput } from "./modules/seguros/module.js";
 import { RegistroModule } from "./modules/registro/module.js";
 import { TarjetasModule } from "./modules/tarjetas/module.js";
 import { TreasuryModule } from "./modules/treasury/module.js";
+import type { Role } from "./auth/module.js";
 import type { Account } from "./payments/ledger.js";
 import { Payments, type CheckoutSettlement, type SettleResult } from "./payments/service.js";
 import { PlatformStore } from "./store/db.js";
 
 export { PlatformError };
-export type { SubscribeInput, ClaimInput };
+export type { SubscribeInput, ClaimInput, FrostingInput };
 
 /**
  * Admin composition root. Pagos is the core. Product modules plug into it.
@@ -33,6 +35,7 @@ export class Platform {
   readonly apps: AppsModule;
   readonly registro: RegistroModule;
   readonly empresas: EmpresasModule;
+  readonly laboral: LaboralModule;
   readonly auth: AuthModule;
 
   readonly store: PlatformStore;
@@ -42,7 +45,7 @@ export class Platform {
     this.payments = new Payments(config, this.store);
     this.cuentas = new CuentasModule(this.payments, this.store);
     this.cobros = new CobrosModule(this.payments, this.store);
-    this.seguros = new SegurosModule(this.payments);
+    this.seguros = new SegurosModule(this.payments, this.store);
     this.connect = new ConnectModule(this.payments, config, this.store);
     this.treasury = new TreasuryModule(this.payments, config);
     this.tarjetas = new TarjetasModule(this.payments, config, this.store);
@@ -50,11 +53,12 @@ export class Platform {
     this.apps = new AppsModule(config.appManifestPath);
     this.registro = new RegistroModule(this.cuentas, this.store);
     this.empresas = new EmpresasModule(this.payments, this.store);
+    this.laboral = new LaboralModule(this.store, config.publicBaseUrl);
     this.auth = new AuthModule(this.store, config.seedPassword);
   }
 
   listModules() {
-    return [this.cuentas, this.cobros, this.seguros, this.connect, this.treasury, this.tarjetas, this.diseno, this.apps, this.registro, this.empresas].map((mod) => ({
+    return [this.cuentas, this.cobros, this.seguros, this.connect, this.treasury, this.tarjetas, this.diseno, this.apps, this.registro, this.empresas, this.laboral].map((mod) => ({
       id: mod.id,
       label: mod.label,
       connected: true as const,
@@ -154,6 +158,54 @@ export class Platform {
 
   fileClaim(input: ClaimInput & { requestedBy: string }) {
     return this.seguros.fileClaim(input);
+  }
+
+  inicio(actor: { id: string; email: string; role: Role; name: string; companyId?: string }) {
+    const commune =
+      this.registro.list().find((member) => member.email.toLowerCase() === actor.email.toLowerCase())?.city ?? null;
+    return this.empresas.home(actor, commune);
+  }
+
+  createCompanyUser(
+    actor: { id: string; email: string; role: Role; name: string; companyId?: string },
+    companyId: string,
+    input: { name: string; email: string; role: "comercio" | "titular"; password: string },
+  ) {
+    this.empresas.assertCompanyUsers(actor, companyId);
+    const email = input.email.trim().toLowerCase();
+    const name = input.name.trim();
+    if (!name || !email.includes("@")) throw new PlatformError("Nombre y correo son requeridos", 400);
+    if (input.role !== "comercio" && input.role !== "titular") throw new PlatformError("El rol del usuario no es válido", 400);
+    if (this.auth.emailTaken(email)) throw new PlatformError("Ese correo ya tiene usuario", 409);
+    const other = this.empresas.workerCompanyId(email);
+    if (other && other !== companyId) throw new PlatformError("Ese cliente ya pertenece a otra empresa", 409);
+    const user = this.auth.createScopedUser({
+      name,
+      email,
+      role: input.role,
+      companyId,
+      password: input.password,
+    });
+    try {
+      const company = this.empresas.registerMember(actor, companyId, {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: input.role,
+      });
+      if (input.role === "titular" && !this.empresas.hasWorker(companyId, email)) {
+        return { user, company: this.empresas.addWorker(actor, companyId, { name, email }) };
+      }
+      return { user, company };
+    } catch (error) {
+      this.auth.deleteUser(user.id);
+      this.empresas.removeMember(companyId, user.id);
+      throw error;
+    }
+  }
+
+  subscribeFrosting(input: FrostingInput & { actorRole: Role }) {
+    return this.seguros.subscribeFrosting(input);
   }
 }
 
