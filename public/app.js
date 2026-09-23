@@ -51,6 +51,7 @@ const NAV = [
     group: "Operación",
     items: [
       { route: "overview", label: "Inicio", icon: "home", title: "Inicio", sub: "Tus datos y la entrada a cursos." },
+      { route: "correo", label: "Correo", icon: "inbox", title: "Correo", sub: "Bandeja de la empresa. No es el webmail del servidor." },
       { route: "clases", label: "Cursos", icon: "layers", title: "Cursos", sub: "Gestión financiera, débito, gastos, seguros y riesgos." },
       { route: "configuracion", label: "Configuración", icon: "file", title: "Configuración", sub: "SICR3P es un sitio externo. Este panel no reenvía su tráfico." },
       { route: "actuarial", label: "Tasas", icon: "activity", title: "Vista actuarial", sub: "Clases de riesgo de Frosting. Aparte de los cursos." },
@@ -488,6 +489,7 @@ const VIEWS = {
   clases: viewClases,
   configuracion: viewConfiguracion,
   actuarial: viewActuarial,
+  correo: viewCorreo,
   design: viewDesign,
   apps: viewApps,
   payments: viewPayments,
@@ -1708,7 +1710,86 @@ async function transferPrepaid(companyId) {
 }
 
 /* ---------------- view wiring ---------------- */
+function viewCorreo() {
+  return `<section class="card">
+    <div class="card-head"><h3>Bandeja</h3><span class="hint" id="correo-address"></span></div>
+    <div id="correo-list"><p class="hint">Cargando mensajes…</p></div>
+  </section>
+  <section class="card" id="correo-read" hidden></section>
+  <section class="card">
+    <div class="card-head"><h3>Escribir</h3></div>
+    <div class="inline-form">
+      <div class="field"><label>Para</label><input id="correo-to" placeholder="nombre@empresa.cl" /></div>
+      <div class="field"><label>Asunto</label><input id="correo-subject" placeholder="Asunto" /></div>
+    </div>
+    <div class="field"><label>Mensaje</label><textarea id="correo-text" rows="5"></textarea></div>
+    <button class="btn btn-primary" id="correo-send">${icon("arrow")} Enviar</button>
+  </section>`;
+}
+
+async function loadCorreo() {
+  const list = document.getElementById("correo-list");
+  try {
+    const box = await api("/api/correo");
+    document.getElementById("correo-address").textContent = box.address || "";
+    if (!box.messages.length) {
+      list.innerHTML = `<div class="empty">${icon("inbox")}<div>No hay mensajes.</div></div>`;
+      return;
+    }
+    list.innerHTML = box.messages.map((message) => `<button class="btn btn-ghost correo-row" data-correo="${message.uid}">
+      <strong>${escapeAttr(message.subject)}</strong>
+      <span>${escapeAttr(message.from)}</span>
+    </button>`).join("");
+    list.querySelectorAll("[data-correo]").forEach((btn) => {
+      btn.onclick = () => openCorreo(btn.dataset.correo);
+    });
+  } catch (error) {
+    list.innerHTML = `<p class="hint">${escapeAttr(error.message)}</p>`;
+  }
+}
+
+async function openCorreo(uid) {
+  const pane = document.getElementById("correo-read");
+  pane.hidden = false;
+  pane.innerHTML = `<p class="hint">Abriendo…</p>`;
+  try {
+    const letter = await api(`/api/correo/${uid}`);
+    pane.innerHTML = `<div class="card-head"><h3>${escapeAttr(letter.subject)}</h3></div>
+      <p class="hint">${escapeAttr(letter.from)} · ${escapeAttr(letter.date || "")}</p>
+      <pre class="correo-body">${escapeAttr(letter.body || "")}</pre>`;
+  } catch (error) {
+    pane.innerHTML = `<p class="hint">${escapeAttr(error.message)}</p>`;
+  }
+}
+
+async function sendCorreo() {
+  const button = document.getElementById("correo-send");
+  button.disabled = true;
+  try {
+    await api("/api/correo", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        to: document.getElementById("correo-to").value,
+        subject: document.getElementById("correo-subject").value,
+        text: document.getElementById("correo-text").value,
+      }),
+    });
+    toast("Mensaje enviado");
+    document.getElementById("correo-text").value = "";
+    await loadCorreo();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function wireView(r) {
+  if (r === "correo") {
+    loadCorreo();
+    document.getElementById("correo-send").onclick = () => sendCorreo();
+  }
   if (r === "overview") {
     document.querySelectorAll("[data-global-accounts]").forEach((btn) => {
       btn.onclick = () => requestGlobalAccounts(btn.dataset.globalAccounts);

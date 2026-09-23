@@ -572,6 +572,7 @@ describe("instripe BaaS platform", () => {
       "clases",
       "configuracion",
       "actuarial",
+      "correo",
     ]);
     expect(operacion.body.user.passwordHash).toBeUndefined();
     const cookie = String(operacion.headers["set-cookie"]);

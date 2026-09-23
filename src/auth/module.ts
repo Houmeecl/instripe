@@ -19,6 +19,7 @@ export const OPTIONS = [
   "clases",
   "configuracion",
   "actuarial",
+  "correo",
 ] as const;
 
 export type Option = (typeof OPTIONS)[number];
@@ -110,6 +111,7 @@ export function requiredOption(pathname: string): Option | "any" | "deny" {
     [/^\/api\/configuracion$/, "configuracion"],
     [/^\/api\/actuarial$/, "actuarial"],
     [/^\/api\/frosting$/, "actuarial"],
+    [/^\/api\/correo(?:\/.*)?$/, "correo"],
     [/^\/api\/treasury(?:\/.*)?$/, "treasury"],
     [/^\/api\/tarjetas$/, "cards"],
     [/^\/api\/diseno$/, "design"],

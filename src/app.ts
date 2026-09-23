@@ -3,7 +3,8 @@ import type Stripe from "stripe";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { requiredOption, type SessionUser } from "./auth/module.js";
-import { loadConfig, isStripeConfigured, isChileConfigured, type AppConfig, type GatewayName } from "./config.js";
+import { loadConfig, isStripeConfigured, isChileConfigured, isMailConfigured, type AppConfig, type GatewayName } from "./config.js";
+import { listInbox, readLetter, sendLetter } from "./mail/box.js";
 import { createStripe } from "./stripe/client.js";
 import { formatAmount } from "./money.js";
 import type { GiftActivationStripe, GiftStripe } from "./modules/regalos/issue.js";
@@ -845,6 +846,40 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     try {
       const result = await platform.confirmExit(String(req.params.id), user.id);
       res.status(201).json({ ...result, floatBalance: platform.floatAccount.balance });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/correo", async (_req: Request, res: Response) => {
+    if (!isMailConfigured(config)) {
+      res.status(503).json({ error: "El correo de la empresa no está configurado" });
+      return;
+    }
+    try {
+      res.json(await listInbox(config));
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/correo/:uid", async (req: Request, res: Response) => {
+    try {
+      res.json(await readLetter(config, Number(req.params.uid)));
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/correo", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      await sendLetter(config, {
+        to: String(body.to ?? ""),
+        subject: String(body.subject ?? ""),
+        text: String(body.text ?? ""),
+      });
+      res.status(201).json({ sent: true });
     } catch (error) {
       handleError(error, res);
     }
