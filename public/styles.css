@@ -1,7 +1,7 @@
 :root {
-  --indigo: #635bff;
-  --indigo-600: #5449e0;
-  --indigo-050: #eef0ff;
+  --indigo: #c4622d;
+  --indigo-600: #a34e22;
+  --indigo-050: #f8efe8;
   --navy: #0a2540;
   --navy-800: #0c2743;
   --navy-700: #10365c;
@@ -126,6 +126,11 @@ body {
 .nav a:hover {
   background: rgba(255, 255, 255, 0.06);
   color: #fff;
+}
+
+.nav a:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 
 .nav a.active {
@@ -282,8 +287,41 @@ body {
   position: absolute;
   inset: 0 0 auto 0;
   height: 3px;
-  background: linear-gradient(90deg, var(--indigo), #8b84ff);
+  background: linear-gradient(90deg, var(--indigo), #e7b08a);
   opacity: 0.9;
+}
+
+.space-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.space-banner strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.space-banner p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.space-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--indigo);
+  margin-bottom: 4px;
 }
 
 .kpi .kpi-top {
@@ -342,7 +380,8 @@ body {
 @media (max-width: 900px) {
   .app { grid-template-columns: 72px 1fr; }
   .brand-sub, .nav a span, .nav-label, .env-chip span:last-child { display: none; }
-  .cols { grid-template-columns: 1fr; }
+  .cols, .space-banner { grid-template-columns: 1fr; }
+  .space-banner { flex-direction: column; align-items: flex-start; }
 }
 
 .card {
@@ -392,7 +431,7 @@ body {
 
 .plan.featured {
   border: 1.5px solid var(--indigo);
-  box-shadow: 0 12px 30px rgba(99, 91, 255, 0.18);
+  box-shadow: 0 12px 30px rgba(196, 98, 45, 0.18);
 }
 
 .ribbon {
@@ -443,6 +482,10 @@ body {
   transition: background 0.15s ease, transform 0.05s ease, box-shadow 0.15s ease;
 }
 .btn:active { transform: translateY(1px); }
+.btn:focus-visible, .gw-select select:focus-visible {
+  outline: 2px solid var(--indigo);
+  outline-offset: 2px;
+}
 .btn svg { width: 16px; height: 16px; stroke: currentColor; }
 
 .plastic {
@@ -474,7 +517,7 @@ body {
   font-size: 12px;
   line-height: 1.5;
 }
-.btn-primary { background: var(--indigo); color: #fff; box-shadow: 0 6px 16px rgba(99, 91, 255, 0.28); }
+.btn-primary { background: var(--indigo); color: #fff; box-shadow: 0 6px 16px rgba(196, 98, 45, 0.28); }
 .btn-primary:hover { background: var(--indigo-600); }
 .btn-ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); }
 .btn-ghost:hover { background: var(--surface-2); }

@@ -349,10 +349,12 @@ describe("instripe BaaS platform", () => {
     expect(landing.text).toContain("Proveedor Regional");
     expect(landing.text).toContain('src="/aplicacion"');
     expect(landing.text).toContain("Procesador de pagos");
+    expect(landing.text).toContain("Espacio ocupado");
 
     const embedded = await request(server).get("/aplicacion");
     expect(embedded.status).toBe(200);
     expect(embedded.text).toContain("Términos");
+    expect(embedded.text).toContain("Espacio ocupado");
 
     const agent = request.agent(server);
     const denied = await agent.post("/api/onboarding").send({ name: "Luis", email: "luis@proveedorregional.cl", accepted: false });

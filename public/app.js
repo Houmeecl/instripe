@@ -13,6 +13,8 @@ const state = {
   design: null,
   appManifest: null,
   stripeEvents: [],
+  onboarding: null,
+  registro: null,
 };
 
 /* ---------------- icons ---------------- */
@@ -39,7 +41,7 @@ const NAV = [
   {
     group: "Operación",
     items: [
-      { route: "overview", label: "Inicio", icon: "home", title: "Inicio", sub: "Cuentas, cobros, seguros, Connect, Treasury y tarjetas" },
+      { route: "overview", label: "Inicio", icon: "home", title: "Inicio", sub: "Cuentas, cobros y crédito. El espacio ya está ocupado." },
     ],
   },
   {
@@ -244,6 +246,13 @@ async function refresh() {
   } catch {
     state.stripeEvents = [];
   }
+  try {
+    state.onboarding = await api("/api/onboarding");
+    state.registro = await api("/api/registro");
+  } catch {
+    state.onboarding = null;
+    state.registro = null;
+  }
 }
 
 /* ---------------- router ---------------- */
@@ -306,6 +315,34 @@ function movementFeed(rows, technical) {
         </li>`).join("")}</ul>`;
 }
 
+function spaceBanner() {
+  if (!state.registro) return "";
+  const members = state.registro.members || [];
+  const known = Boolean(state.onboarding);
+  const accepted = Boolean(state.onboarding && state.onboarding.accepted);
+  const names = members.map((member) => escapeAttr(member.name)).join(" · ");
+  const status = !known
+    ? "Este dashboard ya está ocupado."
+    : accepted
+      ? "Términos aceptados. Este dashboard ya está ocupado."
+      : "Falta aceptar los términos. Este dashboard ya está ocupado.";
+  const action = known && !accepted
+    ? `<a class="btn btn-primary btn-sm" href="/#aplicacion">Aceptar términos</a>`
+    : "";
+  const detail = members.length
+    ? `${members.length} preinscritos${names ? ` · ${names}` : ""}`
+    : "Los preinscritos aparecen aquí cuando el registro responde.";
+  return `
+    <section class="space-banner">
+      <div>
+        <p class="space-kicker">${accepted ? "Listo" : known ? "Onboarding" : "Ocupado"}</p>
+        <strong>${status}</strong>
+        <p>${detail}</p>
+      </div>
+      ${action}
+    </section>`;
+}
+
 function viewOverview() {
   const o = state.overview;
   const payments = o.payments || [];
@@ -339,7 +376,7 @@ function viewOverview() {
       </div>
     </div>`;
 
-  return `${kpi}
+  return `${spaceBanner()}${kpi}
     <div class="cols">
       <div class="card">
         <div class="card-head"><h3>Actividad reciente</h3><a class="btn btn-ghost btn-sm" href="#/payments">Admin técnico</a></div>
@@ -351,8 +388,8 @@ function viewOverview() {
           <a class="btn btn-ghost btn-block" href="#/accounts">${icon("wallet")} Cuentas</a>
           <a class="btn btn-ghost btn-block" href="#/cobros" style="margin-top:10px">${icon("file")} Cobros</a>
           <a class="btn btn-ghost btn-block" href="#/policies" style="margin-top:10px">${icon("shield")} Pólizas</a>
-          <a class="btn btn-ghost btn-block" href="#/connect" style="margin-top:10px">${icon("arrow")} Connect</a>
-          <a class="btn btn-ghost btn-block" href="#/treasury" style="margin-top:10px">${icon("wallet")} Treasury</a>
+          <a class="btn btn-ghost btn-block" href="#/connect" style="margin-top:10px">${icon("arrow")} Comercios</a>
+          <a class="btn btn-ghost btn-block" href="#/treasury" style="margin-top:10px">${icon("wallet")} Caja</a>
           <a class="btn btn-ghost btn-block" href="#/cards" style="margin-top:10px">${icon("card")} Tarjetas</a>
         </div>
       </div>
