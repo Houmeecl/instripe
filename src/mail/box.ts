@@ -205,7 +205,10 @@ export async function sendLetter(config: AppConfig, input: { to: string; subject
   if (!EMAIL.test(to) || !subject || !text.trim()) {
     throw new PlatformError("Destino, asunto y mensaje son requeridos", 400);
   }
-  const plain = await connectSocket(config, config.mail.smtpPort);
+  const plain = await new Promise<net.Socket>((resolve, reject) => {
+    const socket = net.connect(config.mail.smtpPort, config.mail.host, () => resolve(socket));
+    socket.once("error", reject);
+  });
   let channel = plain;
   const greet = new LineSocket(plain);
   const banner = await greet.readLine();
