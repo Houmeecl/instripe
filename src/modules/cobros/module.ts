@@ -3,6 +3,7 @@ import type { GatewayName } from "../../config.js";
 import { PlatformError } from "../../errors.js";
 import type { Payments } from "../../payments/service.js";
 import type { ChargeResult } from "../../gateways/types.js";
+import type { PlatformStore } from "../../store/db.js";
 
 export interface Cobro {
   id: string;
@@ -26,13 +27,18 @@ export class CobrosModule {
   readonly label = "Cobros";
   private readonly cobros = new Map<string, Cobro>();
 
-  constructor(private readonly payments: Payments) {
+  constructor(
+    private readonly payments: Payments,
+    private readonly store: PlatformStore,
+  ) {
+    for (const cobro of store.list<Cobro>("cobros")) this.cobros.set(cobro.id, cobro);
     payments.onSettled((movement) => {
       if (movement.module !== MODULE || movement.kind !== "collect") return;
       const cobro = this.cobros.get(movement.reference);
       if (!cobro || cobro.status === "paid") return;
       cobro.status = "paid";
       cobro.paymentId = movement.id;
+      this.store.put("cobros", cobro.id, cobro);
     });
   }
 
@@ -65,6 +71,7 @@ export class CobrosModule {
       createdAt: new Date().toISOString(),
     };
     this.cobros.set(cobro.id, cobro);
+    this.store.put("cobros", cobro.id, cobro);
     const movement = this.payments.openCollect({
       module: MODULE,
       reference: cobro.id,
@@ -72,11 +79,13 @@ export class CobrosModule {
       description: concept,
     });
     cobro.paymentId = movement.id;
+    this.store.put("cobros", cobro.id, cobro);
     try {
       const charge = await this.payments.chargeOpen(MODULE, cobro.id, input.gateway, email);
       return { cobro, charge };
     } catch (error) {
       this.cobros.delete(cobro.id);
+      this.store.delete("cobros", cobro.id);
       this.payments.drop(MODULE, cobro.id);
       throw error;
     }

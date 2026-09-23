@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { PlatformStore } from "../store/db.js";
 
 export type TxKind = "credit" | "debit";
 
@@ -23,12 +24,17 @@ export interface Account {
 }
 
 /**
- * In-memory payments ledger. Every account holds a wallet balance and every
- * movement is a credit or a debit. Storage-agnostic so it can later sit on Postgres.
+ * Payments ledger on SQLite. Every account holds a wallet balance and every
+ * movement is a credit or a debit.
  */
 export class Ledger {
   private readonly accounts = new Map<string, Account>();
   private readonly entries: LedgerEntry[] = [];
+
+  constructor(private readonly store: PlatformStore) {
+    for (const account of store.list<Account>("ledger_accounts")) this.accounts.set(account.id, account);
+    this.entries.push(...store.list<LedgerEntry>("ledger_entries"));
+  }
 
   createAccount(input: { name: string; email: string; currency: string }): Account {
     const account: Account = {
@@ -40,6 +46,7 @@ export class Ledger {
       createdAt: new Date().toISOString(),
     };
     this.accounts.set(account.id, account);
+    this.store.put("ledger_accounts", account.id, account);
     return account;
   }
 
@@ -73,6 +80,10 @@ export class Ledger {
       createdAt: new Date().toISOString(),
     };
     this.entries.push(entry);
+    this.store.transaction(() => {
+      this.store.put("ledger_accounts", account.id, account);
+      this.store.put("ledger_entries", entry.id, entry);
+    });
     return entry;
   }
 

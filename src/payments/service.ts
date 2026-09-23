@@ -3,6 +3,7 @@ import type { AppConfig, GatewayName } from "../config.js";
 import { GatewayRegistry } from "../gateways/registry.js";
 import type { ChargeResult, PayoutResult } from "../gateways/types.js";
 import { Ledger, type Account } from "./ledger.js";
+import type { PlatformStore } from "../store/db.js";
 
 export interface MoneyMovement {
   id: string;
@@ -43,22 +44,33 @@ type SettledListener = (movement: MoneyMovement) => void;
  * Product modules call this. They never talk to Stripe directly.
  */
 export class Payments {
-  readonly ledger = new Ledger();
+  readonly ledger: Ledger;
   private readonly gateways: GatewayRegistry;
   private readonly wallet: Account;
   private readonly movements = new Map<string, MoneyMovement>();
   private readonly byReference = new Map<string, string>();
   private readonly listeners: SettledListener[] = [];
-  private readonly webhookEvents: { id: string; type: string; receivedAt: string }[] = [];
+  private webhookEvents: { id: string; type: string; receivedAt: string }[] = [];
   private branding: CheckoutBranding | undefined;
 
-  constructor(private readonly config: AppConfig) {
+  constructor(
+    private readonly config: AppConfig,
+    private readonly store: PlatformStore,
+  ) {
+    this.ledger = new Ledger(store);
     this.gateways = new GatewayRegistry(config);
-    this.wallet = this.ledger.createAccount({
-      name: "instripe Wallet",
-      email: "wallet@instripe.internal",
-      currency: config.currency,
-    });
+    this.wallet =
+      this.ledger.listAccounts().find((account) => account.email === "wallet@instripe.internal") ??
+      this.ledger.createAccount({
+        name: "instripe Wallet",
+        email: "wallet@instripe.internal",
+        currency: config.currency,
+      });
+    for (const movement of store.list<MoneyMovement>("movements")) {
+      this.movements.set(movement.id, movement);
+      this.byReference.set(this.key(movement.module, movement.reference, movement.kind), movement.id);
+    }
+    this.webhookEvents = store.get("webhook_events", "recent") ?? [];
   }
 
   get walletAccount(): Account {
@@ -105,6 +117,7 @@ export class Payments {
     };
     this.movements.set(movement.id, movement);
     this.byReference.set(this.key(input.module, input.reference, "collect"), movement.id);
+    this.store.put("movements", movement.id, movement);
     return movement;
   }
 
@@ -115,6 +128,7 @@ export class Payments {
     if (!movement || movement.status !== "pending") return;
     this.movements.delete(id);
     this.byReference.delete(this.key(module, reference, "collect"));
+    this.store.delete("movements", id);
   }
 
   async chargeOpen(module: string, reference: string, gatewayName: GatewayName, customerEmail: string): Promise<ChargeResult> {
@@ -134,6 +148,7 @@ export class Payments {
     movement.gateway = gateway.name;
     movement.mode = charge.mode;
     movement.externalId = charge.chargeId;
+    this.store.put("movements", movement.id, movement);
     const defer = gateway.name === "stripe" && gateway.configured;
     if (!defer) this.settle(reference, charge.chargeId);
     return charge;
@@ -149,6 +164,7 @@ export class Payments {
     this.ledger.post("credit", this.wallet.id, movement.amount, `${movement.description} (${externalId})`);
     movement.status = "paid";
     movement.externalId = externalId;
+    this.store.put("movements", movement.id, movement);
     for (const listener of this.listeners) listener(movement);
     return { fulfilled: true, reference, module: movement.module };
   }
@@ -184,12 +200,14 @@ export class Payments {
       createdAt: new Date().toISOString(),
     };
     this.movements.set(movement.id, movement);
+    this.store.put("movements", movement.id, movement);
     return { movement, payout };
   }
 
   recordWebhookEvent(id: string, type: string): void {
     this.webhookEvents.unshift({ id, type, receivedAt: new Date().toISOString() });
     if (this.webhookEvents.length > 20) this.webhookEvents.length = 20;
+    this.store.put("webhook_events", "recent", this.webhookEvents);
   }
 
   listWebhookEvents() {

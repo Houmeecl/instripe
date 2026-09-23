@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { PlatformError } from "../../errors.js";
+import type { PlatformStore } from "../../store/db.js";
 import type { CuentasModule } from "../cuentas/module.js";
 
 export interface PreRegistered {
@@ -35,12 +36,23 @@ export class RegistroModule {
   private readonly members: PreRegistered[];
   private readonly acceptances = new Map<string, TosAcceptance>();
   private readonly sessions = new Map<string, string>();
+  private readonly store: PlatformStore;
 
-  constructor(cuentas: CuentasModule) {
-    this.members = SEED.map((row) => {
-      const account = cuentas.open({ name: row.name, email: row.email });
-      return { ...row, status: "preinscrito" as const, accountId: account.id };
-    });
+  constructor(cuentas: CuentasModule, store: PlatformStore) {
+    this.store = store;
+    const saved = store.list<PreRegistered>("members");
+    this.members = saved.length
+      ? saved
+      : SEED.map((row) => {
+          const account = cuentas.open({ name: row.name, email: row.email });
+          const member = { ...row, status: "preinscrito" as const, accountId: account.id };
+          store.put("members", member.id, member);
+          return member;
+        });
+    for (const acceptance of store.list<TosAcceptance>("tos_acceptances")) this.acceptances.set(acceptance.id, acceptance);
+    for (const session of store.list<{ token: string; acceptanceId: string }>("tos_sessions")) {
+      this.sessions.set(session.token, session.acceptanceId);
+    }
   }
 
   list(): PreRegistered[] {
@@ -66,6 +78,8 @@ export class RegistroModule {
     const token = randomBytes(24).toString("hex");
     this.acceptances.set(acceptance.id, acceptance);
     this.sessions.set(token, acceptance.id);
+    this.store.put("tos_acceptances", acceptance.id, acceptance);
+    this.store.put("tos_sessions", token, { token, acceptanceId: acceptance.id });
     return { token, acceptance };
   }
 

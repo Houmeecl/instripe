@@ -3,6 +3,7 @@ import type { GatewayName } from "../../config.js";
 import { PlatformError } from "../../errors.js";
 import type { Payments } from "../../payments/service.js";
 import type { ChargeResult, PayoutResult } from "../../gateways/types.js";
+import type { PlatformStore } from "../../store/db.js";
 
 export interface CustomerAccount {
   id: string;
@@ -33,7 +34,12 @@ export class CuentasModule {
   private readonly accounts = new Map<string, CustomerAccount>();
   private readonly topups = new Map<string, Topup>();
 
-  constructor(private readonly payments: Payments) {
+  constructor(
+    private readonly payments: Payments,
+    private readonly store: PlatformStore,
+  ) {
+    for (const account of store.list<CustomerAccount>("cuentas")) this.accounts.set(account.id, account);
+    for (const topup of store.list<Topup>("topups")) this.topups.set(topup.id, topup);
     payments.onSettled((movement) => {
       if (movement.module !== MODULE || movement.kind !== "collect") return;
       const topup = this.topups.get(movement.reference);
@@ -48,6 +54,7 @@ export class CuentasModule {
       );
       topup.status = "paid";
       topup.paymentId = movement.id;
+      this.store.put("topups", topup.id, topup);
     });
   }
 
@@ -75,6 +82,7 @@ export class CuentasModule {
       createdAt: new Date().toISOString(),
     };
     this.accounts.set(account.id, account);
+    this.store.put("cuentas", account.id, account);
     return account;
   }
 
@@ -93,6 +101,7 @@ export class CuentasModule {
       createdAt: new Date().toISOString(),
     };
     this.topups.set(topup.id, topup);
+    this.store.put("topups", topup.id, topup);
     const movement = this.payments.openCollect({
       module: MODULE,
       reference: topup.id,
@@ -100,11 +109,13 @@ export class CuentasModule {
       description: `Recarga ${account.name}`,
     });
     topup.paymentId = movement.id;
+    this.store.put("topups", topup.id, topup);
     try {
       const charge = await this.payments.chargeOpen(MODULE, topup.id, input.gateway, input.email || account.email);
       return { account: { ...account, balance: this.balanceOf(account) }, topup, charge };
     } catch (error) {
       this.topups.delete(topup.id);
+      this.store.delete("topups", topup.id);
       this.payments.drop(MODULE, topup.id);
       throw error;
     }

@@ -1,11 +1,14 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { Platform } from "../src/platform.js";
 
-function app(env: NodeJS.ProcessEnv = { PORT: "3000", CURRENCY: "clp" }) {
-  return createApp(loadConfig(env));
+function app(env: NodeJS.ProcessEnv = {}) {
+  return createApp(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:", ...env }));
 }
 
 function creditPolicy(overrides: Record<string, unknown> = {}) {
@@ -144,7 +147,7 @@ describe("instripe BaaS platform", () => {
   });
 
   it("keeps the float unchanged until a pending Stripe policy is fulfilled, once", () => {
-    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp" }));
+    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:" }));
     const policy = platform.listPolicies()[0];
     expect(policy).toBeUndefined();
 
@@ -168,7 +171,7 @@ describe("instripe BaaS platform", () => {
   });
 
   it("rejects a claim on a policy that is still awaiting payment", async () => {
-    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp" }));
+    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:" }));
     const { policy: created } = platform.holdPremium({
       holderName: "Ana Díaz",
       email: "ana@demo.cl",
@@ -232,7 +235,7 @@ describe("instripe BaaS platform", () => {
   });
 
   it("settles a cobro reference as cobros, not as a policy", () => {
-    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp" }));
+    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:" }));
     platform.payments.openCollect({
       module: "cobros",
       reference: "cob_demo",
@@ -400,5 +403,24 @@ describe("instripe BaaS platform", () => {
       "pago@norte.cl",
     ]);
     expect(registro.body.members.every((member: { status: string }) => member.status === "preinscrito")).toBe(true);
+  });
+
+  it("keeps accounts, balances and terms when a new platform opens the same database", async () => {
+    const databasePath = path.join(mkdtempSync(path.join(tmpdir(), "pr-db-")), "platform.db");
+    const env = { PORT: "3000", CURRENCY: "clp", DATABASE_PATH: databasePath };
+    const first = new Platform(loadConfig(env));
+    const opened = first.cuentas.open({ name: "Bodega Centro", email: "bodega@proveedorregional.cl" });
+    const funded = await first.cuentas.fund({ accountId: opened.id, amount: 8000, gateway: "chile" });
+    expect(funded.account.balance).toBe(8000);
+    const accepted = first.registro.acceptTos({ name: "Luis", email: "luis@proveedorregional.cl", accepted: true });
+
+    const second = new Platform(loadConfig(env));
+    const again = second.cuentas.list().find((account) => account.email === "bodega@proveedorregional.cl");
+    expect(again?.id).toBe(opened.id);
+    expect(again?.balance).toBe(8000);
+    expect(second.registro.list()).toHaveLength(3);
+    expect(second.cuentas.list().filter((account) => account.email === "caja@taller.cl")).toHaveLength(1);
+    expect(second.registro.tosSession(accepted.token)?.email).toBe("luis@proveedorregional.cl");
+    expect(second.floatAccount.balance).toBe(first.floatAccount.balance);
   });
 });

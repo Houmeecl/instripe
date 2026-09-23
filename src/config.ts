@@ -17,6 +17,8 @@ export interface AppConfig {
   };
   /** Where `Crear app` writes the Stripe App manifest. */
   appManifestPath: string;
+  /** SQLite file. `:memory:` does not survive a restart. */
+  databasePath: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -36,6 +38,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       commerceCode: env.CHILE_GATEWAY_COMMERCE_CODE?.trim() || undefined,
     },
     appManifestPath: env.APP_MANIFEST_PATH?.trim() || "stripe-app.json",
+    databasePath: env.DATABASE_PATH?.trim() || "data/platform.db",
   };
 }
 

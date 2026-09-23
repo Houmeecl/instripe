@@ -3,6 +3,7 @@ import type { AppConfig } from "../../config.js";
 import { PlatformError } from "../../errors.js";
 import type { CheckoutBranding, Payments } from "../../payments/service.js";
 import { createStripe, stripeMessage } from "../../stripe/client.js";
+import type { PlatformStore } from "../../store/db.js";
 import type { ConnectModule } from "../connect/module.js";
 
 export interface CardDesign extends CheckoutBranding {
@@ -22,6 +23,7 @@ const HEX = /^#[0-9a-fA-F]{6}$/;
 export class DisenoModule {
   readonly id = "diseno";
   readonly label = "Diseño";
+  private readonly store: PlatformStore;
   private design: CardDesign = {
     displayName: "Proveedor Regional",
     buttonColor: "#0e3e66",
@@ -37,8 +39,12 @@ export class DisenoModule {
     private readonly payments: Payments,
     private readonly connect: ConnectModule,
     config: AppConfig,
+    store: PlatformStore,
   ) {
+    this.store = store;
     this.stripe = createStripe(config);
+    const saved = store.get<CardDesign>("design", "current");
+    if (saved) this.design = saved;
     this.payments.setBranding(this.design);
   }
 
@@ -99,6 +105,7 @@ export class DisenoModule {
       if (notices.length) this.design.notice = notices[0];
     }
 
+    this.store.put("design", "current", this.design);
     return this.current();
   }
 }

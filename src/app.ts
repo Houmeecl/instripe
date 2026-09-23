@@ -81,6 +81,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       defaultGateway: config.defaultGateway,
       stripeConfigured: isStripeConfigured(config),
       stripeWebhookConfigured: Boolean(config.stripeWebhookSecret),
+      database: "sqlite",
       chileConfigured: isChileConfigured(config),
       time: new Date().toISOString(),
     });

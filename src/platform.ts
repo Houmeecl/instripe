@@ -11,6 +11,7 @@ import { TarjetasModule } from "./modules/tarjetas/module.js";
 import { TreasuryModule } from "./modules/treasury/module.js";
 import type { Account } from "./payments/ledger.js";
 import { Payments, type SettleResult } from "./payments/service.js";
+import { PlatformStore } from "./store/db.js";
 
 export { PlatformError };
 export type { SubscribeInput, ClaimInput };
@@ -30,17 +31,20 @@ export class Platform {
   readonly apps: AppsModule;
   readonly registro: RegistroModule;
 
+  readonly store: PlatformStore;
+
   constructor(config: AppConfig) {
-    this.payments = new Payments(config);
-    this.cuentas = new CuentasModule(this.payments);
-    this.cobros = new CobrosModule(this.payments);
+    this.store = new PlatformStore(config.databasePath);
+    this.payments = new Payments(config, this.store);
+    this.cuentas = new CuentasModule(this.payments, this.store);
+    this.cobros = new CobrosModule(this.payments, this.store);
     this.seguros = new SegurosModule(this.payments);
     this.connect = new ConnectModule(this.payments, config);
     this.treasury = new TreasuryModule(this.payments, config);
     this.tarjetas = new TarjetasModule(this.payments, config);
-    this.diseno = new DisenoModule(this.payments, this.connect, config);
+    this.diseno = new DisenoModule(this.payments, this.connect, config, this.store);
     this.apps = new AppsModule(config.appManifestPath);
-    this.registro = new RegistroModule(this.cuentas);
+    this.registro = new RegistroModule(this.cuentas, this.store);
   }
 
   listModules() {
