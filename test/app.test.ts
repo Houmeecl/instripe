@@ -1484,9 +1484,9 @@ describe("instripe BaaS platform", () => {
     const created = await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" });
     expect(created.status).toBe(201);
     const id = created.body.company.id;
-    expect(created.body.company.globalAccounts.accounts).toEqual([]);
-    expect(created.body.company.globalAccounts.notice).toContain("movimientos y pagos");
-    expect(created.body.company.globalAccounts.notice).toContain("no la apertura de cuentas");
+    expect(created.body.company.globalAccounts).toBeUndefined();
+    expect(JSON.stringify(created.body)).not.toContain("cuenta_puente");
+    expect((await comercio.post(`/api/empresas/${id}/cuentas-virtuales`)).status).toBe(403);
 
     const operacion = await signedIn(server);
     const funded = await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 40_000 });
@@ -1510,9 +1510,9 @@ describe("instripe BaaS platform", () => {
       calls.push(String(input));
       throw new Error("no se debe llamar a Global66");
     }) as typeof fetch;
-    let requested: Awaited<ReturnType<typeof comercio.post>>;
+    let requested: Awaited<ReturnType<typeof operacion.post>>;
     try {
-      requested = await comercio.post(`/api/empresas/${id}/cuentas-virtuales`);
+      requested = await operacion.post(`/api/empresas/${id}/cuentas-virtuales`);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1530,26 +1530,31 @@ describe("instripe BaaS platform", () => {
     const bridge = accounts.find((account: { kind: string }) => account.kind === "cuenta_puente");
     expect(bridge.purpose).toBe("Recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.");
     expect(accounts.find((account: { kind: string }) => account.kind === "cuenta_virtual").label).toBe("Cuenta virtual");
+    expect(requested.body.company.globalAccounts.notice).toContain("movimientos y pagos");
+    expect(requested.body.company.globalAccounts.notice).toContain("no la apertura de cuentas");
 
     const titular = await signedIn(server, "ana@proveedorregional.cl");
     const own = await titular.get("/api/empresas");
     expect(own.body.companies[0].workers[0].balance).toBe(12_000);
-    expect(own.body.companies[0].globalAccounts.accounts).toEqual([]);
+    expect(own.body.companies[0].globalAccounts).toBeUndefined();
+    expect(JSON.stringify(own.body)).not.toContain("cuenta_virtual");
     expect((await titular.post(`/api/empresas/${id}/cuentas-virtuales`)).status).toBe(403);
 
-    const again = await comercio.post(`/api/empresas/${id}/cuentas-virtuales`);
+    const again = await operacion.post(`/api/empresas/${id}/cuentas-virtuales`);
     expect(again.status).toBe(200);
     expect(again.body.company.globalAccounts.accounts.map((account: { id: string }) => account.id)).toEqual(
       accounts.map((account: { id: string }) => account.id),
     );
     expect(again.body.company.balance).toBe(28_000);
+    expect((await comercio.post(`/api/empresas/${id}/cuentas-virtuales`)).status).toBe(403);
     expect((await operacion.get("/api/overview")).body.float.balance).toBe(0);
 
     const other = await signedIn(server, "pago@norte.cl");
     expect((await other.post(`/api/empresas/${id}/cuentas-virtuales`)).status).toBe(403);
     const otherCreated = await other.post("/api/empresas").send({ name: "Oficina Norte", color: "#112233" });
     const otherId = otherCreated.body.company.id;
-    const otherRequest = await other.post(`/api/empresas/${otherId}/cuentas-virtuales`);
+    expect(otherCreated.body.company.globalAccounts).toBeUndefined();
+    const otherRequest = await operacion.post(`/api/empresas/${otherId}/cuentas-virtuales`);
     expect(otherRequest.status).toBe(201);
     const otherAccounts = otherRequest.body.company.globalAccounts.accounts;
     expect(otherAccounts).toHaveLength(2);
@@ -1560,14 +1565,16 @@ describe("instripe BaaS platform", () => {
     const tallerView = await comercio.get("/api/empresas");
     expect(tallerView.body.companies).toHaveLength(1);
     expect(tallerView.body.companies[0].id).toBe(id);
-    expect(tallerView.body.companies[0].globalAccounts.accounts.map((account: { id: string }) => account.id)).toEqual(tallerIds);
+    expect(tallerView.body.companies[0].globalAccounts).toBeUndefined();
     expect(tallerView.body.companies[0].balance).toBe(28_000);
     expect(JSON.stringify(tallerView.body)).not.toContain(otherId);
+    expect(JSON.stringify(tallerView.body)).not.toContain(tallerIds[0]);
 
     const norteView = await other.get("/api/empresas");
     expect(norteView.body.companies.map((company: { id: string }) => company.id)).toEqual([otherId]);
-    expect(norteView.body.companies[0].globalAccounts.accounts.map((account: { id: string }) => account.id)).toEqual(otherIds);
+    expect(norteView.body.companies[0].globalAccounts).toBeUndefined();
     expect(JSON.stringify(norteView.body)).not.toContain(id);
+    expect(JSON.stringify(norteView.body)).not.toContain(otherIds[0]);
 
     const seen = await operacion.get("/api/empresas");
     const byId = new Map(seen.body.companies.map((company: { id: string; globalAccounts: { accounts: { id: string }[] } }) => [company.id, company]));
@@ -1575,6 +1582,11 @@ describe("instripe BaaS platform", () => {
     expect((byId.get(otherId) as { globalAccounts: { accounts: { id: string }[] } }).globalAccounts.accounts.map((account) => account.id)).toEqual(otherIds);
 
     const panel = await request(server).get("/app.js");
+    const companyBlock = panel.text.slice(panel.text.indexOf("function companyBlock"), panel.text.indexOf("function viewEmpresas"));
+    const home = panel.text.slice(panel.text.indexOf("function viewOperacionHome"), panel.text.indexOf("function viewAccounts"));
+    expect(companyBlock).not.toContain("globalAccountsBox");
+    expect(companyBlock).not.toContain("data-global-accounts");
+    expect(home).toContain("adminGlobalAccounts()");
     expect(panel.text).toContain("Solicitar cuenta virtual y cuenta puente");
     expect(panel.text).toContain("Recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.");
     expect(panel.text).toContain("Sin número de cuenta");

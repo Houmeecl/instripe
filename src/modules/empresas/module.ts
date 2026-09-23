@@ -148,7 +148,8 @@ export interface CompanyView {
   transfers: Array<TransferRecord & { displayAmount: string }>;
   gifts: GiftView[];
   users: CompanyMemberView[];
-  globalAccounts: GlobalAccountsView;
+  /** Present only for operación. Comercio and titular do not receive these records. */
+  globalAccounts?: GlobalAccountsView;
 }
 
 export interface HomeView {
@@ -658,7 +659,7 @@ export class EmpresasModule {
    */
   requestGlobalAccounts(actor: CompanyActor, companyId: string): { company: CompanyView; created: boolean } {
     const company = this.require(companyId);
-    if (!this.canManage(actor, company)) throw new PlatformError("Esta empresa no está en tu rol", 403);
+    if (actor.role !== "operacion") throw new PlatformError("Solo operación solicita la cuenta virtual y la cuenta puente", 403);
     const existing = this.globalAccounts.filter((account) => account.companyId === company.id);
     const createdAt = new Date().toISOString();
     let created = false;
@@ -689,7 +690,7 @@ export class EmpresasModule {
       manage,
     );
     const hideWorkerBalance = actor.role === "comercio";
-    return {
+    const view: CompanyView = {
       id: company.id,
       name: company.name,
       color: company.color,
@@ -722,10 +723,6 @@ export class EmpresasModule {
       }),
       gifts: this.visibleGifts(actor, company),
       users: manage ? this.membersOf(company.id) : [],
-      globalAccounts: {
-        notice: GLOBAL66_DOCS_NOTICE,
-        accounts: manage ? this.globalAccountsOf(company.id) : [],
-      },
       transfers: this.transfers
         .filter((transfer) => transfer.companyId === company.id)
         .filter((transfer) => manage || transfer.workerId === own?.id)
@@ -733,6 +730,13 @@ export class EmpresasModule {
         .reverse()
         .map((transfer) => ({ ...transfer, displayAmount: formatAmount(transfer.amount, currency) })),
     };
+    if (actor.role === "operacion") {
+      view.globalAccounts = {
+        notice: GLOBAL66_DOCS_NOTICE,
+        accounts: this.globalAccountsOf(company.id),
+      };
+    }
+    return view;
   }
 
   private cardView(

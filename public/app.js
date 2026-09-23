@@ -755,7 +755,7 @@ function viewOperacionHome() {
   const configCard = allowed("configuracion")
     ? `<div class="card" style="margin-bottom:20px"><div class="card-head"><h3>SICR3P</h3></div><div class="card-body"><p class="hint">${state.sicr3p && state.sicr3p.configured ? "La URL externa ya está guardada." : "Falta la URL de SICR3P. Configúrala para salir a ese sitio."}</p><a class="btn btn-primary" href="#/configuracion">${icon("file")} Ir a configuración</a></div></div>`
     : "";
-  return `${configCard}${workflowStrip()}${pendingExitsCard()}${kpis.length ? `<div class="grid-kpi">${kpis.join("")}</div>` : ""}
+  return `${configCard}${adminGlobalAccounts()}${workflowStrip()}${pendingExitsCard()}${kpis.length ? `<div class="grid-kpi">${kpis.join("")}</div>` : ""}
     <div class="cols${activity ? "" : " single"}">
       ${activity}
       <div class="card">
@@ -1131,9 +1131,29 @@ function cardControls(company, card) {
   </div>`;
 }
 
+function adminGlobalAccounts() {
+  if (!state.user || state.user.role !== "operacion") return "";
+  const companies = state.companies || [];
+  const notice = companies.reduce(
+    (found, company) => found || (company.globalAccounts && company.globalAccounts.notice) || "",
+    "",
+  ) || "La documentación pública de Global66 lista movimientos y pagos, no la apertura de cuentas. La solicitud queda pendiente y no tiene número de cuenta.";
+  const body = companies.length
+    ? companies.map((company) => globalAccountsBox(company)).join("")
+    : `<div class="empty">${icon("inbox")}<div>Todavía no hay empresas. El débito se abre en Débito.</div></div>`;
+  return `<div class="card" style="margin-bottom:20px">
+    <div class="card-head"><h3>Cuenta virtual y cuenta puente</h3></div>
+    <div class="card-body">
+      <p class="funds-note">${escapeAttr(notice)}</p>
+      <p class="hint">La cuenta puente recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.</p>
+      ${body}
+    </div>
+  </div>`;
+}
+
 function globalAccountsBox(company) {
-  if (!company.canManage || !company.globalAccounts) return "";
-  const accounts = company.globalAccounts.accounts || [];
+  if (!state.user || state.user.role !== "operacion") return "";
+  const accounts = (company.globalAccounts && company.globalAccounts.accounts) || [];
   const rows = accounts.length
     ? `<div class="account-pair">${accounts
         .map(
@@ -1157,11 +1177,11 @@ function globalAccountsBox(company) {
   const action = accounts.length >= 2
     ? `<p class="hint">La solicitud ya está pendiente. No hay número de cuenta.</p>`
     : `<button class="btn btn-primary" data-global-accounts="${escapeAttr(company.id)}">${icon("plus")} Solicitar cuenta virtual y cuenta puente</button>`;
-  return `<h2 class="section-title">Cuenta virtual y cuenta puente</h2>
-    <p class="funds-note">${escapeAttr(company.globalAccounts.notice || "")}</p>
-    <p class="hint">La cuenta puente recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.</p>
+  return `<section>
+    <h2 class="section-title">${escapeAttr(company.name)}</h2>
     ${rows}
-    ${action}`;
+    ${action}
+  </section>`;
 }
 
 function transferLabel(transfer) {
@@ -1271,7 +1291,6 @@ function companyBlock(company) {
       <div class="vcard-layout">${virtualCard(company.card, company.color, "Empresa")}</div>
       ${contractBox(company.card.contract)}
       ${logoForm(company)}
-      ${globalAccountsBox(company)}
       ${fund}
       ${cardControls(company, company.card)}
       <h2 class="section-title">Trabajadores</h2>
@@ -1679,6 +1698,9 @@ async function transferPrepaid(companyId) {
 /* ---------------- view wiring ---------------- */
 function wireView(r) {
   if (r === "overview") {
+    document.querySelectorAll("[data-global-accounts]").forEach((btn) => {
+      btn.onclick = () => requestGlobalAccounts(btn.dataset.globalAccounts);
+    });
     document.querySelectorAll("[data-confirm-exit]").forEach((btn) => {
       btn.onclick = () => confirmPendingExit(btn.dataset.confirmExit, btn);
     });
@@ -1744,9 +1766,6 @@ function wireView(r) {
     });
     document.querySelectorAll("[data-transfer]").forEach((btn) => {
       btn.onclick = () => transferPrepaid(btn.dataset.transfer);
-    });
-    document.querySelectorAll("[data-global-accounts]").forEach((btn) => {
-      btn.onclick = () => requestGlobalAccounts(btn.dataset.globalAccounts);
     });
     document.querySelectorAll("[data-save-card]").forEach((btn) => {
       btn.onclick = () => saveCardOptions(btn.dataset.saveCard);
