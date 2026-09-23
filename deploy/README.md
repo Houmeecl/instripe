@@ -10,6 +10,18 @@ viven solo en el VPS.
 
 ## Preparar el VPS (una vez)
 
+Forma rápida, como root en el VPS (Debian/Ubuntu):
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/Houmeecl/instripe/main/deploy/setup-vps.sh
+sudo bash setup-vps.sh <IP pública> <puerto SSH>
+```
+
+Hace los pasos de abajo y al final imprime los secretos para GitHub.
+Si el repo es privado, copia el archivo con `scp` en vez de `curl`.
+
+Paso a paso:
+
 1. Node 22.13 o superior (la base usa `node:sqlite`).
 2. Usuario y carpeta de la app:
    ```bash
