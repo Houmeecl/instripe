@@ -79,6 +79,7 @@ describe("instripe BaaS platform", () => {
       "connect",
       "cuentas",
       "diseno",
+      "empresas",
       "registro",
       "seguros",
       "tarjetas",
@@ -473,6 +474,7 @@ describe("instripe BaaS platform", () => {
       "policies",
       "claims",
       "connect",
+      "empresas",
       "treasury",
       "cards",
       "design",
@@ -491,7 +493,7 @@ describe("instripe BaaS platform", () => {
 
     const comercio = await signedIn(server, "caja@taller.cl");
     const comercioSession = await comercio.get("/api/session");
-    expect(comercioSession.body.user.options).toEqual(["overview", "accounts", "cobros", "connect"]);
+    expect(comercioSession.body.user.options).toEqual(["overview", "accounts", "cobros", "connect", "empresas"]);
     const comercioOverview = await comercio.get("/api/overview");
     expect(comercioOverview.status).toBe(200);
     expect(comercioOverview.body.accounts).toBeDefined();
@@ -513,6 +515,7 @@ describe("instripe BaaS platform", () => {
       "policies",
       "claims",
       "cards",
+      "empresas",
     ]);
     expect((await titular.get("/api/tarjetas")).status).toBe(200);
     expect((await titular.get("/api/cuentas")).status).toBe(403);
@@ -541,11 +544,87 @@ describe("instripe BaaS platform", () => {
     expect(out.status).toBe(200);
     expect(out.body.user).toBeNull();
     expect((await comercio.get("/api/overview")).status).toBe(401);
+    expect((await request(server).get("/api/empresas")).status).toBe(401);
     expect((await request(server).get("/api/registro")).status).toBe(200);
     expect((await request(server).post("/webhooks/stripe").set("Content-Type", "application/json").send({
       id: "evt_public",
       type: "checkout.session.completed",
       data: { object: { id: "cs_public", payment_status: "unpaid" } },
     })).status).toBe(200);
+  });
+
+  it("keeps company prepaid on its own card and lets a worker transfer it back", async () => {
+    const server = app();
+    const comercio = await signedIn(server, "caja@taller.cl");
+    const created = await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" });
+    expect(created.status).toBe(201);
+    expect(created.body.company.balance).toBe(0);
+    expect(created.body.company.last4).toMatch(/^\d{4}$/);
+    expect(created.body.company.color).toBe("#0e3e66");
+    const id = created.body.company.id;
+
+    const titular = await signedIn(server, "ana@proveedorregional.cl");
+    const denied = await titular.post("/api/empresas").send({ name: "Ana", color: "#112233" });
+    expect(denied.status).toBe(403);
+    expect((await comercio.post(`/api/empresas/${id}/abono`).send({ amount: 50_000 })).status).toBe(403);
+    expect((await comercio.post("/api/empresas").send({ name: "Sin color", color: "azul" })).status).toBe(400);
+
+    const operacion = await signedIn(server);
+    const funded = await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 50_000 });
+    expect(funded.status).toBe(200);
+    expect(funded.body.company.balance).toBe(50_000);
+    expect((await operacion.get("/api/overview")).body.float.balance).toBe(0);
+
+    const other = await signedIn(server, "pago@norte.cl");
+    expect((await other.get("/api/empresas")).body.companies).toEqual([]);
+    expect((await other.post(`/api/empresas/${id}/trabajadores`).send({ name: "Ana Díaz", email: "ana@proveedorregional.cl" })).status).toBe(403);
+
+    const withWorker = await comercio.post(`/api/empresas/${id}/trabajadores`).send({
+      name: "Ana Díaz",
+      email: "ana@proveedorregional.cl",
+    });
+    expect(withWorker.status).toBe(201);
+    const workerId = withWorker.body.company.workers[0].id;
+    const moved = await comercio.post(`/api/empresas/${id}/transferencias`).send({
+      workerId,
+      amount: 20_000,
+      direction: "to_worker",
+    });
+    expect(moved.status).toBe(200);
+    expect(moved.body.company.balance).toBe(30_000);
+    expect(moved.body.company.workers[0].balance).toBe(20_000);
+
+    const own = await titular.get("/api/empresas");
+    expect(own.status).toBe(200);
+    expect(own.body.canCreate).toBe(false);
+    expect(own.body.companies).toHaveLength(1);
+    expect(own.body.companies[0].displayBalance).toBe("—");
+    expect(own.body.companies[0].workers).toHaveLength(1);
+    expect(own.body.companies[0].workers[0].balance).toBe(20_000);
+    expect(own.body.companies[0].transfers.every((item: { kind: string }) => item.kind !== "abono")).toBe(true);
+
+    const back = await titular.post(`/api/empresas/${id}/transferencias`).send({
+      workerId,
+      amount: 5_000,
+      direction: "to_company",
+    });
+    expect(back.status).toBe(200);
+    expect(back.body.company.workers[0].balance).toBe(15_000);
+    expect(back.body.company.displayBalance).toBe("—");
+
+    const tooMuch = await titular.post(`/api/empresas/${id}/transferencias`).send({
+      workerId,
+      amount: 999_999,
+      direction: "to_company",
+    });
+    expect(tooMuch.status).toBe(422);
+    expect(tooMuch.body.error).toBe("Saldo insuficiente en la tarjeta");
+    expect((await titular.post(`/api/empresas/${id}/transferencias`).send({
+      workerId,
+      amount: 1_000,
+      direction: "to_worker",
+    })).status).toBe(403);
+    expect((await operacion.get("/api/overview")).body.float.balance).toBe(0);
+    expect((await operacion.get("/api/empresas")).body.companies[0].balance).toBe(35_000);
   });
 });

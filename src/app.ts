@@ -196,6 +196,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     if (options.has("cards")) body.cards = platform.tarjetas.list();
     if (options.has("design")) body.design = platform.diseno.current();
     if (options.has("apps")) body.app = platform.apps.current();
+    if (options.has("empresas")) body.empresas = platform.empresas.list(companyActor(res));
     res.json(body);
   });
 
@@ -346,6 +347,73 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         gateway: asGateway(body.gateway, config.defaultGateway),
       });
       res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/empresas", (_req: Request, res: Response) => {
+    res.json(platform.empresas.list(companyActor(res)));
+  });
+
+  app.post("/api/empresas", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const company = platform.empresas.create(companyActor(res), {
+        name: String(body.name ?? ""),
+        color: String(body.color ?? ""),
+      });
+      res.status(201).json({ company });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/empresas/:id/trabajadores", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const company = platform.empresas.addWorker(companyActor(res), String(req.params.id), {
+        name: String(body.name ?? ""),
+        email: String(body.email ?? ""),
+      });
+      res.status(201).json({ company });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/empresas/:id/abono", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    if (body.amount === undefined) {
+      res.status(400).json({ error: "amount es requerido" });
+      return;
+    }
+    try {
+      const company = platform.empresas.fund(companyActor(res), String(req.params.id), Number(body.amount));
+      res.status(200).json({ company });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/empresas/:id/transferencias", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    if (body.amount === undefined || !body.workerId) {
+      res.status(400).json({ error: "amount y workerId son requeridos" });
+      return;
+    }
+    const direction = body.direction === "to_company" ? "to_company" : body.direction === "to_worker" ? "to_worker" : "";
+    if (!direction) {
+      res.status(400).json({ error: "direction debe ser to_worker o to_company" });
+      return;
+    }
+    try {
+      const company = platform.empresas.transfer(companyActor(res), String(req.params.id), {
+        workerId: String(body.workerId),
+        amount: Number(body.amount),
+        direction,
+      });
+      res.status(200).json({ company });
     } catch (error) {
       handleError(error, res);
     }
@@ -564,6 +632,11 @@ function withPublishableKey<T extends { charge: { clientSecret?: string } }>(
       publishableKey: result.charge.clientSecret ? config.stripePublishableKey : undefined,
     },
   };
+}
+
+function companyActor(res: Response) {
+  const user = res.locals.user as SessionUser;
+  return { id: user.id, email: user.email, role: user.role };
 }
 
 function handleError(error: unknown, res: Response): void {

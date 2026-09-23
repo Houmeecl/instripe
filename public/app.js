@@ -10,6 +10,8 @@ const state = {
   connect: [],
   treasury: [],
   cards: [],
+  companies: [],
+  canCreateCompany: false,
   design: null,
   appManifest: null,
   stripeEvents: [],
@@ -63,6 +65,12 @@ const NAV = [
       { route: "plans", label: "Crédito TC", icon: "layers", title: "Crédito de la TC", sub: "La póliza cubre el cupo de la tarjeta" },
       { route: "policies", label: "Pólizas", icon: "shield", title: "Pólizas", sub: "Seguro del crédito de cada tarjeta" },
       { route: "claims", label: "Siniestros", icon: "zap", title: "Siniestros", sub: "Pagos a beneficiarios" },
+    ],
+  },
+  {
+    group: "Prepago",
+    items: [
+      { route: "empresas", label: "Empresas", icon: "card", title: "Empresas", sub: "Tarjeta de la empresa, prepago de cada trabajador y transferencias" },
     ],
   },
   {
@@ -369,6 +377,14 @@ async function refresh() {
   state.connect = allowed("connect") ? (await api("/api/connect")).accounts || [] : [];
   state.treasury = allowed("treasury") ? (await api("/api/treasury")).accounts || [] : [];
   state.cards = allowed("cards") ? (await api("/api/tarjetas")).cards || [] : [];
+  if (allowed("empresas")) {
+    const empresas = await api("/api/empresas");
+    state.companies = empresas.companies || [];
+    state.canCreateCompany = Boolean(empresas.canCreate);
+  } else {
+    state.companies = [];
+    state.canCreateCompany = false;
+  }
   if (allowed("design")) {
     state.design = (await api("/api/diseno")).design;
     applyDesign(state.design);
@@ -427,6 +443,7 @@ const VIEWS = {
   connect: viewConnect,
   treasury: viewTreasury,
   cards: viewCards,
+  empresas: viewEmpresas,
   design: viewDesign,
   apps: viewApps,
   payments: viewPayments,
@@ -517,6 +534,7 @@ function viewOverview() {
     ["connect", "arrow", "Comercios"],
     ["treasury", "wallet", "Caja"],
     ["cards", "card", "Tarjetas"],
+    ["empresas", "card", "Empresas"],
   ].filter(([route]) => allowed(route));
   const activity = allowed("payments")
     ? `<div class="card"><div class="card-head"><h3>Actividad reciente</h3><a class="btn btn-ghost btn-sm" href="#/payments">Admin técnico</a></div><div class="card-body flush">${movementFeed(payments, false)}</div></div>`
@@ -800,6 +818,105 @@ function viewApps() {
   </div>`;
 }
 
+function safeColor(color) {
+  return /^#[0-9a-fA-F]{6}$/.test(color || "") ? color : "#0e3e66";
+}
+
+function prepaidPlastic(card, color, kicker) {
+  return `<article class="plastic prepaid" style="background:linear-gradient(145deg, ${safeColor(color)}, #102033)">
+    <span class="prepaid-kicker">${escapeAttr(kicker)}</span>
+    <b>${escapeAttr(card.name)}</b>
+    <em>•••• ${escapeAttr(card.last4)}</em>
+    <strong class="prepaid-balance">${escapeAttr(card.displayBalance)}</strong>
+  </article>`;
+}
+
+function transferLabel(transfer) {
+  if (transfer.kind === "abono") return "Abono interno a la empresa";
+  if (transfer.kind === "to_worker") return `Hacia ${transfer.workerName || "el trabajador"}`;
+  return `Desde ${transfer.workerName || "el trabajador"} a la empresa`;
+}
+
+function companyBlock(company) {
+  const workers = company.workers.length
+    ? `<div class="prepaid-grid">${company.workers.map((worker) => prepaidPlastic(worker, company.color, "Prepago")).join("")}</div>`
+    : `<div class="empty">${icon("inbox")}<div>Esta empresa todavía no tiene trabajadores con prepago.</div></div>`;
+  const fund = company.canFund
+    ? `<div class="inline-form">
+        <div class="field"><label>Abono interno</label><input id="fund-${company.id}" inputmode="numeric" placeholder="50000" /></div>
+        <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-fund-company="${company.id}">${icon("plus")} Cargar prepago</button></div>
+      </div>
+      <p class="hint">Solo operación carga el saldo. El abono no pasa por Stripe.</p>`
+    : "";
+  const add = company.canManage
+    ? `<div class="inline-form">
+        <div class="field"><label>Trabajador</label><input id="worker-name-${company.id}" placeholder="Ana Díaz" /></div>
+        <div class="field"><label>Correo</label><input id="worker-email-${company.id}" type="email" placeholder="ana@proveedorregional.cl" /></div>
+        <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" data-add-worker="${company.id}">${icon("plus")} Agregar prepago</button></div>
+      </div>`
+    : "";
+  let transfer = `<p class="hint">Agrega un trabajador para transferir prepago.</p>`;
+  if (company.workers.length && (company.canManage || company.ownWorkerId)) {
+    const options = company.workers
+      .map((worker) => `<option value="${escapeAttr(worker.id)}">${escapeAttr(worker.name)}</option>`)
+      .join("");
+    const directions = company.canManage
+      ? `<div class="field"><label>Hacia</label><select id="dir-${company.id}"><option value="to_worker">Al trabajador</option><option value="to_company">A la empresa</option></select></div>`
+      : `<input id="dir-${company.id}" type="hidden" value="to_company" />`;
+    transfer = `<div class="inline-form">
+      <div class="field"><label>Tarjeta</label><select id="who-${company.id}">${options}</select></div>
+      <div class="field"><label>Monto</label><input id="amt-${company.id}" inputmode="numeric" placeholder="10000" /></div>
+      ${directions}
+      <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-transfer="${company.id}">${icon("arrow")} Transferir</button></div>
+    </div>`;
+  }
+  const moves = company.transfers.length
+    ? `<ul class="feed">${company.transfers
+        .map(
+          (item) => `<li><div class="fi">${icon("arrow")}</div><div><div class="ft"><b>${escapeAttr(item.displayAmount)}</b> ${escapeAttr(transferLabel(item))}</div><div class="fdate">${escapeAttr(String(item.createdAt).slice(0, 16).replace("T", " "))}</div></div></li>`,
+        )
+        .join("")}</ul>`
+    : `<div class="empty">${icon("inbox")}<div>Sin transferencias todavía.</div></div>`;
+  return `<div class="card company-block">
+    <div class="card-head"><h3>${escapeAttr(company.name)}</h3><span class="pill">Prepago interno</span></div>
+    <div class="card-body">
+      <div class="prepaid-grid">${prepaidPlastic(company.card, company.color, "Empresa")}</div>
+      ${fund}
+      <h2 class="section-title">Trabajadores</h2>
+      ${workers}
+      ${add}
+      <h2 class="section-title">Transferir</h2>
+      ${transfer}
+      <h2 class="section-title">Revisar</h2>
+      ${moves}
+    </div>
+  </div>`;
+}
+
+function viewEmpresas() {
+  const companies = state.companies || [];
+  const create = state.canCreateCompany
+    ? `<div class="card" style="margin-bottom:20px">
+        <div class="card-head"><h3>Nueva empresa</h3></div>
+        <div class="card-body">
+          <p class="hint">La tarjeta usa el color de la empresa. El prepago queda en esa tarjeta y no sale por Stripe.</p>
+          <div class="inline-form">
+            <div class="field"><label>Nombre</label><input id="emp-name" placeholder="Taller Sur" /></div>
+            <div class="field"><label>Color de la tarjeta</label><input id="emp-color" type="color" value="#0e3e66" /></div>
+            <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-create-company>${icon("plus")} Crear empresa</button></div>
+          </div>
+        </div>
+      </div>`
+    : "";
+  if (!companies.length) {
+    const empty = state.canCreateCompany
+      ? "Todavía no hay empresas con prepago."
+      : "Todavía no tienes un prepago. La empresa te agrega con tu correo.";
+    return `${create}<div class="card"><div class="card-body"><div class="empty">${icon("card")}<div>${empty}</div></div></div></div>`;
+  }
+  return create + companies.map((company) => companyBlock(company)).join("");
+}
+
 function escapeAttr(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -846,6 +963,79 @@ function viewPayments() {
     </div>`;
 }
 
+function pesos(id) {
+  const raw = String((document.getElementById(id) || {}).value || "").replace(/\D/g, "");
+  return raw ? Number(raw) : 0;
+}
+
+async function reloadEmpresas(message) {
+  toast(message);
+  await refresh();
+  route();
+}
+
+async function createCompany() {
+  try {
+    await api("/api/empresas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: document.getElementById("emp-name").value,
+        color: document.getElementById("emp-color").value,
+      }),
+    });
+    await reloadEmpresas("Empresa creada");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function fundCompany(companyId) {
+  try {
+    await api(`/api/empresas/${encodeURIComponent(companyId)}/abono`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount: pesos(`fund-${companyId}`) }),
+    });
+    await reloadEmpresas("Prepago cargado");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function addWorker(companyId) {
+  try {
+    await api(`/api/empresas/${encodeURIComponent(companyId)}/trabajadores`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: document.getElementById(`worker-name-${companyId}`).value,
+        email: document.getElementById(`worker-email-${companyId}`).value,
+      }),
+    });
+    await reloadEmpresas("Prepago del trabajador listo");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function transferPrepaid(companyId) {
+  try {
+    await api(`/api/empresas/${encodeURIComponent(companyId)}/transferencias`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        workerId: document.getElementById(`who-${companyId}`).value,
+        amount: pesos(`amt-${companyId}`),
+        direction: document.getElementById(`dir-${companyId}`).value,
+      }),
+    });
+    await reloadEmpresas("Transferencia hecha");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
 /* ---------------- view wiring ---------------- */
 function wireView(r) {
   if (r === "accounts") {
@@ -890,6 +1080,19 @@ function wireView(r) {
     if (open) open.onclick = () => openCardModal();
     document.querySelectorAll("[data-insure]").forEach((btn) => {
       btn.onclick = () => insureCard(state.cards.find((c) => c.id === btn.dataset.insure));
+    });
+  }
+  if (r === "empresas") {
+    const create = document.querySelector("[data-create-company]");
+    if (create) create.onclick = () => createCompany();
+    document.querySelectorAll("[data-fund-company]").forEach((btn) => {
+      btn.onclick = () => fundCompany(btn.dataset.fundCompany);
+    });
+    document.querySelectorAll("[data-add-worker]").forEach((btn) => {
+      btn.onclick = () => addWorker(btn.dataset.addWorker);
+    });
+    document.querySelectorAll("[data-transfer]").forEach((btn) => {
+      btn.onclick = () => transferPrepaid(btn.dataset.transfer);
     });
   }
   if (r === "design") {

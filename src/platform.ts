@@ -6,6 +6,7 @@ import { CobrosModule } from "./modules/cobros/module.js";
 import { ConnectModule } from "./modules/connect/module.js";
 import { CuentasModule } from "./modules/cuentas/module.js";
 import { DisenoModule } from "./modules/diseno/module.js";
+import { EmpresasModule } from "./modules/empresas/module.js";
 import { SegurosModule, type ClaimInput, type SubscribeInput } from "./modules/seguros/module.js";
 import { RegistroModule } from "./modules/registro/module.js";
 import { TarjetasModule } from "./modules/tarjetas/module.js";
@@ -31,6 +32,7 @@ export class Platform {
   readonly diseno: DisenoModule;
   readonly apps: AppsModule;
   readonly registro: RegistroModule;
+  readonly empresas: EmpresasModule;
   readonly auth: AuthModule;
 
   readonly store: PlatformStore;
@@ -47,11 +49,12 @@ export class Platform {
     this.diseno = new DisenoModule(this.payments, this.connect, config, this.store);
     this.apps = new AppsModule(config.appManifestPath);
     this.registro = new RegistroModule(this.cuentas, this.store);
+    this.empresas = new EmpresasModule(this.payments, this.store);
     this.auth = new AuthModule(this.store, config.seedPassword);
   }
 
   listModules() {
-    return [this.cuentas, this.cobros, this.seguros, this.connect, this.treasury, this.tarjetas, this.diseno, this.apps, this.registro].map((mod) => ({
+    return [this.cuentas, this.cobros, this.seguros, this.connect, this.treasury, this.tarjetas, this.diseno, this.apps, this.registro, this.empresas].map((mod) => ({
       id: mod.id,
       label: mod.label,
       connected: true as const,

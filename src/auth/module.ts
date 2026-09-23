@@ -10,6 +10,7 @@ export const OPTIONS = [
   "policies",
   "claims",
   "connect",
+  "empresas",
   "treasury",
   "cards",
   "design",
@@ -22,8 +23,8 @@ export type Role = "operacion" | "comercio" | "titular";
 
 const ROLE_OPTIONS: Record<Role, readonly Option[]> = {
   operacion: OPTIONS,
-  comercio: ["overview", "accounts", "cobros", "connect"],
-  titular: ["overview", "plans", "policies", "claims", "cards"],
+  comercio: ["overview", "accounts", "cobros", "connect", "empresas"],
+  titular: ["overview", "plans", "policies", "claims", "cards", "empresas"],
 };
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -84,6 +85,7 @@ export function requiredOption(pathname: string): Option | "any" | "deny" {
     [/^\/api\/policies$/, "policies"],
     [/^\/api\/claims$/, "claims"],
     [/^\/api\/connect(?:\/.*)?$/, "connect"],
+    [/^\/api\/empresas(?:\/.*)?$/, "empresas"],
     [/^\/api\/treasury(?:\/.*)?$/, "treasury"],
     [/^\/api\/tarjetas$/, "cards"],
     [/^\/api\/diseno$/, "design"],
