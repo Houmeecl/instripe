@@ -1,0 +1,265 @@
+import { randomUUID } from "node:crypto";
+import type { Role } from "../../auth/module.js";
+import type { GatewayName } from "../../config.js";
+import { PlatformError } from "../../errors.js";
+import type { Account } from "../../payments/ledger.js";
+import type { Payments } from "../../payments/service.js";
+import type { ChargeResult } from "../../gateways/types.js";
+import type { PlatformStore } from "../../store/db.js";
+import {
+  CREDITO_TC,
+  FROSTING,
+  PLANS,
+  RISK_CLASSES,
+  findRiskClass,
+  frostingPremium,
+  premiumForCupo,
+  type Claim,
+  type InsurancePlan,
+  type Policy,
+  type RiskClass,
+} from "./catalog.js";
+
+export interface SubscribeInput {
+  holderName: string;
+  email: string;
+  /** Tarjeta cuyo crédito queda asegurado. */
+  cardLabel: string;
+  /** Cupo / crédito de la tarjeta, en la moneda de la plataforma. */
+  cupo: number;
+  gateway: GatewayName;
+}
+
+export interface ClaimInput {
+  policyId: string;
+  amount: number;
+  beneficiary: string;
+  gateway: GatewayName;
+}
+
+export interface FrostingInput {
+  holderName: string;
+  email: string;
+  companyName: string;
+  workers: number;
+  riskClassId: string;
+  gateway: GatewayName;
+}
+
+const MODULE = "seguros";
+
+/**
+ * Seguros is a product module. It does not charge or pay out by itself:
+ * every premium and every claim goes through the payments core.
+ */
+export class SegurosModule {
+  readonly id = MODULE;
+  readonly label = "Seguros";
+  private readonly policies = new Map<string, Policy>();
+  private readonly claims: Claim[] = [];
+  private readonly rates = new Map<string, number>();
+
+  constructor(
+    private readonly payments: Payments,
+    private readonly store: PlatformStore,
+  ) {
+    for (const row of store.list<{ id: string; rate: number }>("frosting_rates")) {
+      this.rates.set(row.id, row.rate);
+    }
+    payments.onSettled((movement) => {
+      if (movement.module !== MODULE || movement.kind !== "collect") return;
+      const policy = this.policies.get(movement.reference);
+      if (!policy || policy.status !== "pending_payment") return;
+      policy.status = "active";
+      policy.paymentId = movement.id;
+      policy.checkoutSessionId = movement.externalId;
+    });
+  }
+
+  plans(): InsurancePlan[] {
+    return PLANS;
+  }
+
+  riskClasses(): RiskClass[] {
+    return RISK_CLASSES.map((risk) => ({ ...risk, rate: this.rateFor(risk.id) }));
+  }
+
+  /** Operación sets the actuarial rate. Courses do not own this view. */
+  setRiskRate(actorRole: Role, classId: string, rate: number): RiskClass[] {
+    if (actorRole !== "operacion") throw new PlatformError("Solo operación define la tasa", 403);
+    if (!findRiskClass(classId)) throw new PlatformError("Clase de riesgo desconocida", 400);
+    if (!Number.isInteger(rate) || rate <= 0) throw new PlatformError("La tasa tiene que ser un entero positivo", 400);
+    this.rates.set(classId, rate);
+    this.store.put("frosting_rates", classId, { id: classId, rate });
+    return this.riskClasses();
+  }
+
+  holdFrosting(input: Omit<FrostingInput, "gateway"> & { actorRole: Role }): { account: Account; policy: Policy } {
+    if (input.actorRole !== "operacion") throw new PlatformError("Solo operación configura la cuenta", 403);
+    const holderName = input.holderName.trim();
+    const email = input.email.trim();
+    const companyName = input.companyName.trim();
+    if (!holderName || !email.includes("@") || !companyName) {
+      throw new PlatformError("holderName, email y la empresa son requeridos", 400);
+    }
+    if (!Number.isInteger(input.workers) || input.workers <= 0) {
+      throw new PlatformError("La cantidad de trabajadores tiene que ser un entero positivo", 400);
+    }
+    const risk = findRiskClass(input.riskClassId);
+    if (!risk) throw new PlatformError("Clase de riesgo desconocida", 400);
+    const riskRate = this.rateFor(risk.id);
+    const premium = frostingPremium(input.workers, riskRate);
+    if (premium <= 0) throw new PlatformError("La prima de Frosting tiene que ser positiva", 400);
+
+    const account = this.payments.ledger.createAccount({
+      name: holderName,
+      email,
+      currency: this.payments.walletAccount.currency,
+    });
+    const policy: Policy = {
+      id: `pol_${randomUUID().slice(0, 8)}`,
+      planId: FROSTING.id,
+      accountId: account.id,
+      holderName,
+      cardLabel: "",
+      cupo: 0,
+      premium,
+      coverage: 0,
+      status: "pending_payment",
+      createdAt: new Date().toISOString(),
+      workers: input.workers,
+      riskClassId: risk.id,
+      riskRate,
+      companyName,
+    };
+    this.policies.set(policy.id, policy);
+    const movement = this.payments.openCollect({
+      module: MODULE,
+      reference: policy.id,
+      amount: premium,
+      description: `Prima Frosting ${companyName}`,
+    });
+    policy.paymentId = movement.id;
+    return { account, policy };
+  }
+
+  async subscribeFrosting(input: FrostingInput & { actorRole: Role }): Promise<{ account: Account; policy: Policy; charge: ChargeResult }> {
+    const { account, policy } = this.holdFrosting(input);
+    try {
+      const charge = await this.payments.chargeOpen(MODULE, policy.id, input.gateway, input.email);
+      policy.checkoutSessionId = charge.chargeId;
+      return { account, policy, charge };
+    } catch (error) {
+      this.policies.delete(policy.id);
+      this.payments.drop(MODULE, policy.id);
+      throw error;
+    }
+  }
+
+  listPolicies(): Policy[] {
+    return [...this.policies.values()];
+  }
+
+  listClaims(): Claim[] {
+    return [...this.claims];
+  }
+
+  holdPremium(input: Omit<SubscribeInput, "gateway">): { account: Account; policy: Policy } {
+    const cardLabel = input.cardLabel.trim();
+    if (!input.holderName.trim() || !input.email.trim() || !cardLabel) {
+      throw new PlatformError("holderName, email y la tarjeta son requeridos", 400);
+    }
+    if (!Number.isFinite(input.cupo) || input.cupo <= 0) {
+      throw new PlatformError("El crédito de la tarjeta debe ser positivo", 400);
+    }
+    const premium = premiumForCupo(input.cupo);
+    if (premium <= 0) throw new PlatformError("El crédito de la tarjeta es demasiado bajo", 400);
+
+    const account = this.payments.ledger.createAccount({
+      name: input.holderName,
+      email: input.email,
+      currency: this.payments.walletAccount.currency,
+    });
+    const policy: Policy = {
+      id: `pol_${randomUUID().slice(0, 8)}`,
+      planId: CREDITO_TC.id,
+      accountId: account.id,
+      holderName: input.holderName,
+      cardLabel,
+      cupo: input.cupo,
+      premium,
+      coverage: input.cupo,
+      status: "pending_payment",
+      createdAt: new Date().toISOString(),
+    };
+    this.policies.set(policy.id, policy);
+    const movement = this.payments.openCollect({
+      module: MODULE,
+      reference: policy.id,
+      amount: premium,
+      description: `Prima crédito ${cardLabel}`,
+    });
+    policy.paymentId = movement.id;
+    return { account, policy };
+  }
+
+  async subscribe(input: SubscribeInput): Promise<{ account: Account; policy: Policy; charge: ChargeResult }> {
+    const { account, policy } = this.holdPremium(input);
+    try {
+      const charge = await this.payments.chargeOpen(MODULE, policy.id, input.gateway, input.email);
+      policy.checkoutSessionId = charge.chargeId;
+      return { account, policy, charge };
+    } catch (error) {
+      this.policies.delete(policy.id);
+      this.payments.drop(MODULE, policy.id);
+      throw error;
+    }
+  }
+
+  async fileClaim(input: ClaimInput & { requestedBy: string }): Promise<{ claim: Claim; exitId: string; floatBalance: number }> {
+    const policy = this.policies.get(input.policyId);
+    if (!policy) throw new PlatformError(`Póliza desconocida: ${input.policyId}`, 404);
+    if (policy.status === "pending_payment") {
+      throw new PlatformError("La póliza espera la confirmación del pago", 409);
+    }
+    if (policy.status !== "active") throw new PlatformError("La póliza no está activa", 409);
+    if (policy.planId === FROSTING.id || policy.cupo <= 0) {
+      throw new PlatformError("Frosting no abre crédito", 422);
+    }
+    if (input.amount <= 0) throw new PlatformError("El monto del siniestro debe ser positivo", 400);
+    if (input.amount > policy.coverage) {
+      throw new PlatformError("El monto supera el crédito asegurado de la tarjeta", 422);
+    }
+
+    const claimId = `clm_${randomUUID().slice(0, 8)}`;
+    const exit = this.payments.requestExit({
+      module: MODULE,
+      reference: claimId,
+      amount: input.amount,
+      description: `Dispersión siniestro ${policy.id}`,
+      destination: input.beneficiary.trim(),
+      gateway: input.gateway,
+      requestedBy: input.requestedBy,
+    });
+    const claim: Claim = {
+      id: claimId,
+      policyId: policy.id,
+      amount: input.amount,
+      beneficiary: input.beneficiary,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    };
+    this.claims.push(claim);
+    return { claim, exitId: exit.id, floatBalance: this.payments.walletAccount.balance };
+  }
+
+  markClaimPaid(claimId: string): void {
+    const claim = this.claims.find((item) => item.id === claimId);
+    if (claim) claim.status = "paid";
+  }
+
+  private rateFor(classId: string): number {
+    const fallback = findRiskClass(classId)?.rate ?? 0;
+    return this.rates.get(classId) ?? fallback;
+  }
+}

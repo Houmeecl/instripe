@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Onboarding · Proveedor Regional</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560&family=Outfit:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/landing.css" />
+    <link rel="icon" href="/favicon.png" type="image/png" />
+  </head>
+  <body class="app-body">
+    <header class="app-bar">
+      <strong class="app-logo"><img src="/logo-mark.png" alt="" /> Proveedor Regional</strong>
+      <span id="app-mode">Términos</span>
+    </header>
+    <ol class="steps" id="steps">
+      <li data-step="tos" class="current"><span>1</span> Términos</li>
+      <li data-step="space"><span>2</span> Espacio ocupado</li>
+      <li data-step="dash"><span>3</span> Dashboard</li>
+    </ol>
+    <main id="stage" class="members" aria-live="polite">
+      <p class="loading">Cargando términos…</p>
+    </main>
+    <footer class="app-foot">Procesador de pagos: Stripe</footer>
+    <script src="/aplicacion.js"></script>
+  </body>
+</html>

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Proveedor Regional · Operación</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="icon" href="/favicon.png" type="image/png" />
+  </head>
+  <body>
+    <div id="gate" class="gate" hidden>
+      <form id="login-form" class="gate-card">
+        <img src="/logo-mark.png" alt="" />
+        <h1>Operación</h1>
+        <p class="lede">Entra con el correo de tu rol.</p>
+        <div class="field">
+          <label for="login-email">Correo</label>
+          <input id="login-email" type="email" autocomplete="username" required />
+        </div>
+        <div class="field">
+          <label for="login-password">Clave</label>
+          <input id="login-password" type="password" autocomplete="current-password" required />
+        </div>
+        <p id="login-error" class="gate-error" hidden></p>
+        <button class="btn btn-primary btn-block" type="submit">Entrar</button>
+      </form>
+    </div>
+
+    <div class="app" hidden>
+      <aside class="sidebar">
+        <a class="brand" href="/">
+          <img class="brand-logo" src="/logo-mark.png" alt="" />
+          <span class="brand-text">
+            <span class="brand-mark">Proveedor Regional</span>
+            <span class="brand-sub">Dashboard ocupado</span>
+          </span>
+        </a>
+        <nav class="nav" id="nav"></nav>
+        <div class="sidebar-foot">
+          <div class="whoami">
+            <strong id="who-name"></strong>
+            <span id="who-role"></span>
+            <div class="who-actions">
+              <button type="button" id="change-pass" class="btn btn-ghost btn-sm">Cambiar clave</button>
+              <button type="button" id="logout" class="btn btn-ghost btn-sm">Salir</button>
+            </div>
+          </div>
+          <div class="env-chip" id="env-chip">
+            <span class="dot"></span><span id="env-chip-text">Sandbox</span>
+          </div>
+          <p class="processor">Procesador de pagos: Stripe</p>
+        </div>
+      </aside>
+
+      <div class="main">
+        <header class="topbar">
+          <div class="page-heading">
+            <h1 id="page-title">Resumen</h1>
+            <p id="page-subtitle" class="page-sub">Vista general de la plataforma</p>
+          </div>
+          <div class="topbar-actions">
+            <div class="top-session">
+              <span id="top-role" class="badge"></span>
+              <button type="button" id="change-pass-top" class="btn btn-ghost btn-sm">Cambiar clave</button>
+              <button type="button" id="logout-top" class="btn btn-ghost btn-sm">Salir</button>
+            </div>
+            <label class="gw-select">
+              <span>Pasarela</span>
+              <select id="gateway"></select>
+            </label>
+            <span id="mode-badge" class="badge">…</span>
+          </div>
+        </header>
+
+        <main class="content" id="view"><div class="skeleton-page"></div></main>
+      </div>
+    </div>
+
+    <div id="modal-root"></div>
+    <div id="toast" class="toast" hidden></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
