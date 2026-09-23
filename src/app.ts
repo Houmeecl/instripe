@@ -622,6 +622,15 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
   });
 
+  app.post("/api/empresas/:id/cuentas-virtuales", (req: Request, res: Response) => {
+    try {
+      const result = platform.empresas.requestGlobalAccounts(companyActor(res), String(req.params.id));
+      res.status(result.created ? 201 : 200).json({ company: result.company });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
   app.post("/api/empresas/:id/transferencias", (req: Request, res: Response) => {
     const body = req.body ?? {};
     if (body.amount === undefined || !body.workerId) {

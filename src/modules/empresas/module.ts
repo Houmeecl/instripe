@@ -148,6 +148,7 @@ export interface CompanyView {
   transfers: Array<TransferRecord & { displayAmount: string }>;
   gifts: GiftView[];
   users: CompanyMemberView[];
+  globalAccounts: GlobalAccountsView;
 }
 
 export interface HomeView {
@@ -198,6 +199,54 @@ export interface GiftView {
   money: false;
 }
 
+/**
+ * Global66's public docs list GET /b2b/movements/{accountId} and
+ * POST /b2b/transactions/payments. They do not document opening an account.
+ * https://documents-b2b.global66.com/available-apis/movements/
+ */
+export const GLOBAL66_DOCS_NOTICE =
+  "La documentación pública de Global66 lista movimientos y pagos, no la apertura de cuentas. La solicitud queda pendiente y no tiene número de cuenta.";
+
+export type GlobalAccountKind = "cuenta_virtual" | "cuenta_puente";
+
+export interface GlobalAccountView {
+  id: string;
+  kind: GlobalAccountKind;
+  label: string;
+  purpose: string;
+  status: "pending";
+  /** Absent on purpose: Global66 did not return an account id. */
+  externalId: null;
+  createdAt: string;
+}
+
+export interface GlobalAccountsView {
+  notice: string;
+  accounts: GlobalAccountView[];
+}
+
+interface GlobalAccountRecord {
+  id: string;
+  companyId: string;
+  kind: GlobalAccountKind;
+  label: string;
+  purpose: string;
+  status: "pending";
+  externalId: null;
+  createdAt: string;
+}
+
+const GLOBAL_ACCOUNT_COPY: Record<GlobalAccountKind, { label: string; purpose: string }> = {
+  cuenta_virtual: {
+    label: "Cuenta virtual",
+    purpose: "Cuenta de la propia empresa.",
+  },
+  cuenta_puente: {
+    label: "Cuenta puente",
+    purpose: "Recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.",
+  },
+};
+
 export interface CompanyMemberView {
   id: string;
   name: string;
@@ -236,6 +285,7 @@ export class EmpresasModule {
   private readonly contractByCard = new Map<string, DebitContract>();
   private readonly gifts = new Map<string, GiftRecord>();
   private readonly members = new Map<string, CompanyMemberRecord>();
+  private readonly globalAccounts: GlobalAccountRecord[] = [];
 
   constructor(
     private readonly payments: Payments,
@@ -247,6 +297,7 @@ export class EmpresasModule {
     for (const contract of store.list<DebitContract>("debit_contracts")) this.rememberContract(contract, false);
     for (const gift of store.list<GiftRecord>("virtual_gifts")) this.gifts.set(gift.id, gift);
     for (const member of store.list<CompanyMemberRecord>("company_users")) this.members.set(member.id, member);
+    this.globalAccounts.push(...store.list<GlobalAccountRecord>("company_global_accounts"));
   }
 
   list(actor: CompanyActor): { companies: CompanyView[]; canCreate: boolean } {
@@ -600,6 +651,25 @@ export class EmpresasModule {
     return this.present(actor, company);
   }
 
+  /**
+   * Local request for the company's cuenta virtual and cuenta puente.
+   * Global66 does not document an account-opening call, so nothing is sent
+   * and no account number is invented. Debit balances stay untouched.
+   */
+  requestGlobalAccounts(actor: CompanyActor, companyId: string): { company: CompanyView; created: boolean } {
+    const company = this.require(companyId);
+    if (!this.canManage(actor, company)) throw new PlatformError("Esta empresa no está en tu rol", 403);
+    const existing = this.globalAccounts.filter((account) => account.companyId === company.id);
+    const createdAt = new Date().toISOString();
+    let created = false;
+    for (const kind of ["cuenta_virtual", "cuenta_puente"] as const) {
+      if (existing.some((account) => account.kind === kind)) continue;
+      this.rememberGlobal(pendingGlobalAccount(company.id, kind, createdAt));
+      created = true;
+    }
+    return { company: this.present(actor, company), created };
+  }
+
   private present(actor: CompanyActor, company: CompanyRecord): CompanyView {
     const manage = this.canManage(actor, company);
     const currency = this.payments.walletAccount.currency;
@@ -652,6 +722,10 @@ export class EmpresasModule {
       }),
       gifts: this.visibleGifts(actor, company),
       users: manage ? this.membersOf(company.id) : [],
+      globalAccounts: {
+        notice: GLOBAL66_DOCS_NOTICE,
+        accounts: manage ? this.globalAccountsOf(company.id) : [],
+      },
       transfers: this.transfers
         .filter((transfer) => transfer.companyId === company.id)
         .filter((transfer) => manage || transfer.workerId === own?.id)
@@ -746,6 +820,27 @@ export class EmpresasModule {
   private remember(transfer: TransferRecord): void {
     this.transfers.push(transfer);
     this.store.put("company_transfers", transfer.id, transfer);
+  }
+
+  private rememberGlobal(account: GlobalAccountRecord): void {
+    this.globalAccounts.push(account);
+    this.store.put("company_global_accounts", account.id, account);
+  }
+
+  private globalAccountsOf(companyId: string): GlobalAccountView[] {
+    const order: Record<GlobalAccountKind, number> = { cuenta_virtual: 0, cuenta_puente: 1 };
+    return this.globalAccounts
+      .filter((account) => account.companyId === companyId)
+      .sort((left, right) => order[left.kind] - order[right.kind])
+      .map((account) => ({
+        id: account.id,
+        kind: account.kind,
+        label: account.label,
+        purpose: account.purpose,
+        status: "pending",
+        externalId: null,
+        createdAt: account.createdAt,
+      }));
   }
 
   private rememberContract(contract: DebitContract, persist = true): void {
@@ -850,6 +945,20 @@ function presentGift(gift: GiftRecord, access: { reveal: boolean; canActivate: b
     qr: showCode ? gift.qr : null,
     createdAt: gift.createdAt,
     money: false,
+  };
+}
+
+function pendingGlobalAccount(companyId: string, kind: GlobalAccountKind, createdAt: string): GlobalAccountRecord {
+  const copy = GLOBAL_ACCOUNT_COPY[kind];
+  return {
+    id: `gac_${randomUUID().slice(0, 8)}`,
+    companyId,
+    kind,
+    label: copy.label,
+    purpose: copy.purpose,
+    status: "pending",
+    externalId: null,
+    createdAt,
   };
 }
 

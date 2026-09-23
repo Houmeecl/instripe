@@ -1477,4 +1477,106 @@ describe("instripe BaaS platform", () => {
     expect(panel.text).toContain("Usuario de la empresa");
     expect(panel.text).toContain("Cada empresa y cada cliente tiene su propio usuario");
   });
+
+  it("stores a pending cuenta virtual and cuenta puente without moving debit balances", async () => {
+    const server = app();
+    const comercio = await signedIn(server, "caja@taller.cl");
+    const created = await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" });
+    expect(created.status).toBe(201);
+    const id = created.body.company.id;
+    expect(created.body.company.globalAccounts.accounts).toEqual([]);
+    expect(created.body.company.globalAccounts.notice).toContain("movimientos y pagos");
+    expect(created.body.company.globalAccounts.notice).toContain("no la apertura de cuentas");
+
+    const operacion = await signedIn(server);
+    const funded = await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 40_000 });
+    expect(funded.body.company.balance).toBe(40_000);
+    const withWorker = await comercio.post(`/api/empresas/${id}/trabajadores`).send({
+      name: "Ana Díaz",
+      email: "ana@proveedorregional.cl",
+    });
+    const workerId = withWorker.body.company.workers[0].id;
+    const moved = await comercio.post(`/api/empresas/${id}/transferencias`).send({
+      workerId,
+      amount: 12_000,
+      direction: "to_worker",
+    });
+    expect(moved.body.company.balance).toBe(28_000);
+    const beforeMoves = moved.body.company.card.movements;
+
+    const originalFetch = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      throw new Error("no se debe llamar a Global66");
+    }) as typeof fetch;
+    let requested: Awaited<ReturnType<typeof comercio.post>>;
+    try {
+      requested = await comercio.post(`/api/empresas/${id}/cuentas-virtuales`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(calls).toEqual([]);
+    expect(requested.status).toBe(201);
+    expect(requested.body.company.balance).toBe(28_000);
+    expect(requested.body.company.card.balance).toBe(28_000);
+    expect(requested.body.company.card.available).toBe(0);
+    expect(requested.body.company.card.movements).toEqual(beforeMoves);
+    expect(requested.body.company.workers[0].balance).toBe(0);
+    const accounts = requested.body.company.globalAccounts.accounts;
+    expect(accounts.map((account: { kind: string }) => account.kind)).toEqual(["cuenta_virtual", "cuenta_puente"]);
+    expect(accounts.every((account: { status: string; externalId: null }) => account.status === "pending" && account.externalId === null)).toBe(true);
+    expect(accounts.every((account: { accountNumber?: string }) => account.accountNumber === undefined)).toBe(true);
+    const bridge = accounts.find((account: { kind: string }) => account.kind === "cuenta_puente");
+    expect(bridge.purpose).toBe("Recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.");
+    expect(accounts.find((account: { kind: string }) => account.kind === "cuenta_virtual").label).toBe("Cuenta virtual");
+
+    const titular = await signedIn(server, "ana@proveedorregional.cl");
+    const own = await titular.get("/api/empresas");
+    expect(own.body.companies[0].workers[0].balance).toBe(12_000);
+    expect(own.body.companies[0].globalAccounts.accounts).toEqual([]);
+    expect((await titular.post(`/api/empresas/${id}/cuentas-virtuales`)).status).toBe(403);
+
+    const again = await comercio.post(`/api/empresas/${id}/cuentas-virtuales`);
+    expect(again.status).toBe(200);
+    expect(again.body.company.globalAccounts.accounts.map((account: { id: string }) => account.id)).toEqual(
+      accounts.map((account: { id: string }) => account.id),
+    );
+    expect(again.body.company.balance).toBe(28_000);
+    expect((await operacion.get("/api/overview")).body.float.balance).toBe(0);
+
+    const other = await signedIn(server, "pago@norte.cl");
+    expect((await other.post(`/api/empresas/${id}/cuentas-virtuales`)).status).toBe(403);
+    const otherCreated = await other.post("/api/empresas").send({ name: "Oficina Norte", color: "#112233" });
+    const otherId = otherCreated.body.company.id;
+    const otherRequest = await other.post(`/api/empresas/${otherId}/cuentas-virtuales`);
+    expect(otherRequest.status).toBe(201);
+    const otherAccounts = otherRequest.body.company.globalAccounts.accounts;
+    expect(otherAccounts).toHaveLength(2);
+    const otherIds = otherAccounts.map((account: { id: string }) => account.id);
+    const tallerIds = accounts.map((account: { id: string }) => account.id);
+    expect(otherIds.some((accountId: string) => tallerIds.includes(accountId))).toBe(false);
+
+    const tallerView = await comercio.get("/api/empresas");
+    expect(tallerView.body.companies).toHaveLength(1);
+    expect(tallerView.body.companies[0].id).toBe(id);
+    expect(tallerView.body.companies[0].globalAccounts.accounts.map((account: { id: string }) => account.id)).toEqual(tallerIds);
+    expect(tallerView.body.companies[0].balance).toBe(28_000);
+    expect(JSON.stringify(tallerView.body)).not.toContain(otherId);
+
+    const norteView = await other.get("/api/empresas");
+    expect(norteView.body.companies.map((company: { id: string }) => company.id)).toEqual([otherId]);
+    expect(norteView.body.companies[0].globalAccounts.accounts.map((account: { id: string }) => account.id)).toEqual(otherIds);
+    expect(JSON.stringify(norteView.body)).not.toContain(id);
+
+    const seen = await operacion.get("/api/empresas");
+    const byId = new Map(seen.body.companies.map((company: { id: string; globalAccounts: { accounts: { id: string }[] } }) => [company.id, company]));
+    expect((byId.get(id) as { globalAccounts: { accounts: { id: string }[] } }).globalAccounts.accounts.map((account) => account.id)).toEqual(tallerIds);
+    expect((byId.get(otherId) as { globalAccounts: { accounts: { id: string }[] } }).globalAccounts.accounts.map((account) => account.id)).toEqual(otherIds);
+
+    const panel = await request(server).get("/app.js");
+    expect(panel.text).toContain("Solicitar cuenta virtual y cuenta puente");
+    expect(panel.text).toContain("Recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.");
+    expect(panel.text).toContain("Sin número de cuenta");
+  });
 });

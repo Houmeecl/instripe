@@ -1131,6 +1131,39 @@ function cardControls(company, card) {
   </div>`;
 }
 
+function globalAccountsBox(company) {
+  if (!company.canManage || !company.globalAccounts) return "";
+  const accounts = company.globalAccounts.accounts || [];
+  const rows = accounts.length
+    ? `<div class="account-pair">${accounts
+        .map(
+          (account) => `<article>
+            <div class="account-head"><h3>${escapeAttr(account.label)}</h3><span class="pill amber">Pendiente</span></div>
+            <p class="hint">${escapeAttr(account.purpose)}</p>
+            <p class="funds-note">Sin número de cuenta</p>
+          </article>`,
+        )
+        .join("")}</div>`
+    : `<div class="account-pair">
+        <article>
+          <div class="account-head"><h3>Cuenta virtual</h3></div>
+          <p class="hint">Cuenta de la propia empresa.</p>
+        </article>
+        <article>
+          <div class="account-head"><h3>Cuenta puente</h3></div>
+          <p class="hint">Recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.</p>
+        </article>
+      </div>`;
+  const action = accounts.length >= 2
+    ? `<p class="hint">La solicitud ya está pendiente. No hay número de cuenta.</p>`
+    : `<button class="btn btn-primary" data-global-accounts="${escapeAttr(company.id)}">${icon("plus")} Solicitar cuenta virtual y cuenta puente</button>`;
+  return `<h2 class="section-title">Cuenta virtual y cuenta puente</h2>
+    <p class="funds-note">${escapeAttr(company.globalAccounts.notice || "")}</p>
+    <p class="hint">La cuenta puente recibe una transferencia destinada a Stripe. No mueve dinero por sí sola.</p>
+    ${rows}
+    ${action}`;
+}
+
 function transferLabel(transfer) {
   if (transfer.kind === "abono") return "Abono interno a la empresa";
   if (transfer.kind === "to_worker") return `Hacia ${transfer.workerName || "el trabajador"}`;
@@ -1238,6 +1271,7 @@ function companyBlock(company) {
       <div class="vcard-layout">${virtualCard(company.card, company.color, "Empresa")}</div>
       ${contractBox(company.card.contract)}
       ${logoForm(company)}
+      ${globalAccountsBox(company)}
       ${fund}
       ${cardControls(company, company.card)}
       <h2 class="section-title">Trabajadores</h2>
@@ -1616,6 +1650,15 @@ async function saveRiskRate(classId) {
   }
 }
 
+async function requestGlobalAccounts(companyId) {
+  try {
+    await api(`/api/empresas/${encodeURIComponent(companyId)}/cuentas-virtuales`, { method: "POST" });
+    await reloadEmpresas("Solicitud pendiente guardada");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
 async function transferPrepaid(companyId) {
   try {
     await api(`/api/empresas/${encodeURIComponent(companyId)}/transferencias`, {
@@ -1701,6 +1744,9 @@ function wireView(r) {
     });
     document.querySelectorAll("[data-transfer]").forEach((btn) => {
       btn.onclick = () => transferPrepaid(btn.dataset.transfer);
+    });
+    document.querySelectorAll("[data-global-accounts]").forEach((btn) => {
+      btn.onclick = () => requestGlobalAccounts(btn.dataset.globalAccounts);
     });
     document.querySelectorAll("[data-save-card]").forEach((btn) => {
       btn.onclick = () => saveCardOptions(btn.dataset.saveCard);
