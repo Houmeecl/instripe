@@ -158,7 +158,9 @@ let routed = false;
 async function boot() {
   document.getElementById("login-form").addEventListener("submit", onLogin);
   document.getElementById("logout").addEventListener("click", onLogout);
+  document.getElementById("logout-top").addEventListener("click", onLogout);
   document.getElementById("change-pass").addEventListener("click", openPasswordModal);
+  document.getElementById("change-pass-top").addEventListener("click", openPasswordModal);
   try {
     const session = await api("/api/session");
     if (session.user) await enter(session.user);
@@ -217,6 +219,7 @@ async function enter(user) {
   document.querySelector(".app").hidden = false;
   document.getElementById("who-name").textContent = user.name;
   document.getElementById("who-role").textContent = user.roleLabel;
+  document.getElementById("top-role").textContent = user.roleLabel;
   renderNav();
   try {
     state.health = await api("/health");

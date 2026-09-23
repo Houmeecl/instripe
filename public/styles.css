@@ -821,3 +821,9 @@ code.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
 .gate-card h1 { margin: 14px 0 6px; font-size: 28px; letter-spacing: -0.03em; }
 .gate-card .lede { margin: 0 0 18px; color: var(--muted); }
 .gate-error { color: var(--red); font-size: 13px; margin: 0 0 12px; }
+
+.top-session { display: none; align-items: center; gap: 8px; }
+@media (max-width: 900px) {
+  .whoami { display: none; }
+  .top-session { display: flex; }
+}
