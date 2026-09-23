@@ -2,6 +2,8 @@ export type GatewayName = "stripe" | "chile";
 
 export interface AppConfig {
   port: number;
+  /** Address the HTTP server binds to. */
+  bindHost: string;
   /** Base currency for the platform (Chile-first: CLP). */
   currency: string;
   publicBaseUrl: string;
@@ -27,6 +29,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const defaultGateway: GatewayName = env.DEFAULT_GATEWAY === "stripe" ? "stripe" : "chile";
   return {
     port,
+    bindHost: env.BIND_HOST?.trim() || "0.0.0.0",
     currency: (env.CURRENCY ?? "clp").toLowerCase(),
     publicBaseUrl: env.PUBLIC_BASE_URL ?? `http://localhost:${port}`,
     defaultGateway,

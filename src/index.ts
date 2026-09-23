@@ -7,11 +7,11 @@ loadDotEnv();
 const config = loadConfig();
 const app = createApp(config);
 
-app.listen(config.port, () => {
+app.listen(config.port, config.bindHost, () => {
   const stripe = isStripeConfigured(config) ? "live" : "demo";
   const chile = isChileConfigured(config) ? "live" : "demo";
   console.log(
-    `instripe BaaS listening on http://localhost:${config.port} ` +
+    `instripe BaaS listening on http://${config.bindHost}:${config.port} ` +
       `[currency=${config.currency}, default=${config.defaultGateway}, stripe=${stripe}, chile=${chile}]`,
   );
 });

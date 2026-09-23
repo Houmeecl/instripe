@@ -158,7 +158,8 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         email: String(body.email ?? ""),
         accepted: body.accepted === true,
       });
-      res.setHeader("Set-Cookie", `pr_tos=${result.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`);
+      const secure = config.publicBaseUrl.startsWith("https://") ? "; Secure" : "";
+      res.setHeader("Set-Cookie", `pr_tos=${result.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200${secure}`);
       res.status(201).json({ acceptance: result.acceptance, space: platform.registro.space() });
     } catch (error) {
       handleError(error, res);
