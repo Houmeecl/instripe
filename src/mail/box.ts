@@ -7,8 +7,11 @@ import { isMailConfigured } from "../config.js";
 export interface MailSummary {
   uid: number;
   from: string;
+  fromName: string;
+  fromEmail: string;
   subject: string;
   date: string;
+  preview: string;
   seen: boolean;
 }
 
@@ -24,7 +27,79 @@ function quoteImap(value: string): string {
 
 function headerValue(header: string, name: string): string {
   const match = header.match(new RegExp(`^${name}:\\s*(.*)$`, "im"));
-  return (match?.[1] ?? "").replace(/\s+/g, " ").trim();
+  return decodeWords((match?.[1] ?? "").replace(/\s+/g, " ").trim());
+}
+
+function decodeWords(value: string): string {
+  return value.replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, (_all, _charset, encoding, text) => {
+    if (String(encoding).toUpperCase() === "B") return Buffer.from(text, "base64").toString("utf8");
+    const bytes: number[] = [];
+    const source = String(text).replace(/_/g, " ");
+    for (let i = 0; i < source.length; i += 1) {
+      if (source[i] === "=" && /[0-9A-Fa-f]{2}/.test(source.slice(i + 1, i + 3))) {
+        bytes.push(Number.parseInt(source.slice(i + 1, i + 3), 16));
+        i += 2;
+      } else {
+        bytes.push(source.charCodeAt(i));
+      }
+    }
+    return Buffer.from(bytes).toString("utf8");
+  });
+}
+
+function decodeQuotedPrintable(value: string): string {
+  const bytes: number[] = [];
+  const source = value.replace(/=\r?\n/g, "");
+  for (let i = 0; i < source.length; i += 1) {
+    if (source[i] === "=" && /[0-9A-Fa-f]{2}/.test(source.slice(i + 1, i + 3))) {
+      bytes.push(Number.parseInt(source.slice(i + 1, i + 3), 16));
+      i += 2;
+    } else {
+      bytes.push(source.charCodeAt(i) & 0xff);
+    }
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
+function htmlToText(value: string): string {
+  return value
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function messageText(raw: string): string {
+  let text = raw.replace(/\)\s*$/, "").trim();
+  if (/^content-type:/im.test(text) || /^content-transfer-encoding:/im.test(text)) {
+    const parts = text.split(/\r?\n\r?\n/);
+    const headers = parts.shift() ?? "";
+    text = parts.join("\n\n");
+    if (/quoted-printable/i.test(headers)) text = decodeQuotedPrintable(text);
+    else if (/base64/i.test(headers)) text = Buffer.from(text.replace(/\s/g, ""), "base64").toString("utf8");
+  }
+  return htmlToText(text);
+}
+
+function splitFrom(from: string): { name: string; email: string } {
+  const match = from.match(/^(.*)<([^>]+)>\s*$/);
+  if (!match) return { name: from || "Sin remitente", email: EMAIL.test(from) ? from : "" };
+  const email = match[2].trim();
+  const name = match[1].replace(/"/g, "").trim();
+  return { name: name || email, email };
+}
+
+function encodeSubject(subject: string): string {
+  if (/^[\u0020-\u007e]*$/.test(subject)) return subject;
+  return `=?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`;
 }
 
 class LineSocket {
@@ -142,13 +217,21 @@ function parseFetch(rows: string[]): MailSummary[] {
     const uid = Number(row.match(/\bUID (\d+)/)?.[1]);
     if (!uid) continue;
     const headerStart = row.indexOf("\r\n");
-    const header = headerStart >= 0 ? row.slice(headerStart + 2) : "";
+    const payload = headerStart >= 0 ? row.slice(headerStart + 2) : "";
+    const textAt = payload.search(/BODY\[TEXT\]/i);
+    const header = textAt >= 0 ? payload.slice(0, textAt) : payload;
+    const from = headerValue(header, "From") || "Sin remitente";
+    const who = splitFrom(from);
+    const previewSource = textAt >= 0 ? payload.slice(payload.indexOf("\r\n", textAt) + 2) : "";
     messages.push({
       uid,
-      from: headerValue(header, "From") || "Sin remitente",
+      from,
+      fromName: who.name,
+      fromEmail: who.email,
       subject: headerValue(header, "Subject") || "(sin asunto)",
       date: headerValue(header, "Date"),
-      seen: /\\Seen/.test(row),
+      preview: messageText(previewSource).replace(/\s+/g, " ").slice(0, 140),
+      seen: /\\Seen/.test(row.split("BODY[")[0] ?? row),
     });
   }
   return messages.sort((a, b) => b.uid - a.uid);
@@ -167,7 +250,7 @@ export async function listInbox(config: AppConfig): Promise<{ address: string; m
       .slice(-25);
     if (!uids.length) return { address: config.mail.user!, messages: [] };
     const fetched = await command(
-      `UID FETCH ${uids.join(",")} (UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])`,
+      `UID FETCH ${uids.join(",")} (UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] BODY.PEEK[TEXT]<0.220>)`,
     );
     return { address: config.mail.user!, messages: parseFetch(fetched) };
   });
@@ -180,10 +263,14 @@ export async function readLetter(config: AppConfig, uid: number): Promise<MailLe
     const summary = parseFetch(fetched)[0];
     if (!summary) throw new PlatformError("Mensaje desconocido", 404);
     const row = fetched.find((line) => line.includes("BODY[TEXT]")) ?? "";
-    const marker = row.indexOf("BODY[TEXT]");
+    const marker = row.search(/BODY\[TEXT\]/i);
     const literal = marker >= 0 ? row.slice(row.indexOf("\r\n", marker) + 2) : "";
-    const body = literal.replace(/\)\s*$/, "").trim().slice(0, 20_000);
-    return { ...summary, body: body || "(sin texto)" };
+    try {
+      await command(`UID STORE ${uid} +FLAGS (\\Seen)`);
+    } catch {
+      // The letter is already loaded. A flag update must not hide it.
+    }
+    return { ...summary, seen: true, body: messageText(literal).slice(0, 20_000) || "(sin texto)" };
   });
 }
 
@@ -234,7 +321,9 @@ export async function sendLetter(config: AppConfig, input: { to: string; subject
   if (!accepted.startsWith("250")) throw new PlatformError("Ese destino no se puede usar", 400);
   await smtpReply(channel, lines, "DATA");
   const dotted = text.split("\r\n").map((line) => (line.startsWith(".") ? `.${line}` : line)).join("\r\n");
-  channel.write(`From: ${config.mail.user}\r\nTo: ${to}\r\nSubject: ${subject}\r\n\r\n${dotted}\r\n.\r\n`);
+  channel.write(
+    `From: ${config.mail.user}\r\nTo: ${to}\r\nSubject: ${encodeSubject(subject)}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${dotted}\r\n.\r\n`,
+  );
   const queued = await lines.readLine();
   channel.end();
   if (!queued.startsWith("250")) throw new PlatformError("El correo no aceptó el envío", 502);

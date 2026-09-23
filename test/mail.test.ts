@@ -24,8 +24,9 @@ describe("correo de la empresa", () => {
         else if (line.includes("SELECT")) socket.write(`${tag} OK select\r\n`);
         else if (line.includes("SEARCH")) socket.write(`* SEARCH 7\r\n${tag} OK search\r\n`);
         else if (line.includes("FETCH")) {
-          const header = "From: Ana <ana@taller.cl>\r\nSubject: Pedido\r\nDate: hoy\r\n";
-          socket.write(`* 1 FETCH (UID 7 FLAGS (\\Seen) BODY[HEADER.FIELDS (FROM SUBJECT DATE)] {${header.length}}\r\n${header})\r\n${tag} OK fetch\r\n`);
+          const header = "From: Ana <ana@taller.cl>\r\nSubject: =?UTF-8?B?UGVkaWRv?=\r\nDate: hoy\r\n";
+          const body = "<p>Hola <b>taller</b></p>";
+          socket.write(`* 1 FETCH (UID 7 FLAGS (\\Seen) BODY[HEADER.FIELDS (FROM SUBJECT DATE)] {${header.length}}\r\n${header} BODY[TEXT]<0> {${body.length}}\r\n${body})\r\n${tag} OK fetch\r\n`);
         }
       });
     });
@@ -40,7 +41,14 @@ describe("correo de la empresa", () => {
     const box = await listInbox(config);
     server.close();
     expect(box.address).toBe("edward@proveedorregional.cl");
-    expect(box.messages[0]).toMatchObject({ uid: 7, subject: "Pedido", seen: true });
+    expect(box.messages[0]).toMatchObject({
+      uid: 7,
+      subject: "Pedido",
+      fromName: "Ana",
+      fromEmail: "ana@taller.cl",
+      preview: "Hola taller",
+      seen: true,
+    });
   });
 
   it("sends through the company mailbox and hides it from other roles", async () => {

@@ -51,7 +51,7 @@ const NAV = [
     group: "Operación",
     items: [
       { route: "overview", label: "Inicio", icon: "home", title: "Inicio", sub: "Tus datos y la entrada a cursos." },
-      { route: "correo", label: "Correo", icon: "inbox", title: "Correo", sub: "Bandeja de la empresa. No es el webmail del servidor." },
+      { route: "correo", label: "Correo", icon: "inbox", title: "Correo", sub: "Bandeja de la empresa." },
       { route: "clases", label: "Cursos", icon: "layers", title: "Cursos", sub: "Gestión financiera, débito, gastos, seguros y riesgos." },
       { route: "configuracion", label: "Configuración", icon: "file", title: "Configuración", sub: "SICR3P es un sitio externo. Este panel no reenvía su tráfico." },
       { route: "actuarial", label: "Tasas", icon: "activity", title: "Vista actuarial", sub: "Clases de riesgo de Frosting. Aparte de los cursos." },
@@ -1710,55 +1710,150 @@ async function transferPrepaid(companyId) {
 }
 
 /* ---------------- view wiring ---------------- */
+let correoState = { address: "", messages: [], selected: null, letter: null, mode: "empty", query: "" };
+
 function viewCorreo() {
-  return `<section class="card">
-    <div class="card-head"><h3>Bandeja</h3><span class="hint" id="correo-address"></span></div>
-    <div id="correo-list"><p class="hint">Cargando mensajes…</p></div>
-  </section>
-  <section class="card" id="correo-read" hidden></section>
-  <section class="card">
-    <div class="card-head"><h3>Escribir</h3></div>
-    <div class="inline-form">
-      <div class="field"><label>Para</label><input id="correo-to" placeholder="nombre@empresa.cl" /></div>
-      <div class="field"><label>Asunto</label><input id="correo-subject" placeholder="Asunto" /></div>
+  return `<section class="mail-shell">
+    <div class="mail-list">
+      <div class="mail-toolbar">
+        <div>
+          <strong>Bandeja</strong>
+          <span class="hint" id="correo-address"></span>
+        </div>
+        <button class="btn btn-primary btn-sm" id="correo-compose" type="button">${icon("plus")} Escribir</button>
+      </div>
+      <div class="mail-search"><input id="correo-query" placeholder="Buscar remitente o asunto" /></div>
+      <div class="mail-scroll" id="correo-list"><p class="hint mail-pad">Cargando mensajes…</p></div>
     </div>
-    <div class="field"><label>Mensaje</label><textarea id="correo-text" rows="5"></textarea></div>
-    <button class="btn btn-primary" id="correo-send">${icon("arrow")} Enviar</button>
+    <div class="mail-read" id="correo-read"></div>
   </section>`;
+}
+
+function mailWhen(value) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const now = new Date();
+  const sameDay = parsed.toLocaleDateString("es-CL", { timeZone: "America/Santiago" }) === now.toLocaleDateString("es-CL", { timeZone: "America/Santiago" });
+  if (sameDay) return parsed.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", timeZone: "America/Santiago" });
+  return parsed.toLocaleDateString("es-CL", { day: "numeric", month: "short", timeZone: "America/Santiago" });
+}
+
+function mailInitial(name) {
+  const letter = String(name || "?").trim().charAt(0).toUpperCase();
+  return letter || "?";
+}
+
+function filteredCorreo() {
+  const query = correoState.query.trim().toLowerCase();
+  if (!query) return correoState.messages;
+  return correoState.messages.filter((message) =>
+    `${message.fromName || ""} ${message.from || ""} ${message.subject || ""} ${message.preview || ""}`.toLowerCase().includes(query),
+  );
+}
+
+function renderCorreoList() {
+  const list = document.getElementById("correo-list");
+  if (!list) return;
+  const messages = filteredCorreo();
+  const unread = correoState.messages.filter((message) => !message.seen).length;
+  const address = document.getElementById("correo-address");
+  if (address) address.textContent = `${correoState.address}${unread ? ` · ${unread} sin leer` : ""}`;
+  if (!correoState.messages.length) {
+    list.innerHTML = `<div class="empty">${icon("inbox")}<div>La bandeja está vacía.</div></div>`;
+    return;
+  }
+  if (!messages.length) {
+    list.innerHTML = `<div class="empty">${icon("inbox")}<div>Ningún mensaje coincide.</div></div>`;
+    return;
+  }
+  list.innerHTML = messages.map((message) => `<button type="button" class="mail-item${message.seen ? "" : " unread"}${String(correoState.selected) === String(message.uid) ? " active" : ""}" data-correo="${message.uid}">
+      <span class="mail-avatar">${escapeAttr(mailInitial(message.fromName || message.from))}</span>
+      <span class="mail-copy">
+        <span class="mail-who">${escapeAttr(message.fromName || message.from || "Sin remitente")}</span>
+        <span class="mail-subject">${escapeAttr(message.subject || "(sin asunto)")}</span>
+        <span class="mail-preview">${escapeAttr(message.preview || "")}</span>
+      </span>
+      <span class="mail-time">${escapeAttr(mailWhen(message.date))}</span>
+    </button>`).join("");
+  list.querySelectorAll("[data-correo]").forEach((btn) => {
+    btn.onclick = () => openCorreo(btn.dataset.correo);
+  });
+}
+
+function renderCorreoPane() {
+  const pane = document.getElementById("correo-read");
+  if (!pane) return;
+  if (correoState.mode === "compose") {
+    const letter = correoState.letter;
+    pane.innerHTML = `<form class="mail-compose" id="correo-form">
+      <div class="mail-compose-head"><h2>${letter ? "Responder" : "Nuevo mensaje"}</h2><button class="btn btn-ghost btn-sm" type="button" id="correo-cancel">Cerrar</button></div>
+      <div class="field"><label>Para</label><input id="correo-to" value="${escapeAttr(letter ? letter.fromEmail || "" : "")}" placeholder="nombre@empresa.cl" /></div>
+      <div class="field"><label>Asunto</label><input id="correo-subject" value="${escapeAttr(letter ? `Re: ${letter.subject || ""}` : "")}" /></div>
+      <div class="field"><label>Mensaje</label><textarea id="correo-text" rows="10">${letter ? escapeAttr(`\n\n---\n${letter.body || ""}`) : ""}</textarea></div>
+      <button class="btn btn-primary" id="correo-send" type="submit">${icon("arrow")} Enviar</button>
+    </form>`;
+    document.getElementById("correo-cancel").onclick = () => {
+      correoState.mode = letter ? "letter" : "empty";
+      renderCorreoPane();
+    };
+    document.getElementById("correo-form").onsubmit = (event) => {
+      event.preventDefault();
+      sendCorreo();
+    };
+    return;
+  }
+  const letter = correoState.letter;
+  if (!letter) {
+    pane.innerHTML = `<div class="mail-empty">${icon("inbox")}<h2>Elige un mensaje</h2><p>La bandeja queda a la izquierda. Escribir abre un mensaje nuevo.</p></div>`;
+    return;
+  }
+  pane.innerHTML = `<article class="mail-letter">
+      <div class="mail-letter-head">
+        <span class="mail-avatar">${escapeAttr(mailInitial(letter.fromName || letter.from))}</span>
+        <div>
+          <h2>${escapeAttr(letter.subject || "(sin asunto)")}</h2>
+          <p>${escapeAttr(letter.from || "")}${letter.date ? ` · ${escapeAttr(mailWhen(letter.date) || letter.date)}` : ""}</p>
+        </div>
+        <button class="btn btn-ghost btn-sm" type="button" id="correo-reply">Responder</button>
+      </div>
+      <pre class="correo-body">${escapeAttr(letter.body || "")}</pre>
+    </article>`;
+  document.getElementById("correo-reply").onclick = () => {
+    correoState.mode = "compose";
+    renderCorreoPane();
+  };
 }
 
 async function loadCorreo() {
   const list = document.getElementById("correo-list");
   try {
     const box = await api("/api/correo");
-    document.getElementById("correo-address").textContent = box.address || "";
-    if (!box.messages.length) {
-      list.innerHTML = `<div class="empty">${icon("inbox")}<div>No hay mensajes.</div></div>`;
-      return;
-    }
-    list.innerHTML = box.messages.map((message) => `<button class="btn btn-ghost correo-row" data-correo="${message.uid}">
-      <strong>${escapeAttr(message.subject)}</strong>
-      <span>${escapeAttr(message.from)}</span>
-    </button>`).join("");
-    list.querySelectorAll("[data-correo]").forEach((btn) => {
-      btn.onclick = () => openCorreo(btn.dataset.correo);
-    });
+    correoState.address = box.address || "";
+    correoState.messages = box.messages || [];
+    renderCorreoList();
+    renderCorreoPane();
   } catch (error) {
-    list.innerHTML = `<p class="hint">${escapeAttr(error.message)}</p>`;
+    if (list) list.innerHTML = `<p class="hint mail-pad">${escapeAttr(error.message)}</p>`;
   }
 }
 
 async function openCorreo(uid) {
+  correoState.selected = uid;
+  correoState.mode = "letter";
+  correoState.letter = null;
   const pane = document.getElementById("correo-read");
-  pane.hidden = false;
-  pane.innerHTML = `<p class="hint">Abriendo…</p>`;
+  if (pane) pane.innerHTML = `<p class="hint mail-pad">Abriendo…</p>`;
+  renderCorreoList();
   try {
     const letter = await api(`/api/correo/${uid}`);
-    pane.innerHTML = `<div class="card-head"><h3>${escapeAttr(letter.subject)}</h3></div>
-      <p class="hint">${escapeAttr(letter.from)} · ${escapeAttr(letter.date || "")}</p>
-      <pre class="correo-body">${escapeAttr(letter.body || "")}</pre>`;
+    correoState.letter = letter;
+    correoState.messages = correoState.messages.map((message) =>
+      String(message.uid) === String(uid) ? { ...message, seen: true } : message,
+    );
+    renderCorreoList();
+    renderCorreoPane();
   } catch (error) {
-    pane.innerHTML = `<p class="hint">${escapeAttr(error.message)}</p>`;
+    if (pane) pane.innerHTML = `<p class="hint mail-pad">${escapeAttr(error.message)}</p>`;
   }
 }
 
@@ -1776,19 +1871,28 @@ async function sendCorreo() {
       }),
     });
     toast("Mensaje enviado");
-    document.getElementById("correo-text").value = "";
+    correoState.mode = "empty";
+    correoState.letter = null;
     await loadCorreo();
   } catch (error) {
-    toast(error.message);
-  } finally {
+    toast(error.message, "error");
     button.disabled = false;
   }
 }
 
 function wireView(r) {
   if (r === "correo") {
+    correoState = { address: "", messages: [], selected: null, letter: null, mode: "empty", query: "" };
     loadCorreo();
-    document.getElementById("correo-send").onclick = () => sendCorreo();
+    document.getElementById("correo-compose").onclick = () => {
+      correoState.mode = "compose";
+      correoState.letter = null;
+      renderCorreoPane();
+    };
+    document.getElementById("correo-query").oninput = (event) => {
+      correoState.query = event.target.value;
+      renderCorreoList();
+    };
   }
   if (r === "overview") {
     document.querySelectorAll("[data-global-accounts]").forEach((btn) => {
