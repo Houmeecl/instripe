@@ -945,6 +945,44 @@ code.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
 }
 .vcard-empty span { color: var(--muted); font-weight: 500; }
 .funds-note { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+.contract { margin: 0 0 18px; }
+.contract summary { cursor: pointer; font-weight: 600; }
+.contract-text {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 12px 0 0;
+  padding: 14px;
+  background: var(--bg);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+.gift-section { margin-top: 18px; }
+.gift-list { display: grid; gap: 12px; }
+.gift-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: var(--surface);
+}
+.gift-card h3 { margin: 0 0 6px; font-size: 16px; }
+.gift-card p { margin: 0 0 6px; }
+.gift-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 20px;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+.gift-qr {
+  width: 132px;
+  height: 132px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: block;
+  margin: 8px 0;
+}
 .card-options { margin-top: 8px; }
 .checkgrid { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 12px 0; }
 .checkline { display: flex; align-items: center; gap: 8px; font-size: 14px; }

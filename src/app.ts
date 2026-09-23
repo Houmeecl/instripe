@@ -6,6 +6,7 @@ import { requiredOption, type SessionUser } from "./auth/module.js";
 import { loadConfig, isStripeConfigured, isChileConfigured, type AppConfig, type GatewayName } from "./config.js";
 import { createStripe } from "./stripe/client.js";
 import { formatAmount } from "./money.js";
+import type { GiftStripe } from "./modules/regalos/issue.js";
 import { planDisplayRate } from "./modules/seguros/catalog.js";
 import { Platform, PlatformError } from "./platform.js";
 
@@ -541,6 +542,33 @@ export function createApp(config: AppConfig = loadConfig()): Express {
         email: String(body.email ?? ""),
       });
       res.status(201).json({ company });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/empresas/:id/regalos", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    if (body.amount !== undefined || body.currency !== undefined) {
+      res.status(400).json({ error: "Un regalo virtual no lleva monto" });
+      return;
+    }
+    if (!body.title || !body.note || !body.recipientId) {
+      res.status(400).json({ error: "Título, nota y destinatario son requeridos" });
+      return;
+    }
+    try {
+      const gift = await platform.empresas.giveGift(
+        companyActor(res),
+        String(req.params.id),
+        {
+          title: String(body.title),
+          note: String(body.note),
+          recipientId: String(body.recipientId),
+        },
+        createStripe(config) as GiftStripe | undefined,
+      );
+      res.status(201).json({ gift });
     } catch (error) {
       handleError(error, res);
     }

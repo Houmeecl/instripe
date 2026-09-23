@@ -3,6 +3,7 @@ import type { Role } from "../../auth/module.js";
 import { PlatformError } from "../../errors.js";
 import { formatAmount } from "../../money.js";
 import type { Payments } from "../../payments/service.js";
+import { GIFT_DISCLAIMER, issueVirtualGift, type GiftStripe, type IssuedGift } from "../regalos/issue.js";
 import type { PlatformStore } from "../../store/db.js";
 
 export interface CompanyActor {
@@ -71,6 +72,19 @@ interface TransferRecord {
   createdAt: string;
 }
 
+interface GiftRecord extends IssuedGift {
+  id: string;
+  companyId: string;
+  companyName: string;
+  recipientId: string;
+  recipientName: string;
+  title: string;
+  note: string;
+  disclaimer: string;
+  createdAt: string;
+  money: false;
+}
+
 export interface PrepaidCardView {
   id: string;
   name: string;
@@ -92,6 +106,7 @@ export interface PrepaidCardView {
   options: CardOptions;
   movements: CardMovement[];
   receipts: CardMovement[];
+  contract: DebitContract | null;
 }
 
 export interface CompanyView {
@@ -109,9 +124,11 @@ export interface CompanyView {
   canManage: boolean;
   canFund: boolean;
   ownWorkerId?: string;
+  contract: DebitContract | null;
   card: PrepaidCardView;
   workers: PrepaidCardView[];
   transfers: Array<TransferRecord & { displayAmount: string }>;
+  gifts: GiftView[];
 }
 
 export interface HomeView {
@@ -121,8 +138,42 @@ export interface HomeView {
   commune: string | null;
   companyName: string | null;
   card: PrepaidCardView | null;
+  contract: DebitContract | null;
+  gifts: GiftView[];
   coursesPath: "#/clases";
   configurationPath: "#/configuracion" | null;
+}
+
+export interface DebitContract {
+  id: string;
+  cardId: string;
+  companyId: string;
+  holderName: string;
+  companyName: string;
+  accountType: "débito virtual, sin crédito";
+  parties: string;
+  openedAt: string;
+  text: string;
+}
+
+export interface GiftView {
+  id: string;
+  companyId: string;
+  companyName: string;
+  recipientId: string;
+  recipientName: string;
+  title: string;
+  note: string;
+  status: "pending" | "issued";
+  code: string | null;
+  stripeCouponId: string | null;
+  stripePromotionCodeId: string | null;
+  pendingMessage: string | null;
+  nfcNote: string | null;
+  disclaimer: string;
+  qr: boolean[][] | null;
+  createdAt: string;
+  money: false;
 }
 
 export interface CardOptionsInput {
@@ -150,6 +201,9 @@ export class EmpresasModule {
   private readonly companies = new Map<string, CompanyRecord>();
   private readonly workers = new Map<string, WorkerRecord>();
   private readonly transfers: TransferRecord[] = [];
+  private readonly contracts = new Map<string, DebitContract>();
+  private readonly contractByCard = new Map<string, DebitContract>();
+  private readonly gifts = new Map<string, GiftRecord>();
 
   constructor(
     private readonly payments: Payments,
@@ -158,6 +212,8 @@ export class EmpresasModule {
     for (const company of store.list<CompanyRecord>("companies")) this.companies.set(company.id, company);
     for (const worker of store.list<WorkerRecord>("company_workers")) this.workers.set(worker.id, worker);
     this.transfers.push(...store.list<TransferRecord>("company_transfers"));
+    for (const contract of store.list<DebitContract>("debit_contracts")) this.rememberContract(contract, false);
+    for (const gift of store.list<GiftRecord>("virtual_gifts")) this.gifts.set(gift.id, gift);
   }
 
   list(actor: CompanyActor): { companies: CompanyView[]; canCreate: boolean } {
@@ -176,7 +232,7 @@ export class EmpresasModule {
       configurationPath: actor.role === "operacion" ? ("#/configuracion" as const) : null,
     };
     if (actor.role === "operacion") {
-      return { ...base, name: actor.name || "Operación", commune: null, companyName: null, card: null };
+      return { ...base, name: actor.name || "Operación", commune: null, companyName: null, card: null, contract: null, gifts: [] };
     }
     if (actor.role === "titular") {
       const worker = [...this.workers.values()].find((item) => this.isWorker(actor, item));
@@ -188,6 +244,8 @@ export class EmpresasModule {
           commune: communeFallback,
           companyName: null,
           card: null,
+          contract: null,
+          gifts: [],
         };
       }
       const view = this.present(actor, company);
@@ -199,6 +257,8 @@ export class EmpresasModule {
         commune: company.commune ?? communeFallback,
         companyName: company.name,
         card,
+        contract: card?.contract ?? null,
+        gifts: view.gifts,
       };
     }
     const owned = [...this.companies.values()].find((company) => company.ownerUserId === actor.id);
@@ -209,6 +269,8 @@ export class EmpresasModule {
         commune: communeFallback,
         companyName: null,
         card: null,
+        contract: null,
+        gifts: [],
       };
     }
     const view = this.present(actor, owned);
@@ -219,6 +281,8 @@ export class EmpresasModule {
       commune: owned.commune ?? communeFallback,
       companyName: owned.name,
       card: view.card,
+      contract: view.card.contract,
+      gifts: view.gifts,
     };
   }
 
@@ -248,6 +312,13 @@ export class EmpresasModule {
     };
     this.companies.set(company.id, company);
     this.store.put("companies", company.id, company);
+    this.rememberContract(openDebitContract({
+      cardId: company.id,
+      companyId: company.id,
+      holderName: company.name,
+      companyName: company.name,
+      openedAt: company.createdAt,
+    }));
     return this.present(actor, company);
   }
 
@@ -305,7 +376,55 @@ export class EmpresasModule {
     };
     this.workers.set(worker.id, worker);
     this.store.put("company_workers", worker.id, worker);
+    this.rememberContract(openDebitContract({
+      cardId: worker.id,
+      companyId: company.id,
+      holderName: worker.name,
+      companyName: company.name,
+      openedAt: worker.createdAt,
+    }));
     return this.present(actor, company);
+  }
+
+  async giveGift(
+    actor: CompanyActor,
+    companyId: string,
+    input: { title: string; note: string; recipientId: string },
+    stripe: GiftStripe | undefined,
+  ): Promise<GiftView> {
+    const company = this.require(companyId);
+    if (actor.role !== "comercio" || company.ownerUserId !== actor.id) {
+      throw new PlatformError("Solo la empresa crea regalos virtuales", 403);
+    }
+    const title = input.title.trim();
+    const note = input.note.trim();
+    const recipientId = input.recipientId.trim();
+    if (!title || !note || !recipientId) throw new PlatformError("Título, nota y destinatario son requeridos", 400);
+    if (title.length > 80) throw new PlatformError("El título es demasiado largo", 400);
+    if (note.length > 280) throw new PlatformError("La nota es demasiado larga", 400);
+    const recipientName = this.recipientName(company, recipientId);
+    let issued: IssuedGift;
+    try {
+      issued = await issueVirtualGift(stripe, title);
+    } catch {
+      throw new PlatformError("Stripe no pudo emitir el regalo virtual", 502);
+    }
+    const gift: GiftRecord = {
+      id: `gift_${randomUUID().slice(0, 8)}`,
+      companyId: company.id,
+      companyName: company.name,
+      recipientId,
+      recipientName,
+      title,
+      note,
+      disclaimer: GIFT_DISCLAIMER,
+      createdAt: new Date().toISOString(),
+      money: false,
+      ...issued,
+    };
+    this.gifts.set(gift.id, gift);
+    this.store.put("virtual_gifts", gift.id, gift);
+    return presentGift(gift);
   }
 
   fund(actor: CompanyActor, companyId: string, amount: number): CompanyView {
@@ -400,6 +519,7 @@ export class EmpresasModule {
       canManage: manage,
       canFund: actor.role === "operacion",
       ownWorkerId: own?.id,
+      contract: card.contract,
       card,
       workers: visibleWorkers.map((worker) => {
         const visible = !hideWorkerBalance;
@@ -415,6 +535,7 @@ export class EmpresasModule {
           visible,
         );
       }),
+      gifts: this.visibleGifts(actor, company),
       transfers: this.transfers
         .filter((transfer) => transfer.companyId === company.id)
         .filter((transfer) => manage || transfer.workerId === own?.id)
@@ -454,6 +575,7 @@ export class EmpresasModule {
       options: cardOptions(options),
       movements,
       receipts: movements.map((item) => ({ ...item })),
+      contract: this.contractByCard.get(id) ?? null,
     };
   }
 
@@ -499,6 +621,84 @@ export class EmpresasModule {
     this.transfers.push(transfer);
     this.store.put("company_transfers", transfer.id, transfer);
   }
+
+  private rememberContract(contract: DebitContract, persist = true): void {
+    this.contracts.set(contract.id, contract);
+    this.contractByCard.set(contract.cardId, contract);
+    if (persist) this.store.put("debit_contracts", contract.id, contract);
+  }
+
+  private recipientName(company: CompanyRecord, recipientId: string): string {
+    if (recipientId === company.id) return company.name;
+    const worker = this.workers.get(recipientId);
+    if (!worker || worker.companyId !== company.id) throw new PlatformError("Ese destinatario no está en la empresa", 404);
+    return worker.name;
+  }
+
+  private visibleGifts(actor: CompanyActor, company: CompanyRecord): GiftView[] {
+    const rows = [...this.gifts.values()].filter((gift) => gift.companyId === company.id);
+    const own = [...this.workers.values()].find((worker) => worker.companyId === company.id && this.isWorker(actor, worker));
+    const visible = this.canManage(actor, company) ? rows : rows.filter((gift) => gift.recipientId === own?.id);
+    return visible.sort((left, right) => (left.createdAt < right.createdAt ? 1 : -1)).map((gift) => presentGift(gift));
+  }
+}
+
+export function debitContractText(input: { holderName: string; companyName: string; openedAt: string }): string {
+  const date = new Intl.DateTimeFormat("es-CL", { dateStyle: "long", timeZone: "UTC" }).format(new Date(input.openedAt));
+  return [
+    "Contrato de apertura de cuenta de débito",
+    "",
+    `Partes: Proveedor Regional y ${input.holderName}.`,
+    "Tipo de cuenta: débito virtual, sin crédito.",
+    `Titular: ${input.holderName}.`,
+    `Empresa: ${input.companyName}.`,
+    `Fecha: ${date}.`,
+    "",
+    "La tarjeta es virtual y muestra el logo de la empresa. No hay plástico y no hay línea de crédito.",
+    "Proveedor Regional no es un banco y este contrato no invoca una autorización de la CMF.",
+  ].join("\n");
+}
+
+function openDebitContract(input: {
+  cardId: string;
+  companyId: string;
+  holderName: string;
+  companyName: string;
+  openedAt: string;
+}): DebitContract {
+  return {
+    id: `ctr_${randomUUID().slice(0, 8)}`,
+    cardId: input.cardId,
+    companyId: input.companyId,
+    holderName: input.holderName,
+    companyName: input.companyName,
+    accountType: "débito virtual, sin crédito",
+    parties: `Proveedor Regional y ${input.holderName}`,
+    openedAt: input.openedAt,
+    text: debitContractText(input),
+  };
+}
+
+function presentGift(gift: GiftRecord): GiftView {
+  return {
+    id: gift.id,
+    companyId: gift.companyId,
+    companyName: gift.companyName,
+    recipientId: gift.recipientId,
+    recipientName: gift.recipientName,
+    title: gift.title,
+    note: gift.note,
+    status: gift.status,
+    code: gift.code,
+    stripeCouponId: gift.stripeCouponId,
+    stripePromotionCodeId: gift.stripePromotionCodeId,
+    pendingMessage: gift.pendingMessage,
+    nfcNote: gift.nfcNote,
+    disclaimer: gift.disclaimer,
+    qr: gift.qr,
+    createdAt: gift.createdAt,
+    money: false,
+  };
 }
 
 function defaultOptions(): CardOptions {

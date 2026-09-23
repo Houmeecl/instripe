@@ -5,6 +5,7 @@ import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app.js";
 import { DEFAULT_SEED_PASSWORD, loadConfig } from "../src/config.js";
+import { issueVirtualGift } from "../src/modules/regalos/issue.js";
 import { Platform } from "../src/platform.js";
 
 const TEST_PASSWORD = "Operacion.1831";
@@ -1047,5 +1048,214 @@ describe("instripe BaaS platform", () => {
     expect(claim.status).toBe(422);
     expect(claim.body.error).toBe("Frosting no abre crédito");
     expect((await operacion.get("/api/payments")).body.transferable.balance).toBe(0);
+  });
+
+  it("shows the debit opening contract beside the signed-in client", async () => {
+    const server = app();
+    const comercio = await signedIn(server, "caja@taller.cl");
+    const titular = await signedIn(server, "ana@proveedorregional.cl");
+    const created = await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" });
+    expect(created.status).toBe(201);
+    const companyContract = created.body.company.contract;
+    expect(companyContract.holderName).toBe("Taller Sur");
+    expect(companyContract.companyName).toBe("Taller Sur");
+    expect(companyContract.accountType).toBe("débito virtual, sin crédito");
+    expect(companyContract.parties).toBe("Proveedor Regional y Taller Sur");
+    expect(companyContract.text).toContain("Partes: Proveedor Regional y Taller Sur.");
+    expect(companyContract.text).toContain("Tipo de cuenta: débito virtual, sin crédito.");
+    expect(companyContract.text).toContain("Titular: Taller Sur.");
+    expect(companyContract.text).toContain("Empresa: Taller Sur.");
+    expect(companyContract.text).toContain("Fecha:");
+    expect(companyContract.text).toContain("La tarjeta es virtual y muestra el logo de la empresa.");
+    expect(companyContract.text).toContain("Proveedor Regional no es un banco y este contrato no invoca una autorización de la CMF.");
+    expect(companyContract.text).not.toMatch(/autorizad[oa] por la CMF/i);
+    expect(companyContract.text).not.toMatch(/banco licenciado/i);
+    expect(created.body.company.card.contract.text).toBe(companyContract.text);
+
+    const companyHome = await comercio.get("/api/inicio");
+    expect(companyHome.body.contract.text).toBe(companyContract.text);
+    expect(companyHome.body.card.contract.text).toBe(companyContract.text);
+
+    const withWorker = await comercio.post(`/api/empresas/${created.body.company.id}/trabajadores`).send({
+      name: "Ana Díaz",
+      email: "ana@proveedorregional.cl",
+    });
+    const workerContract = withWorker.body.company.workers[0].contract;
+    expect(workerContract.holderName).toBe("Ana Díaz");
+    expect(workerContract.companyName).toBe("Taller Sur");
+    expect(workerContract.accountType).toBe("débito virtual, sin crédito");
+    expect(workerContract.text).toContain("Partes: Proveedor Regional y Ana Díaz.");
+    expect(workerContract.text).toContain("Empresa: Taller Sur.");
+    expect(workerContract.text).toContain("La tarjeta es virtual y muestra el logo de la empresa.");
+    expect(workerContract.text).not.toMatch(/autorizad[oa] por la CMF/i);
+
+    const workerHome = await titular.get("/api/inicio");
+    expect(workerHome.body.contract.text).toBe(workerContract.text);
+    expect(workerHome.body.card.balance).toBe(0);
+    expect(workerHome.body.workers).toBeUndefined();
+
+    const panel = await request(server).get("/app.js");
+    expect(panel.text).toContain("Ver contrato");
+    expect(panel.text).toContain("contractBox");
+  });
+
+  it("stores a virtual gift without moving balances or calling Stripe when Stripe is off", async () => {
+    const server = app();
+    const comercio = await signedIn(server, "caja@taller.cl");
+    const titular = await signedIn(server, "ana@proveedorregional.cl");
+    const operacion = await signedIn(server);
+    const created = await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" });
+    const id = created.body.company.id;
+    await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 50_000 });
+    const withWorker = await comercio.post(`/api/empresas/${id}/trabajadores`).send({
+      name: "Ana Díaz",
+      email: "ana@proveedorregional.cl",
+    });
+    const workerId = withWorker.body.company.workers[0].id;
+    await comercio.post(`/api/empresas/${id}/transferencias`).send({ workerId, amount: 20_000, direction: "to_worker" });
+
+    const beforeCompany = await comercio.get("/api/empresas");
+    const beforeWorker = await titular.get("/api/inicio");
+    const beforeBook = await operacion.get("/api/payments");
+    const fetchCalls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      fetchCalls.push(String(input));
+      throw new Error("Stripe no debe llamarse");
+    }) as typeof fetch;
+    let gift;
+    try {
+      gift = await comercio.post(`/api/empresas/${id}/regalos`).send({
+        title: "Almuerzo",
+        note: "Para el equipo",
+        recipientId: workerId,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(fetchCalls).toEqual([]);
+    expect(gift.status).toBe(201);
+    expect(gift.body.gift).toMatchObject({
+      status: "pending",
+      code: null,
+      stripeCouponId: null,
+      stripePromotionCodeId: null,
+      money: false,
+      recipientId: workerId,
+      recipientName: "Ana Díaz",
+      title: "Almuerzo",
+      disclaimer: "Este regalo es virtual. No es una cuenta de débito y no es dinero.",
+    });
+    expect(gift.body.gift.pendingMessage).toContain("Stripe no está configurado");
+    expect(gift.body.gift.qr).toBeNull();
+    expect(gift.body.gift.nfcNote).toBeNull();
+    expect(JSON.stringify(gift.body)).not.toMatch(/coupon_|promo_|ch_|pi_|acct_|sk_/);
+
+    const afterCompany = await comercio.get("/api/empresas");
+    expect(afterCompany.body.companies[0].card.balance).toBe(beforeCompany.body.companies[0].card.balance);
+    expect(afterCompany.body.companies[0].card.balance).toBe(30_000);
+    expect(afterCompany.body.companies[0].card.available).toBe(0);
+    expect(afterCompany.body.companies[0].card.realFunds).toBe(false);
+    expect(afterCompany.body.companies[0].workers[0].balance).toBe(0);
+    expect(afterCompany.body.companies[0].workers[0].displayBalance).toBe("—");
+    expect(afterCompany.body.companies[0].gifts).toEqual([
+      expect.objectContaining({ id: gift.body.gift.id, status: "pending", recipientId: workerId }),
+    ]);
+    const afterBook = await operacion.get("/api/payments");
+    expect(afterBook.body.wallet.balance).toBe(beforeBook.body.wallet.balance);
+    expect(afterBook.body.transferable.balance).toBe(0);
+    const afterWorker = await titular.get("/api/inicio");
+    expect(afterWorker.body.card.balance).toBe(beforeWorker.body.card.balance);
+    expect(afterWorker.body.card.balance).toBe(20_000);
+    expect(afterWorker.body.gifts).toEqual([
+      expect.objectContaining({ id: gift.body.gift.id, recipientId: workerId }),
+    ]);
+
+    const ownGift = await comercio.post(`/api/empresas/${id}/regalos`).send({
+      title: "Para la empresa",
+      note: "Uso interno",
+      recipientId: id,
+    });
+    expect(ownGift.status).toBe(201);
+    const companyHome = await comercio.get("/api/inicio");
+    expect(companyHome.body.gifts).toHaveLength(2);
+    const workerSees = await titular.get("/api/inicio");
+    expect(workerSees.body.gifts.map((item: { recipientId: string }) => item.recipientId)).toEqual([workerId]);
+    const workerCompany = await titular.get("/api/empresas");
+    expect(workerCompany.body.companies[0].gifts).toHaveLength(1);
+    expect(workerCompany.body.companies[0].balance).toBe(0);
+    expect(workerCompany.body.companies[0].displayBalance).toBe("—");
+
+    expect((await titular.post(`/api/empresas/${id}/regalos`).send({
+      title: "No",
+      note: "No",
+      recipientId: workerId,
+    })).status).toBe(403);
+    expect((await operacion.post(`/api/empresas/${id}/regalos`).send({
+      title: "No",
+      note: "No",
+      recipientId: id,
+    })).status).toBe(403);
+    expect((await comercio.post(`/api/empresas/${id}/regalos`).send({
+      title: "Fuera",
+      note: "Nadie",
+      recipientId: "wrk_missing",
+    })).status).toBe(404);
+    const priced = await comercio.post(`/api/empresas/${id}/regalos`).send({
+      title: "Con monto",
+      note: "No",
+      recipientId: id,
+      amount: 1000,
+      currency: "clp",
+    });
+    expect(priced.status).toBe(400);
+    expect(priced.body.error).toBe("Un regalo virtual no lleva monto");
+    expect((await comercio.get("/api/empresas")).body.companies[0].card.balance).toBe(30_000);
+    expect((await titular.get("/api/inicio")).body.card.balance).toBe(20_000);
+    expect((await operacion.get("/api/payments")).body.transferable.balance).toBe(0);
+
+    const panel = await request(server).get("/app.js");
+    expect(panel.text).toContain("Regalo virtual");
+    expect(panel.text).toContain("etiqueta NFC");
+  });
+
+  it("issues a gift as a Stripe coupon and promotion code without a live call", async () => {
+    const pending = await issueVirtualGift(undefined, "Pendiente");
+    expect(pending).toMatchObject({
+      status: "pending",
+      code: null,
+      stripeCouponId: null,
+      stripePromotionCodeId: null,
+      qr: null,
+    });
+    const calls: string[] = [];
+    const issued = await issueVirtualGift({
+      coupons: {
+        create: async (params) => {
+          calls.push("coupon");
+          expect(params.percent_off).toBe(100);
+          expect(params.duration).toBe("once");
+          expect(params.metadata).toEqual({ kind: "regalo_virtual", money: "false" });
+          expect(params).not.toHaveProperty("amount_off");
+          expect(params).not.toHaveProperty("currency");
+          return { id: "coupon_stub" };
+        },
+      },
+      promotionCodes: {
+        create: async (params) => {
+          calls.push("promotion");
+          expect(params.promotion).toEqual({ type: "coupon", coupon: "coupon_stub" });
+          expect(params.max_redemptions).toBe(1);
+          return { id: "promo_stub", code: params.code ?? "" };
+        },
+      },
+    }, "Almuerzo");
+    expect(calls).toEqual(["coupon", "promotion"]);
+    expect(issued.status).toBe("issued");
+    expect(issued.code).toMatch(/^RG-[A-Z2-9]{6}$/);
+    expect(issued.stripeCouponId).toBe("coupon_stub");
+    expect(issued.stripePromotionCodeId).toBe("promo_stub");
+    expect(issued.nfcNote).toContain("etiqueta NFC");
+    expect(issued.qr?.[0]).toHaveLength(21);
   });
 });

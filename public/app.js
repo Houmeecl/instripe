@@ -604,6 +604,7 @@ function viewClientHome() {
       <p class="home-kicker">${escapeAttr(state.user.roleLabel)}</p>
       <h2>${escapeAttr(inicio.name || state.user.name)}</h2>
       <div class="identity-list">${identity}</div>
+      ${contractBox(inicio.contract)}
       <a class="btn btn-primary" href="#/clases">${icon("layers")} Entrar a cursos</a>
       ${allowed("empresas") ? `<a class="btn btn-ghost" href="#/empresas" style="margin-left:8px">${icon("card")} Débito</a>` : ""}
     </div>
@@ -612,7 +613,72 @@ function viewClientHome() {
       ${note}
       ${moves}
     </div>
-  </section>`;
+  </section>
+  ${giftSection(inicio.gifts)}`;
+}
+
+function contractBox(contract) {
+  if (!contract || !contract.text) return "";
+  return `<details class="contract">
+    <summary>Ver contrato</summary>
+    <pre class="contract-text">${escapeAttr(contract.text)}</pre>
+  </details>`;
+}
+
+function giftSection(gifts) {
+  const list = giftList(gifts);
+  if (!list) return "";
+  return `<section class="card gift-section"><div class="card-head"><h3>Regalos virtuales</h3></div><div class="card-body">${list}</div></section>`;
+}
+
+function giftList(gifts) {
+  if (!gifts || !gifts.length) return "";
+  return `<div class="gift-list">${gifts.map((gift) => giftCard(gift)).join("")}</div>`;
+}
+
+function giftCard(gift) {
+  const code = gift.code
+    ? `<p class="gift-code">${escapeAttr(gift.code)}</p>${qrSvg(gift.qr)}`
+    : "";
+  const pending = gift.pendingMessage ? `<p class="funds-note">${escapeAttr(gift.pendingMessage)}</p>` : "";
+  const nfc = gift.nfcNote ? `<p class="funds-note">${escapeAttr(gift.nfcNote)}</p>` : "";
+  return `<article class="gift-card">
+    <h3>${escapeAttr(gift.title)}</h3>
+    <p>${escapeAttr(gift.note)}</p>
+    <p class="meta">Para ${escapeAttr(gift.recipientName)}</p>
+    ${code}
+    ${pending}
+    ${nfc}
+    <p class="funds-note">${escapeAttr(gift.disclaimer || "Este regalo es virtual. No es una cuenta de débito y no es dinero.")}</p>
+  </article>`;
+}
+
+function qrSvg(matrix) {
+  if (!matrix || !matrix.length) return "";
+  const size = matrix.length;
+  const cells = [];
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      if (matrix[y][x]) cells.push(`<rect x="${x}" y="${y}" width="1" height="1"/>`);
+    }
+  }
+  return `<svg class="gift-qr" viewBox="0 0 ${size} ${size}" role="img" aria-label="Código del regalo">${cells.join("")}</svg>`;
+}
+
+function giftForm(company) {
+  if (!company.canManage || company.canFund) return "";
+  const people = [`<option value="${escapeAttr(company.id)}">${escapeAttr(company.name)}</option>`]
+    .concat((company.workers || []).map((worker) => `<option value="${escapeAttr(worker.id)}">${escapeAttr(worker.name)}</option>`))
+    .join("");
+  return `<h2 class="section-title">Regalo virtual</h2>
+    <p class="hint">No es dinero y no descuenta el débito. El código, cuando Stripe lo emite, se puede copiar después en una etiqueta NFC.</p>
+    <div class="inline-form">
+      <div class="field"><label>Título</label><input id="gift-title-${company.id}" placeholder="Almuerzo de equipo" /></div>
+      <div class="field"><label>Nota</label><input id="gift-note-${company.id}" placeholder="Para celebrar el mes" /></div>
+      <div class="field"><label>Destinatario</label><select id="gift-who-${company.id}">${people}</select></div>
+      <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-create-gift="${company.id}">${icon("plus")} Crear regalo</button></div>
+    </div>
+    ${giftList(company.gifts)}`;
 }
 
 function viewOperacionHome() {
@@ -1090,6 +1156,8 @@ function companyBlock(company) {
       <div class="card-head"><h3>${escapeAttr(card.name)}</h3><span class="pill">${escapeAttr(company.name)}</span></div>
       <div class="card-body">
         <div class="vcard-layout">${virtualCard(card, company.color, "Débito virtual")}</div>
+        ${contractBox(card.contract)}
+        ${giftList(company.gifts)}
         ${cardControls(company, card)}
         <h2 class="section-title">Devolver prepago a la empresa</h2>
         ${transferForm(company)}
@@ -1101,6 +1169,7 @@ function companyBlock(company) {
         .map(
           (worker) => `<section class="worker-card">
             <div class="vcard-layout">${virtualCard(worker, company.color, "Débito virtual")}</div>
+            ${contractBox(worker.contract)}
             ${cardControls(company, worker)}
           </section>`,
         )
@@ -1132,6 +1201,7 @@ function companyBlock(company) {
     <div class="card-head"><h3>${escapeAttr(company.name)}</h3><span class="pill">Débito virtual</span></div>
     <div class="card-body">
       <div class="vcard-layout">${virtualCard(company.card, company.color, "Empresa")}</div>
+      ${contractBox(company.card.contract)}
       ${logoForm(company)}
       ${fund}
       ${cardControls(company, company.card)}
@@ -1142,6 +1212,7 @@ function companyBlock(company) {
       <h2 class="section-title">Transferir</h2>
       ${transfer}
       ${frostingBox(company)}
+      ${giftForm(company)}
       <h2 class="section-title">Revisar</h2>
       ${moves}
     </div>
@@ -1329,6 +1400,23 @@ async function fundCompany(companyId) {
       body: JSON.stringify({ amount: pesos(`fund-${companyId}`) }),
     });
     await reloadEmpresas("Prepago cargado");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function createGift(companyId) {
+  try {
+    await api(`/api/empresas/${encodeURIComponent(companyId)}/regalos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: document.getElementById(`gift-title-${companyId}`).value,
+        note: document.getElementById(`gift-note-${companyId}`).value,
+        recipientId: document.getElementById(`gift-who-${companyId}`).value,
+      }),
+    });
+    await reloadEmpresas("Regalo virtual guardado");
   } catch (err) {
     toast(err.message, "error");
   }
@@ -1551,6 +1639,9 @@ function wireView(r) {
     });
     document.querySelectorAll("[data-frosting]").forEach((btn) => {
       btn.onclick = () => quoteFrosting(btn.dataset.frosting);
+    });
+    document.querySelectorAll("[data-create-gift]").forEach((btn) => {
+      btn.onclick = () => createGift(btn.dataset.createGift);
     });
   }
   if (r === "clases") {
