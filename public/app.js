@@ -1042,13 +1042,101 @@ function viewDesign() {
 function viewApps() {
   const m = state.appManifest;
   const pretty = m ? JSON.stringify(m, null, 2) : "";
+  const permissions = m ? m.permissions : [];
+  const hasUI = m && m.ui_extension && m.ui_extension.views && m.ui_extension.views.length > 0;
+  
   return `<div class="card">
-    <div class="card-head"><h3>App</h3></div>
+    <div class="card-head"><h3>App Stripe</h3><span class="badge">${m ? m.version : "0.1.0"}</span></div>
     <div class="card-body">
-      <div class="field"><label>Nombre</label><input id="app-name" value="${escapeAttr(m ? m.name : "Proveedor Regional")}" /></div>
-      <button class="btn btn-primary" data-create-app>${icon("plus")} Crear app</button>
-      <p class="hint">Nombre de la aplicación de la plataforma. El manifest queda en el repositorio.</p>
-      <pre class="manifest">${pretty}</pre>
+      <div class="grid-2">
+        <div>
+          <div class="field"><label>Nombre *</label><input id="app-name" value="${escapeAttr(m ? m.name : "Proveedor Regional")}" placeholder="Nombre de la app" /></div>
+          <div class="field"><label>ID</label><input id="app-id" value="${escapeAttr(m ? m.id : "")}" placeholder="com.tudominio.nombre" readonly /></div>
+          <div class="field"><label>Descripción</label><textarea id="app-description" rows="2" placeholder="Descripción de la aplicación">${escapeAttr(m ? m.description || "" : "")}</textarea></div>
+          <div class="field"><label>Icono (URL)</label><input id="app-icon" value="${escapeAttr(m ? m.icon || "" : "")}" placeholder="https://.../icon.png" /></div>
+        </div>
+        <div>
+          <div class="field"><label>Versión</label><input id="app-version" value="${escapeAttr(m ? m.version : "0.1.0")}" placeholder="0.1.0" /></div>
+          <div class="field"><label>Tipo de distribusión</label>
+            <select id="app-distribution">
+              <option value="private" ${m && m.distribution_type === "private" ? "selected" : ""}>Private</option>
+              <option value="public" ${m && m.distribution_type === "public" ? "selected" : ""}>Public</option>
+            </select>
+          </div>
+          <div class="field"><label>Documentación URL</label><input id="app-doc-url" value="${escapeAttr(m ? m.doc_url || "" : "")}" placeholder="https://.../docs" /></div>
+          <div class="field"><label>Email de soporte</label><input id="app-support-email" value="${escapeAttr(m ? m.support_email || "" : "")}" placeholder="soporte@tudominio.com" /></div>
+        </div>
+      </div>
+      
+      <div class="section">
+        <h4>Permisos</h4>
+        <div id="permissions-list" class="permissions-grid">
+          ${permissions.length > 0 ? permissions.map(p => `
+            <div class="permission-item">
+              <code>${escapeAttr(p.permission)}</code>
+              <span class="permission-purpose">${escapeAttr(p.purpose)}</span>
+              <button class="btn-icon" data-remove-permission="${escapeAttr(p.permission)}" title="Eliminar">${icon("zap")}</button>
+            </div>
+          `).join("") : "<p class="hint">No hay permisos configurados</p>"}
+        </div>
+        <div class="field">
+          <label>Añadir permiso</label>
+          <div class="grid-2 gap-4">
+            <select id="new-permission">
+              <option value="">-- Seleccionar permiso --</option>
+              <option value="customer_read">customer_read</option>
+              <option value="customer_write">customer_write</option>
+              <option value="balance_read">balance_read</option>
+              <option value="payment_intent_read">payment_intent_read</option>
+              <option value="payment_intent_write">payment_intent_write</option>
+              <option value="charge_read">charge_read</option>
+              <option value="charge_write">charge_write</option>
+              <option value="transfer_read">transfer_read</option>
+              <option value="transfer_write">transfer_write</option>
+            </select>
+            <input id="permission-purpose" placeholder="Propósito" />
+          </div>
+          <button class="btn btn-sm" data-add-permission>${icon("plus")} Añadir</button>
+        </div>
+      </div>
+      
+      <div class="section">
+        <h4>UI Extension</h4>
+        <div id="ui-extension-list">
+          ${hasUI ? m.ui_extension.views.map(v => `
+            <div class="ui-view-item">
+              <span class="view-type">${escapeAttr(v.type)}</span>
+              <code class="view-url">${escapeAttr(v.url)}</code>
+            </div>
+          `).join("") : "<p class="hint">No hay vistas configuradas</p>"}
+        </div>
+      </div>
+      
+      <div class="actions">
+        ${m ? `
+          <button class="btn btn-primary" data-update-app>${icon("check")} Guardar cambios</button>
+          <button class="btn btn-danger" data-delete-app>${icon("zap")} Eliminar app</button>
+          <button class="btn btn-secondary" data-validate-app>${icon("shield")} Validar</button>
+        ` : `
+          <button class="btn btn-primary" data-create-app>${icon("plus")} Crear app</button>
+        `}
+        <button class="btn btn-secondary" data-load-defaults>${icon("file")} Cargar predeterminados</button>
+      </div>
+      
+      <div class="section">
+        <h4>Comandos Stripe CLI</h4>
+        <div class="code-row">
+          <code>stripe apps upload</code>
+          <button class="btn-icon" onclick="navigator.clipboard.writeText('stripe apps upload')" title="Copiar">${icon("file")}</button>
+        </div>
+        ${m ? `<div class="code-row"><code>stripe apps install ${escapeAttr(m.id)}</code><button class="btn-icon" onclick="navigator.clipboard.writeText('stripe apps install ${escapeAttr(m.id)}')" title="Copiar">${icon("file")}</button></div>` : ""}
+      </div>
+      
+      <div class="section">
+        <h4>Manifest JSON</h4>
+        <pre class="manifest">${pretty}</pre>
+        <button class="btn btn-sm" onclick="navigator.clipboard.writeText(${JSON.stringify(pretty)})" title="Copiar JSON">${icon("file")} Copiar JSON</button>
+      </div>
     </div>
   </div>`;
 }
@@ -2004,6 +2092,19 @@ function wireView(r) {
   if (r === "apps") {
     const create = document.querySelector("[data-create-app]");
     if (create) create.onclick = () => createApp();
+    const update = document.querySelector("[data-update-app]");
+    if (update) update.onclick = () => updateApp();
+    const deleteApp = document.querySelector("[data-delete-app]");
+    if (deleteApp) deleteApp.onclick = () => deleteAppConfirm();
+    const validate = document.querySelector("[data-validate-app]");
+    if (validate) validate.onclick = () => validateApp();
+    const loadDefaults = document.querySelector("[data-load-defaults]");
+    if (loadDefaults) loadDefaults.onclick = () => loadDefaultPermissions();
+    const addPerm = document.querySelector("[data-add-permission]");
+    if (addPerm) addPerm.onclick = () => addPermission();
+    document.querySelectorAll("[data-remove-permission]").forEach(btn => {
+      btn.onclick = () => removePermission(btn.dataset.removePermission);
+    });
   }
 }
 
@@ -2612,14 +2713,150 @@ async function saveDesign() {
 
 async function createApp() {
   try {
+    const name = document.getElementById("app-name").value;
+    const description = document.getElementById("app-description").value;
+    const icon = document.getElementById("app-icon").value;
+    const version = document.getElementById("app-version").value;
+    const distribution = document.getElementById("app-distribution").value;
+    const docUrl = document.getElementById("app-doc-url").value;
+    const supportEmail = document.getElementById("app-support-email").value;
+    
+    if (!name) {
+      toast("El nombre es requerido", "error");
+      return;
+    }
+    
     const result = await api("/api/apps", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: document.getElementById("app-name").value }),
+      body: JSON.stringify({
+        name,
+        description: description || undefined,
+        icon: icon || undefined,
+        version: version || undefined,
+        distribution_type: distribution || undefined,
+        doc_url: docUrl || undefined,
+        support_email: supportEmail || undefined
+      }),
     });
     state.appManifest = result.manifest;
     route();
-    toast(`App ${result.manifest.id} escrita en stripe-app.json`);
+    toast(`App ${result.manifest.id} creada. Usa: ${result.upload}`);
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function updateApp() {
+  try {
+    const name = document.getElementById("app-name").value;
+    const description = document.getElementById("app-description").value;
+    const icon = document.getElementById("app-icon").value;
+    const version = document.getElementById("app-version").value;
+    const distribution = document.getElementById("app-distribution").value;
+    const docUrl = document.getElementById("app-doc-url").value;
+    const supportEmail = document.getElementById("app-support-email").value;
+    
+    if (!name) {
+      toast("El nombre es requerido", "error");
+      return;
+    }
+    
+    const result = await api("/api/apps", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        version: version || undefined,
+        description: description || undefined,
+        icon: icon || undefined,
+        distribution_type: distribution || undefined,
+        doc_url: docUrl || undefined,
+        support_email: supportEmail || undefined
+      }),
+    });
+    state.appManifest = result.manifest;
+    route();
+    toast("App actualizada");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function deleteAppConfirm() {
+  if (!confirm("¿Estás seguro de eliminar la app? Esto eliminará el manifest local.")) return;
+  try {
+    await api("/api/apps", { method: "DELETE" });
+    state.appManifest = null;
+    route();
+    toast("App eliminada");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function validateApp() {
+  try {
+    const result = await api("/api/apps/validate");
+    if (result.valid) {
+      toast("Manifest válido");
+    } else {
+      toast(`Errores: ${result.errors.join(", ")}`, "error");
+    }
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function loadDefaultPermissions() {
+  try {
+    const result = await api("/api/apps/permissions");
+    const defaultPerms = result.default;
+    const body = JSON.stringify({ permissions: defaultPerms });
+    await api("/api/apps", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body
+    });
+    state.appManifest = (await api("/api/apps")).manifest;
+    route();
+    toast("Permisos predeterminados cargados");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function addPermission() {
+  const permission = document.getElementById("new-permission").value;
+  const purpose = document.getElementById("permission-purpose").value;
+  
+  if (!permission) {
+    toast("Selecciona un permiso", "error");
+    return;
+  }
+  
+  try {
+    await api("/api/apps/permissions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ permission, purpose: purpose || permission }),
+    });
+    state.appManifest = (await api("/api/apps")).manifest;
+    route();
+    document.getElementById("new-permission").value = "";
+    document.getElementById("permission-purpose").value = "";
+    toast("Permiso añadido");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function removePermission(permission) {
+  try {
+    await api(`/api/apps/permissions/${encodeURIComponent(permission)}`, { method: "DELETE" });
+    state.appManifest = (await api("/api/apps")).manifest;
+    route();
+    toast("Permiso eliminado");
   } catch (err) {
     toast(err.message, "error");
   }

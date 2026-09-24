@@ -760,14 +760,85 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   app.get("/api/apps", (_req: Request, res: Response) => {
-    res.json({ manifest: platform.apps.current() });
+    res.json({ manifest: platform.apps.current(), upload: platform.apps.getUploadCommand() });
+  });
+
+  app.get("/api/apps/permissions", (_req: Request, res: Response) => {
+    res.json({
+      default: platform.apps.getDefaultPermissions(),
+      stripe: platform.apps.getStripePermissions(),
+      full: platform.apps.getFullPermissions(),
+    });
   });
 
   app.post("/api/apps", (req: Request, res: Response) => {
     const body = req.body ?? {};
     try {
-      const manifest = platform.apps.create({ name: String(body.name ?? "") });
-      res.status(201).json({ manifest, upload: "stripe apps upload" });
+      const manifest = platform.apps.create({
+        name: String(body.name ?? ""),
+        icon: body.icon,
+        description: body.description,
+        distribution_type: body.distribution_type,
+        permissions: body.permissions,
+      });
+      res.status(201).json({ manifest, upload: platform.apps.getUploadCommand() });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.put("/api/apps", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const manifest = platform.apps.update({
+        name: body.name,
+        version: body.version,
+        icon: body.icon,
+        description: body.description,
+        distribution_type: body.distribution_type,
+        permissions: body.permissions,
+        ui_extension: body.ui_extension,
+        doc_url: body.doc_url,
+        support_email: body.support_email,
+      });
+      res.json({ manifest, upload: platform.apps.getUploadCommand() });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/apps/permissions", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const manifest = platform.apps.addPermission(String(body.permission ?? ""), String(body.purpose ?? ""));
+      res.status(201).json({ manifest });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.delete("/api/apps/permissions/:permission", (req: Request, res: Response) => {
+    try {
+      const manifest = platform.apps.removePermission(String(req.params.permission));
+      res.json({ manifest });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/apps/validate", (req: Request, res: Response) => {
+    try {
+      const result = platform.apps.validate();
+      res.json({ valid: result.valid, errors: result.errors });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.delete("/api/apps", (req: Request, res: Response) => {
+    try {
+      platform.apps.delete();
+      res.json({ deleted: true, message: "Manifest deleted" });
     } catch (error) {
       handleError(error, res);
     }
