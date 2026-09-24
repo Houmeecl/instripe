@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Suscripciones - Registro con Cumplimiento Legal</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .suscripcion-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .suscripcion-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+      padding: 20px;
+      background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%);
+      border-radius: 12px;
+      color: white;
+    }
+    .suscripcion-header h1 {
+      margin: 0;
+      font-size: 28px;
+    }
+    .compliance-badge {
+      background: rgba(255,255,255,0.2);
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+    .planes-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+      margin-bottom: 40px;
+    }
+    .plan-card {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      border: 2px solid #e0e0e0;
+      transition: all 0.3s;
+      position: relative;
+    }
+    .plan-card.popular {
+      border-color: #4caf50;
+      transform: scale(1.05);
+    }
+    .plan-card.popular::before {
+      content: "MÁS POPULAR";
+      position: absolute;
+      top: -12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #4caf50;
+      color: white;
+      padding: 6px 20px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+    .plan-name {
+      font-size: 24px;
+      font-weight: bold;
+      color: #333;
+      margin-bottom: 10px;
+    }
+    .plan-description {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+    .plan-price {
+      font-size: 36px;
+      font-weight: bold;
+      color: #4caf50;
+      margin-bottom: 5px;
+    }
+    .plan-billing {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+    .plan-features {
+      list-style: none;
+      padding: 0;
+      margin-bottom: 25px;
+    }
+    .plan-features li {
+      padding: 8px 0;
+      border-bottom: 1px solid #f0f0f0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .plan-features li::before {
+      content: "✓";
+      color: #4caf50;
+      font-weight: bold;
+    }
+    .plan-button {
+      width: 100%;
+      padding: 15px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    .plan-button.primary {
+      background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%);
+      color: white;
+    }
+    .plan-button.secondary {
+      background: #f5f5f5;
+      color: #333;
+    }
+    .plan-button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    }
+    .registration-form {
+      background: white;
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      max-width: 800px;
+      margin: 0 auto 40px;
+    }
+    .form-section {
+      margin-bottom: 30px;
+    }
+    .form-section h2 {
+      color: #4caf50;
+      margin-bottom: 20px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #e0e0e0;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 500;
+      color: #333;
+    }
+    .form-group input,
+    .form-group select {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 16px;
+    }
+    .form-group input:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: #4caf50;
+    }
+    .form-group .hint {
+      font-size: 12px;
+      color: #666;
+      margin-top: 5px;
+    }
+    .consent-section {
+      background: #f8f9fa;
+      padding: 25px;
+      border-radius: 8px;
+      margin: 30px 0;
+      border-left: 4px solid #4caf50;
+    }
+    .consent-section h3 {
+      color: #4caf50;
+      margin-top: 0;
+    }
+    .consent-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 15px;
+      margin: 15px 0;
+    }
+    .consent-item input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      margin-top: 3px;
+    }
+    .consent-item label {
+      font-weight: normal;
+      color: #333;
+      line-height: 1.5;
+    }
+    .consent-item a {
+      color: #4caf50;
+      text-decoration: none;
+    }
+    .consent-item a:hover {
+      text-decoration: underline;
+    }
+    .btn {
+      padding: 15px 30px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%);
+      color: white;
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
+    }
+    .btn-secondary {
+      background: #f5f5f5;
+      color: #333;
+    }
+    .btn-danger {
+      background: #f44336;
+      color: white;
+    }
+    .btn-success {
+      background: #4caf50;
+      color: white;
+    }
+    .suscripcion-list {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .suscripcion-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .suscripcion-item:last-child {
+      border-bottom: none;
+    }
+    .suscripcion-info {
+      flex: 1;
+    }
+    .suscripcion-name {
+      font-weight: bold;
+      color: #333;
+      margin-bottom: 5px;
+    }
+    .suscripcion-details {
+      font-size: 14px;
+      color: #666;
+    }
+    .status-badge {
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+    .status-badge.active { background: #e8f5e9; color: #2e7d32; }
+    .status-badge.pending { background: #fff3e0; color: #ff9800; }
+    .status-badge.cancelled { background: #ffebee; color: #c62828; }
+    .status-badge.paused { background: #e0e0e0; color: #616161; }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    .stat-card {
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    .stat-card h3 {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 10px;
+    }
+    .stat-card .value {
+      font-size: 28px;
+      font-weight: bold;
+      color: #4caf50;
+    }
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.5);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal.active {
+      display: flex;
+    }
+    .modal-content {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      max-width: 600px;
+      width: 90%;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .modal-header h2 {
+      margin: 0;
+    }
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: #999;
+    }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+    .success-message {
+      background: #e8f5e9;
+      color: #2e7d32;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+    .error-message {
+      background: #ffebee;
+      color: #c62828;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+    .legal-notice {
+      background: #fff3e0;
+      border-left: 4px solid #ff9800;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+    .legal-notice h3 {
+      margin-top: 0;
+      color: #ff9800;
+    }
+    .invoice-preview {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      border: 2px solid #4caf50;
+      margin: 20px 0;
+    }
+    .invoice-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .invoice-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .invoice-total {
+      font-weight: bold;
+      font-size: 18px;
+      color: #4caf50;
+    }
+  </style>
+</head>
+<body>
+  <div class="suscripcion-container">
+    <div class="suscripcion-header">
+      <div>
+        <h1>Suscripciones</h1>
+        <p style="margin: 10px 0 0 0; opacity: 0.9;">Registro con cumplimiento legal</p>
+      </div>
+      <div class="compliance-badge">
+        ✓ PCI DSS Compliant | ✓ Ley 19.628 | ✓ Facturación Electrónica
+      </div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <h3>Suscripciones Activas</h3>
+        <div class="value" id="activeCount">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Ingresos Mensuales</h3>
+        <div class="value" id="mrrValue">$0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Ingresos Anuales</h3>
+        <div class="value" id="arrValue">$0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Total Clientes</h3>
+        <div class="value" id="totalCount">0</div>
+      </div>
+    </div>
+
+    <h2 style="margin: 40px 0 20px; color: #333;">Nuestros Planes</h2>
+    <div class="planes-grid" id="planesGrid">
+      <div class="loading">Cargando planes...</div>
+    </div>
+
+    <div class="registration-form">
+      <h2>Formulario de Registro</h2>
+      
+      <div class="legal-notice">
+        <h3>⚠️ Cumplimiento Legal</h3>
+        <p style="margin: 0; font-size: 14px; line-height: 1.5;">
+          Este formulario cumple con la <strong>Ley 19.628 de Protección de Datos Personales (Chile)</strong>.
+          Sus datos personales serán tratados con confidencialidad y solo para los fines declarados.
+          No almacenamos datos de tarjeta de crédito (cumplimiento PCI DSS).
+        </p>
+      </div>
+
+      <form id="registroForm" onsubmit="submitRegistration(event)">
+        <div class="form-section">
+          <h2>Datos Personales</h2>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Nombre Completo *</label>
+              <input type="text" id="nombre" required>
+            </div>
+            <div class="form-group">
+              <label>Email *</label>
+              <input type="email" id="email" required>
+            </div>
+            <div class="form-group">
+              <label>Teléfono (Opcional)</label>
+              <input type="text" id="telefono">
+            </div>
+            <div class="form-group">
+              <label>RUT (Opcional)</label>
+              <input type="text" id="rut" placeholder="12.345.678-9">
+              <div class="hint">Para facturación electrónica</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <h2>Datos de Empresa (Opcional)</h2>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Nombre de Empresa</label>
+              <input type="text" id="empresa">
+            </div>
+            <div class="form-group">
+              <label>RUT de Empresa</label>
+              <input type="text" id="empresaRut" placeholder="12.345.678-9">
+            </div>
+            <div class="form-group">
+              <label>Ciudad</label>
+              <input type="text" id="ciudad">
+            </div>
+            <div class="form-group">
+              <label>Dirección</label>
+              <input type="text" id="direccion">
+            </div>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <h2>Selección de Plan</h2>
+          <div class="form-group">
+            <label>Plan *</label>
+            <select id="planId" required>
+              <option value="">Seleccionar un plan...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Ciclo de Facturación</label>
+            <select id="billingCycle">
+              <option value="monthly">Mensual</option>
+              <option value="quarterly">Trimestral</option>
+              <option value="annual">Anual</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="consent-section">
+          <h3>Consentimientos Legales (Requerido por Ley 19.628)</h3>
+          
+          <div class="consent-item">
+            <input type="checkbox" id="aceptaTerminos" required>
+            <label>
+              Acepto los <a href="/terminos" target="_blank">Términos y Condiciones</a> de uso del servicio.
+            </label>
+          </div>
+          
+          <div class="consent-item">
+            <input type="checkbox" id="aceptaPrivacidad" required>
+            <label>
+              Acepto la <a href="/privacidad" target="_blank">Política de Privacidad</a> y autorizo el tratamiento de mis datos personales.
+            </label>
+          </div>
+          
+          <div class="consent-item">
+            <input type="checkbox" id="aceptaComunicaciones">
+            <label>
+              Acepto recibir comunicaciones comerciales por email (opcional).
+            </label>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 15px; margin-top: 30px;">
+          <button type="reset" class="btn btn-secondary">Limpiar</button>
+          <button type="submit" class="btn btn-primary">Registrarme</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="suscripcion-list">
+      <h2 style="margin-bottom: 20px;">Mis Suscripciones</h2>
+      <div id="suscripcionesList">
+        <p style="text-align: center; color: #999; padding: 40px;">No hay suscripciones registradas</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para confirmación de suscripción -->
+  <div class="modal" id="confirmationModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Confirmación de Suscripción</h2>
+        <button class="modal-close" onclick="closeConfirmationModal()">&times;</button>
+      </div>
+      <div id="confirmationContent">
+        <div class="loading">Procesando...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para detalles de suscripción -->
+  <div class="modal" id="detailsModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Detalles de Suscripción</h2>
+        <button class="modal-close" onclick="closeDetailsModal()">&times;</button>
+      </div>
+      <div id="detailsContent">
+        <div class="loading">Cargando...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para factura -->
+  <div class="modal" id="invoiceModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Boleta Electrónica</h2>
+        <button class="modal-close" onclick="closeInvoiceModal()">&times;</button>
+      </div>
+      <div id="invoiceContent">
+        <div class="loading">Generando boleta...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '';
+
+    // Cargar datos al iniciar
+    loadPlanes();
+    loadSuscripciones();
+    loadStats();
+
+    function loadPlanes() {
+      fetch(`${API_BASE}/api/suscripcion/planes`)
+        .then(r => r.json())
+        .then(data => {
+          const grid = document.getElementById('planesGrid');
+          const select = document.getElementById('planId');
+          
+          if (data.planes.length === 0) {
+            grid.innerHTML = '<p style="text-align: center; color: #999;">No hay planes disponibles</p>';
+            return;
+          }
+
+          grid.innerHTML = data.planes.map(plan => `
+            <div class="plan-card ${plan.name === 'Profesional' ? 'popular' : ''}">
+              <h3 class="plan-name">${plan.name}</h3>
+              <p class="plan-description">${plan.description}</p>
+              <div class="plan-price">$${formatAmount(plan.price)}</div>
+              <div class="plan-billing">/ ${plan.billingCycle === 'monthly' ? 'mes' : plan.billingCycle === 'quarterly' ? 'trimestre' : 'año'}</div>
+              <ul class="plan-features">
+                ${plan.features.map(feature => `<li>${feature}</li>`).join('')}
+              </ul>
+              <button class="plan-button ${plan.name === 'Profesional' ? 'primary' : 'secondary'}" onclick="selectPlan('${plan.id}')">
+                Seleccionar
+              </button>
+            </div>
+          `).join('');
+
+          select.innerHTML = '<option value="">Seleccionar un plan...</option>' + 
+            data.planes.map(plan => `<option value="${plan.id}">${plan.name} - $${formatAmount(plan.price)}/${plan.billingCycle === 'monthly' ? 'mes' : plan.billingCycle === 'quarterly' ? 'trimestre' : 'año'}</option>`).join('');
+        })
+        .catch(console.error);
+    }
+
+    function loadSuscripciones() {
+      fetch(`${API_BASE}/api/suscripcion`)
+        .then(r => r.json())
+        .then(data => {
+          const container = document.getElementById('suscripcionesList');
+          if (data.suscripciones.length === 0) {
+            container.innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">No hay suscripciones registradas</p>';
+            return;
+          }
+          container.innerHTML = data.suscripciones.map(sub => `
+            <div class="suscripcion-item">
+              <div class="suscripcion-info">
+                <div class="suscripcion-name">${sub.customerName}</div>
+                <div class="suscripcion-details">
+                  <div><strong>Plan:</strong> ${getPlanName(sub.planId)}</div>
+                  <div><strong>Email:</strong> ${sub.customerEmail}</div>
+                  <div><strong>Monto:</strong> $${formatAmount(sub.amount)}</div>
+                </div>
+              </div>
+              <div>
+                <span class="status-badge ${sub.status}">${sub.status.replace('_', ' ')}</span>
+                <button class="btn btn-secondary" style="margin-left: 10px; padding: 6px 12px;" onclick="showDetails('${sub.id}')">Ver</button>
+              </div>
+            </div>
+          `).join('');
+        })
+        .catch(console.error);
+    }
+
+    function loadStats() {
+      fetch(`${API_BASE}/api/suscripcion/stats`)
+        .then(r => r.json())
+        .then(data => {
+          document.getElementById('activeCount').textContent = data.stats.active;
+          document.getElementById('mrrValue').textContent = formatAmount(data.stats.monthlyRecurringRevenue);
+          document.getElementById('arrValue').textContent = formatAmount(data.stats.annualRecurringRevenue);
+          document.getElementById('totalCount').textContent = data.stats.total;
+        })
+        .catch(console.error);
+    }
+
+    function selectPlan(planId) {
+      document.getElementById('planId').value = planId;
+      document.getElementById('planId').dispatchEvent(new Event('change'));
+      alert('Plan seleccionado: ' + getPlanName(planId));
+    }
+
+    function getPlanName(planId) {
+      const select = document.getElementById('planId');
+      const option = select.querySelector(`option[value="${planId}"]`);
+      return option ? option.text.split(' - ')[0] : planId;
+    }
+
+    function formatAmount(amount) {
+      return new Intl.NumberFormat('es-CL', {
+        style: 'currency',
+        currency: 'CLP',
+        minimumFractionDigits: 0,
+      }).format(amount);
+    }
+
+    function submitRegistration(event) {
+      event.preventDefault();
+
+      const nombre = document.getElementById('nombre').value;
+      const email = document.getElementById('email').value;
+      const telefono = document.getElementById('telefono').value;
+      const rut = document.getElementById('rut').value;
+      const empresa = document.getElementById('empresa').value;
+      const empresaRut = document.getElementById('empresaRut').value;
+      const ciudad = document.getElementById('ciudad').value;
+      const direccion = document.getElementById('direccion').value;
+      const planId = document.getElementById('planId').value;
+      const billingCycle = document.getElementById('billingCycle').value;
+      const aceptaTerminos = document.getElementById('aceptaTerminos').checked;
+      const aceptaPrivacidad = document.getElementById('aceptaPrivacidad').checked;
+      const aceptaComunicaciones = document.getElementById('aceptaComunicaciones').checked;
+
+      if (!aceptaTerminos || !aceptaPrivacidad) {
+        alert('Debe aceptar los términos y la política de privacidad para continuar');
+        return;
+      }
+
+      const modal = document.getElementById('confirmationModal');
+      const content = document.getElementById('confirmationContent');
+      
+      modal.classList.add('active');
+      content.innerHTML = '<div class="loading">Creando suscripción...</div>';
+
+      fetch(`${API_BASE}/api/suscripcion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: nombre,
+          email: email,
+          phone: telefono || undefined,
+          rut: rut || undefined,
+          companyName: empresa || undefined,
+          companyRut: empresaRut || undefined,
+          city: ciudad || undefined,
+          address: direccion || undefined,
+          planId: planId,
+          billingCycle: billingCycle || undefined,
+          aceptaTerminos: true,
+          aceptaPoliticaPrivacidad: true,
+          aceptaComunicaciones: aceptaComunicaciones,
+        })
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          content.innerHTML = `
+            <div class="success-message">
+              <h3>¡Suscripción creada exitosamente!</h3>
+              <p><strong>ID:</strong> ${data.suscripcion.id}</p>
+              <p><strong>Plan:</strong> ${getPlanName(data.suscripcion.planId)}</p>
+              <p><strong>Monto:</strong> $${formatAmount(data.suscripcion.amount)}</p>
+              <p><strong>Estado:</strong> ${data.suscripcion.status}</p>
+              <p style="margin-top: 20px;">Ahora debe completar el pago para activar su suscripción.</p>
+            </div>
+          `;
+          loadSuscripciones();
+          loadStats();
+          document.getElementById('registroForm').reset();
+        } else {
+          content.innerHTML = `
+            <div class="error-message">
+              <h3>Error al crear suscripción</h3>
+              <p>${data.message}</p>
+            </div>
+          `;
+        }
+      })
+      .catch(error => {
+        console.error(error);
+        content.innerHTML = `
+          <div class="error-message">
+            <h3>Error de conexión</h3>
+            <p>${error.message}</p>
+          </div>
+        `;
+      });
+    }
+
+    function showDetails(suscripcionId) {
+      fetch(`${API_BASE}/api/suscripcion/${suscripcionId}`)
+        .then(r => r.json())
+        .then(data => {
+          const content = document.getElementById('detailsContent');
+          const plan = getPlanName(data.suscripcion.planId);
+          
+          content.innerHTML = `
+            <div>
+              <p><strong>ID:</strong> ${data.suscripcion.id}</p>
+              <p><strong>Cliente:</strong> ${data.suscripcion.customerName}</p>
+              <p><strong>Email:</strong> ${data.suscripcion.customerEmail}</p>
+              <p><strong>Plan:</strong> ${plan}</p>
+              <p><strong>Monto:</strong> $${formatAmount(data.suscripcion.amount)}</p>
+              <p><strong>Ciclo:</strong> ${data.suscripcion.billingCycle}</p>
+              <p><strong>Estado:</strong> <span class="status-badge ${data.suscripcion.status}">${data.suscripcion.status}</span></p>
+              <p><strong>Creada:</strong> ${new Date(data.suscripcion.createdAt).toLocaleString()}</p>
+              <p><strong>Próximo cobro:</strong> ${new Date(data.suscripcion.nextBillingDate).toLocaleDateString()}</p>
+            </div>
+            <div style="margin-top: 20px; display: flex; gap: 10px;">
+              <button class="btn btn-secondary" onclick="generateInvoice('${data.suscripcion.id}')">Generar Boleta</button>
+              ${data.suscripcion.status === 'active' ? `
+                <button class="btn btn-danger" onclick="cancelSubscription('${data.suscripcion.id}')">Cancelar</button>
+                <button class="btn btn-secondary" onclick="pauseSubscription('${data.suscripcion.id}')">Pausar</button>
+              ` : ''}
+              ${data.suscripcion.status === 'paused' ? `
+                <button class="btn btn-success" onclick="resumeSubscription('${data.suscripcion.id}')">Reanudar</button>
+              ` : ''}
+            </div>
+          `;
+          document.getElementById('detailsModal').classList.add('active');
+        })
+        .catch(error => {
+          console.error(error);
+          alert('Error al cargar detalles');
+        });
+    }
+
+    function closeDetailsModal() {
+      document.getElementById('detailsModal').classList.remove('active');
+    }
+
+    function closeConfirmationModal() {
+      document.getElementById('confirmationModal').classList.remove('active');
+    }
+
+    function closeInvoiceModal() {
+      document.getElementById('invoiceModal').classList.remove('active');
+    }
+
+    function generateInvoice(suscripcionId) {
+      fetch(`${API_BASE}/api/suscripcion/${suscripcionId}/boleta`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      .then(r => r.json())
+      .then(data => {
+        const content = document.getElementById('invoiceContent');
+        content.innerHTML = `
+          <div class="invoice-preview">
+            <div class="invoice-header">
+              <div>
+                <h3>Boleta Electrónica</h3>
+                <p>N° ${data.number}</p>
+              </div>
+              <div>
+                <p>Fecha: ${new Date().toLocaleDateString()}</p>
+              </div>
+            </div>
+            <div class="invoice-item">
+              <span>Suscripción ${getPlanName(document.getElementById('planId').value)}</span>
+              <span>$${formatAmount(0)}</span>
+            </div>
+            <div class="invoice-total">
+              Total: $${formatAmount(0)}
+            </div>
+            <div style="margin-top: 20px;">
+              <p><strong>Nota:</strong> En producción, esta boleta sería generada por el sistema de facturación electrónica oficial.</p>
+              <p>Cumple con normativa SII (Servicio de Impuestos Internos, Chile).</p>
+            </div>
+          </div>
+        `;
+        document.getElementById('invoiceModal').classList.add('active');
+      })
+      .catch(error => {
+        console.error(error);
+        alert('Error al generar boleta');
+      });
+    }
+
+    function cancelSubscription(suscripcionId) {
+      if (!confirm('¿Estás seguro de cancelar esta suscripción? Se respetará el período pagado.')) {
+        return;
+      }
+      
+      fetch(`${API_BASE}/api/suscripcion/${suscripcionId}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          alert('Suscripción cancelada exitosamente');
+          closeDetailsModal();
+          loadSuscripciones();
+          loadStats();
+        } else {
+          alert('Error al cancelar: ' + data.message);
+        }
+      })
+      .catch(error => {
+        console.error(error);
+        alert('Error al cancelar suscripción');
+      });
+    }
+
+    function pauseSubscription(suscripcionId) {
+      if (!confirm('¿Estás seguro de pausar esta suscripción?')) {
+        return;
+      }
+      
+      fetch(`${API_BASE}/api/suscripcion/${suscripcionId}/pause`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          alert('Suscripción pausada exitosamente');
+          closeDetailsModal();
+          loadSuscripciones();
+        } else {
+          alert('Error al pausar: ' + data.message);
+        }
+      })
+      .catch(error => {
+        console.error(error);
+        alert('Error al pausar suscripción');
+      });
+    }
+
+    function resumeSubscription(suscripcionId) {
+      if (!confirm('¿Estás seguro de reanudar esta suscripción?')) {
+        return;
+      }
+      
+      fetch(`${API_BASE}/api/suscripcion/${suscripcionId}/resume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          alert('Suscripción reanudada exitosamente');
+          closeDetailsModal();
+          loadSuscripciones();
+        } else {
+          alert('Error al reanudar: ' + data.message);
+        }
+      })
+      .catch(error => {
+        console.error(error);
+        alert('Error al reanudar suscripción');
+      });
+    }
+
+    // Cerrar modales al hacer clic fuera
+    window.onclick = function(event) {
+      const modals = document.querySelectorAll('.modal');
+      modals.forEach(modal => {
+        if (event.target === modal) {
+          modal.classList.remove('active');
+        }
+      });
+    }
+  </script>
+</body>
+</html>

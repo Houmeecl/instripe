@@ -1571,6 +1571,178 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     res.sendFile(path.join(publicDir, "automation.html"));
   });
 
+  // Suscripciones UI
+  app.get("/suscripcion", (_req: Request, res: Response) => {
+    res.sendFile(path.join(publicDir, "suscripcion.html"));
+  });
+
+  // Suscripciones API
+  app.get("/api/suscripcion/planes", (_req: Request, res: Response) => {
+    try {
+      const planes = platform.suscripcion.listPlanes();
+      res.json({ planes });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/suscripcion", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const suscripciones = platform.suscripcion.listSuscripciones(user);
+      res.json({ suscripciones });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/suscripcion/:id", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const suscripcion = platform.suscripcion.getSuscripcion(String(req.params.id), user);
+      if (!suscripcion) {
+        res.status(404).json({ error: "Suscripción no encontrada" });
+        return;
+      }
+      res.json({ suscripcion });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/suscripcion", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const user = res.locals.user as SessionUser;
+      const result = platform.suscripcion.createSuscripcion(user, {
+        name: String(body.name ?? ""),
+        email: String(body.email ?? ""),
+        phone: body.phone ? String(body.phone) : undefined,
+        rut: body.rut ? String(body.rut) : undefined,
+        companyName: body.companyName ? String(body.companyName) : undefined,
+        companyRut: body.companyRut ? String(body.companyRut) : undefined,
+        city: body.city ? String(body.city) : undefined,
+        address: body.address ? String(body.address) : undefined,
+        planId: String(body.planId ?? ""),
+        billingCycle: body.billingCycle as any,
+        aceptaTerminos: Boolean(body.aceptaTerminos),
+        aceptaPoliticaPrivacidad: Boolean(body.aceptaPoliticaPrivacidad),
+        aceptaComunicaciones: Boolean(body.aceptaComunicaciones || false),
+        referrer: body.referrer ? String(body.referrer) : undefined,
+        campaign: body.campaign ? String(body.campaign) : undefined,
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/suscripcion/:id/activate", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const user = res.locals.user as SessionUser;
+      const result = platform.suscripcion.activateSuscripcion(String(req.params.id), {
+        transactionId: String(body.transactionId ?? ""),
+        amount: Number(body.amount),
+        paymentMethod: String(body.paymentMethod ?? ""),
+        boletaUrl: body.boletaUrl ? String(body.boletaUrl) : undefined,
+      });
+      res.json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/suscripcion/:id/cancel", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const user = res.locals.user as SessionUser;
+      const suscripcion = platform.suscripcion.cancelSuscripcion(
+        String(req.params.id),
+        user,
+        Boolean(body.immediate)
+      );
+      res.json({ suscripcion, success: true, message: "Suscripción cancelada" });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/suscripcion/:id/pause", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const suscripcion = platform.suscripcion.pauseSuscripcion(String(req.params.id), user);
+      res.json({ suscripcion, success: true, message: "Suscripción pausada" });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/suscripcion/:id/resume", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const suscripcion = platform.suscripcion.resumeSuscripcion(String(req.params.id), user);
+      res.json({ suscripcion, success: true, message: "Suscripción reanudada" });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/suscripcion/:id/change-plan", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const user = res.locals.user as SessionUser;
+      const suscripcion = platform.suscripcion.changePlan(
+        String(req.params.id),
+        String(body.newPlanId),
+        user
+      );
+      res.json({ suscripcion, success: true, message: "Plan cambiado" });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/suscripcion/:id/pagos", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const pagos = platform.suscripcion.listPagos(String(req.params.id), user);
+      res.json({ pagos });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/suscripcion/:id/boleta", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const boleta = platform.suscripcion.generateBoleta(String(req.params.id), user);
+      res.json({ boleta });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/suscripcion/stats", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const stats = platform.suscripcion.getStats(user);
+      res.json({ stats });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/suscripcion/export", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const data = platform.suscripcion.exportForAccounting(user);
+      res.json({ data });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
   app.use(express.static(publicDir));
 
   return app;
