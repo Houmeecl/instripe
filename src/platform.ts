@@ -7,6 +7,7 @@ import { ConnectModule } from "./modules/connect/module.js";
 import { CuentasModule } from "./modules/cuentas/module.js";
 import { DisenoModule } from "./modules/diseno/module.js";
 import { EmpresasModule } from "./modules/empresas/module.js";
+import { KYCModule } from "./modules/kyc/module.js";
 import { LaboralModule } from "./modules/laboral/module.js";
 import { SegurosModule, type ClaimInput, type FrostingInput, type SubscribeInput } from "./modules/seguros/module.js";
 import { RegistroModule } from "./modules/registro/module.js";
@@ -36,6 +37,7 @@ export class Platform {
   readonly registro: RegistroModule;
   readonly empresas: EmpresasModule;
   readonly laboral: LaboralModule;
+  readonly kyc: KYCModule;
   readonly auth: AuthModule;
 
   readonly store: PlatformStore;
@@ -49,16 +51,17 @@ export class Platform {
     this.connect = new ConnectModule(this.payments, config, this.store);
     this.treasury = new TreasuryModule(this.payments, config);
     this.tarjetas = new TarjetasModule(this.payments, config, this.store);
-    this.diseno = new DisenoModule(this.payments, this.connect, config, this.store);
+    this.diseno = new DisenoModule(this.payments, this.connect, this.tarjetas, config, this.store);
     this.apps = new AppsModule(config.appManifestPath);
     this.registro = new RegistroModule(this.cuentas, this.store);
     this.empresas = new EmpresasModule(this.payments, this.store);
     this.laboral = new LaboralModule(this.store, config.publicBaseUrl);
+    this.kyc = new KYCModule(config, this.store);
     this.auth = new AuthModule(this.store, config.seedPassword);
   }
 
   listModules() {
-    return [this.cuentas, this.cobros, this.seguros, this.connect, this.treasury, this.tarjetas, this.diseno, this.apps, this.registro, this.empresas, this.laboral].map((mod) => ({
+    return [this.cuentas, this.cobros, this.seguros, this.connect, this.treasury, this.tarjetas, this.diseno, this.apps, this.registro, this.empresas, this.laboral, this.kyc].map((mod) => ({
       id: mod.id,
       label: mod.label,
       connected: true as const,

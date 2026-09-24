@@ -64,7 +64,7 @@ describe("instripe BaaS platform", () => {
     const res = await (await signedIn(app())).get("/api/gateways");
     expect(res.status).toBe(200);
     const names = res.body.gateways.map((g: { name: string }) => g.name).sort();
-    expect(names).toEqual(["chile", "stripe"]);
+    expect(names).toEqual(["chile", "global66", "stripe"]);
   });
 
   it("lists the credit-card credit policy", async () => {
@@ -107,6 +107,7 @@ describe("instripe BaaS platform", () => {
       "cuentas",
       "diseno",
       "empresas",
+      "kyc",
       "laboral",
       "registro",
       "seguros",

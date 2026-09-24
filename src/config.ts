@@ -1,4 +1,4 @@
-export type GatewayName = "stripe" | "chile";
+export type GatewayName = "stripe" | "chile" | "global66";
 
 export interface AppConfig {
   port: number;
@@ -16,6 +16,12 @@ export interface AppConfig {
   chile: {
     apiKey: string | undefined;
     commerceCode: string | undefined;
+  };
+  /** Credentials for Global66 (Payoy) gateway. Demo when unset. */
+  global66?: {
+    apiKey: string | undefined;
+    merchantId: string | undefined;
+    apiUrl: string | undefined;
   };
   /** Where `Crear app` writes the Stripe App manifest. */
   appManifestPath: string;
@@ -54,6 +60,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       apiKey: env.CHILE_GATEWAY_API_KEY?.trim() || undefined,
       commerceCode: env.CHILE_GATEWAY_COMMERCE_CODE?.trim() || undefined,
     },
+    global66: {
+      apiKey: env.GLOBAL66_API_KEY?.trim() || undefined,
+      merchantId: env.GLOBAL66_MERCHANT_ID?.trim() || undefined,
+      apiUrl: env.GLOBAL66_API_URL?.trim() || undefined,
+    },
     appManifestPath: env.APP_MANIFEST_PATH?.trim() || "stripe-app.json",
     databasePath: env.DATABASE_PATH?.trim() || "data/platform.db",
     seedPassword: env.AUTH_SEED_PASSWORD?.trim() || DEFAULT_SEED_PASSWORD,
@@ -78,4 +89,8 @@ export function isStripeConfigured(config: AppConfig): boolean {
 
 export function isChileConfigured(config: AppConfig): boolean {
   return Boolean(config.chile.apiKey && config.chile.commerceCode);
+}
+
+export function isGlobal66Configured(config: AppConfig): boolean {
+  return Boolean(config.global66?.apiKey && config.global66?.merchantId);
 }
