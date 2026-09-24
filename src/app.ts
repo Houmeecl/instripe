@@ -738,6 +738,116 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
   });
 
+  app.get("/api/tarjetas/:id", async (req: Request, res: Response) => {
+    const cardId = String(req.params.id);
+    const card = platform.tarjetas.get(cardId);
+    if (!card) {
+      res.status(404).json({ error: `Tarjeta no encontrada: ${cardId}` });
+      return;
+    }
+    res.json({ card });
+  });
+
+  app.get("/api/tarjetas/:id/details", async (req: Request, res: Response) => {
+    const cardId = String(req.params.id);
+    const card = platform.tarjetas.getWithDetails(cardId);
+    if (!card) {
+      res.status(404).json({ error: `Tarjeta no encontrada: ${cardId}` });
+      return;
+    }
+    res.json({ card });
+  });
+
+  app.get("/api/tarjetas/:id/cvv", async (req: Request, res: Response) => {
+    const cardId = String(req.params.id);
+    const cvv = platform.tarjetas.getCVV(cardId);
+    if (!cvv) {
+      res.status(404).json({ error: `CVV no disponible para tarjeta: ${cardId}` });
+      return;
+    }
+    res.json({ cvv });
+  });
+
+  app.post("/api/tarjetas/with-cvv", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    if (body.cupo === undefined) {
+      res.status(400).json({ error: "cupo es requerido" });
+      return;
+    }
+    const dob = body.dob && typeof body.dob === "object" ? body.dob : undefined;
+    const address = body.address && typeof body.address === "object" ? body.address : undefined;
+    try {
+      const card = await platform.tarjetas.issueWithCVV({
+        holderName: String(body.holderName ?? ""),
+        email: String(body.email ?? ""),
+        phone: String(body.phone ?? ""),
+        cupo: Number(body.cupo),
+        dob: dob
+          ? { day: Number(dob.day), month: Number(dob.month), year: Number(dob.year) }
+          : undefined,
+        address: address
+          ? {
+              line1: String(address.line1 ?? ""),
+              city: String(address.city ?? ""),
+              country: String(address.country ?? ""),
+              postalCode: String(address.postalCode ?? address.postal_code ?? ""),
+            }
+          : undefined,
+      });
+      res.status(201).json({ card });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/tarjetas/:id/duplicate", async (req: Request, res: Response) => {
+    const cardId = String(req.params.id);
+    const body = req.body ?? {};
+    try {
+      const card = await platform.tarjetas.createCardWithSameDataButDifferentCVV({
+        baseCardId: cardId,
+        newCVV: body.cvv,
+      });
+      res.status(201).json({ card });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/tarjetas/generate-test", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    if (body.cupo === undefined) {
+      res.status(400).json({ error: "cupo es requerido" });
+      return;
+    }
+    const dob = body.dob && typeof body.dob === "object" ? body.dob : undefined;
+    const address = body.address && typeof body.address === "object" ? body.address : undefined;
+    try {
+      const cards = await platform.tarjetas.generateTestCards({
+        holderName: String(body.holderName ?? ""),
+        email: String(body.email ?? ""),
+        phone: String(body.phone ?? ""),
+        cupo: Number(body.cupo),
+        count: Number(body.count) || 1,
+        dob: dob
+          ? { day: Number(dob.day), month: Number(dob.month), year: Number(dob.year) }
+          : undefined,
+        address: address
+          ? {
+              line1: String(address.line1 ?? ""),
+              city: String(address.city ?? ""),
+              country: String(address.country ?? ""),
+              postalCode: String(address.postalCode ?? address.postal_code ?? ""),
+            }
+          : undefined,
+      });
+      res.status(201).json({ cards, count: cards.length });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+
   app.get("/api/diseno", (_req: Request, res: Response) => {
     res.json({ design: platform.diseno.current() });
   });
