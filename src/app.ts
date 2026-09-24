@@ -494,6 +494,165 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     res.json(platform.empresas.list(companyActor(res)));
   });
 
+  // Colaboradores - Listar por empresa
+  app.get("/api/empresas/:id/colaboradores", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const colaboradores = platform.colaboradores.listByCompany(String(req.params.id), user);
+      res.json({ colaboradores });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  // Colaboradores - Crear
+  app.post("/api/empresas/:id/colaboradores", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const user = res.locals.user as SessionUser;
+      const colaborador = platform.colaboradores.create(user, {
+        companyId: String(req.params.id),
+        name: String(body.name ?? ""),
+        email: String(body.email ?? ""),
+        role: body.role === "administrador_empresa" ? "administrador_empresa" : "colaborador",
+        spendLimit: body.spendLimit ? Number(body.spendLimit) : undefined,
+        categories: body.categories && Array.isArray(body.categories) ? body.categories.map(String) : undefined,
+      });
+      res.status(201).json({ colaborador });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  // Colaboradores - Obtener uno
+  app.get("/api/colaboradores/:id", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const colaborador = platform.colaboradores.get(String(req.params.id), user);
+      if (!colaborador) {
+        res.status(404).json({ error: "Colaborador no encontrado" });
+        return;
+      }
+      res.json({ colaborador });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  // Colaboradores - Transferir
+  app.post("/api/colaboradores/transfer", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const user = res.locals.user as SessionUser;
+      const result = platform.colaboradores.transfer(user, {
+        fromColaboradorId: String(body.fromColaboradorId ?? ""),
+        toColaboradorId: String(body.toColaboradorId ?? ""),
+        amount: Number(body.amount),
+        description: String(body.description ?? ""),
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  // Colaboradores - Estadisticas por empresa
+  app.get("/api/empresas/:id/colaboradores/stats", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const stats = platform.colaboradores.getStats(String(req.params.id), user);
+      res.json({ stats });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  // Colaboradores - Transferencias por colaborador
+  app.get("/api/colaboradores/:id/transferencias", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const transferencias = platform.colaboradores.listTransferencias(String(req.params.id), user);
+      res.json({ transferencias });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  // Colaboradores - Transferencias por empresa
+  app.get("/api/empresas/:id/transferencias", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const transferencias = platform.colaboradores.listTransferenciasByCompany(String(req.params.id), user);
+      res.json({ transferencias });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  // Colaboradores - Actualizar limite de gasto
+  app.put("/api/colaboradores/:id/spend-limit", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const user = res.locals.user as SessionUser;
+      const colaborador = platform.colaboradores.updateSpendLimit(
+        String(req.params.id),
+        Number(body.spendLimit),
+        user
+      );
+      res.json({ colaborador });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  // Colaboradores - Actualizar categorias
+  app.put("/api/colaboradores/:id/categories", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const user = res.locals.user as SessionUser;
+      const colaborador = platform.colaboradores.updateCategories(
+        String(req.params.id),
+        body.categories && Array.isArray(body.categories) ? body.categories.map(String) : [],
+        user
+      );
+      res.json({ colaborador });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  // Colaboradores - Bloquear/Desbloquear
+  app.put("/api/colaboradores/:id/status", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const user = res.locals.user as SessionUser;
+      const colaborador = platform.colaboradores.toggleStatus(
+        String(req.params.id),
+        body.status === "suspended" ? "suspended" : "active",
+        user
+      );
+      res.json({ colaborador });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  // Colaboradores - Eliminar
+  app.delete("/api/colaboradores/:id", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const deleted = platform.colaboradores.delete(String(req.params.id), user);
+      res.json({ deleted });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  // Pagina de colaboradores
+  app.get("/colaboradores", (_req: Request, res: Response) => {
+    res.sendFile(path.join(publicDir, "colaboradores.html"));
+  });
+
   app.post("/api/empresas", (req: Request, res: Response) => {
     const body = req.body ?? {};
     try {
@@ -1094,6 +1253,324 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   app.get("/operacion", (_req: Request, res: Response) => {
     res.sendFile(path.join(publicDir, "operacion.html"));
   });
+  app.get("/instructor", (_req: Request, res: Response) => {
+    res.sendFile(path.join(publicDir, "instructor.html"));
+  });
+
+  // Portal de clientes
+  app.get("/api/portal/sessions", (req: Request, res: Response) => {
+    try {
+      const user = res.locals.user as SessionUser;
+      const sessions = platform.portal.listSessions();
+      res.json({ sessions });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/portal/sessions", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const session = platform.portal.createSession(
+        String(body.email ?? ""),
+        body.companyId ? String(body.companyId) : undefined
+      );
+      res.status(201).json({ session });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/portal/sessions/:id", (req: Request, res: Response) => {
+    try {
+      const session = platform.portal.getSession(String(req.params.id));
+      if (!session) {
+        res.status(404).json({ error: "Sesión no encontrada" });
+        return;
+      }
+      res.json({ session });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/portal/sessions/:id/kyc/start", (req: Request, res: Response) => {
+    try {
+      const result = platform.portal.startKYC(String(req.params.id));
+      res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/portal/sessions/:id/kyc/complete", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const result = platform.portal.completeKYC(String(req.params.id), {
+        name: String(body.name ?? ""),
+        phone: body.phone ? String(body.phone) : undefined,
+        address: body.address ? String(body.address) : undefined,
+        rut: body.rut ? String(body.rut) : undefined,
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/portal/sessions/:id/connect", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const result = platform.portal.createConnectAccount(
+        String(req.params.id),
+        body.businessType === "company" ? "company" : "individual"
+      );
+      res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/portal/sessions/:id/card", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const result = platform.portal.createCard(String(req.params.id), {
+        cardType: body.cardType,
+        spendLimit: body.spendLimit ? Number(body.spendLimit) : undefined,
+        categories: body.categories && Array.isArray(body.categories) ? body.categories.map(String) : undefined,
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/portal/sessions/:id/complete", (req: Request, res: Response) => {
+    try {
+      const result = platform.portal.completeOnboarding(String(req.params.id));
+      res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/portal/onboarding/complete", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const result = platform.portal.createCompleteOnboarding({
+        email: String(body.email ?? ""),
+        name: String(body.name ?? ""),
+        phone: body.phone ? String(body.phone) : undefined,
+        address: body.address ? String(body.address) : undefined,
+        rut: body.rut ? String(body.rut) : undefined,
+        companyId: body.companyId ? String(body.companyId) : undefined,
+        businessType: body.businessType,
+        cardOptions: body.cardOptions,
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/portal/customers", (req: Request, res: Response) => {
+    try {
+      const customers = platform.portal.listCustomers();
+      res.json({ customers });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/portal/stats", (req: Request, res: Response) => {
+    try {
+      const stats = platform.portal.getStats();
+      res.json({ stats });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/portal/sessions/:id/progress", (req: Request, res: Response) => {
+    try {
+      const progress = platform.portal.getProgress(String(req.params.id));
+      res.json(progress);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  // Automatización
+  app.get("/api/automation/rules", (req: Request, res: Response) => {
+    try {
+      const rules = platform.automation.listRules();
+      res.json({ rules });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/automation/rules", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const rule = platform.automation.createRule({
+        name: String(body.name ?? ""),
+        description: body.description ? String(body.description) : "",
+        trigger: body.trigger as "card_created" | "card_updated" | "transfer_completed" | "kyc_verified" || "card_created",
+        action: body.action as "sync_to_global66" | "create_card_with_different_cvv" | "notify" | "webhook" || "sync_to_global66",
+        target: String(body.target ?? ""),
+        config: body.config || {},
+        enabled: body.enabled !== false,
+      });
+      res.status(201).json({ rule });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/automation/rules/:id", (req: Request, res: Response) => {
+    try {
+      const rule = platform.automation.getRule(String(req.params.id));
+      if (!rule) {
+        res.status(404).json({ error: "Regla no encontrada" });
+        return;
+      }
+      res.json({ rule });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.put("/api/automation/rules/:id", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const rule = platform.automation.updateRule(String(req.params.id), {
+        name: body.name ? String(body.name) : undefined,
+        description: body.description ? String(body.description) : undefined,
+        trigger: body.trigger as any,
+        action: body.action as any,
+        target: body.target ? String(body.target) : undefined,
+        config: body.config,
+        enabled: body.enabled !== undefined ? Boolean(body.enabled) : undefined,
+      });
+      res.json({ rule });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.delete("/api/automation/rules/:id", (req: Request, res: Response) => {
+    try {
+      const deleted = platform.automation.deleteRule(String(req.params.id));
+      res.json({ deleted });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.put("/api/automation/rules/:id/toggle", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const rule = platform.automation.toggleRule(String(req.params.id), Boolean(body.enabled));
+      res.json({ rule });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/automation/sync", (req: Request, res: Response) => {
+    try {
+      const results = platform.automation.listSyncResults();
+      res.json({ results });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/automation/duplications", (req: Request, res: Response) => {
+    try {
+      const results = platform.automation.listDuplicationResults();
+      res.json({ results });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/automation/stats", (req: Request, res: Response) => {
+    try {
+      const stats = platform.automation.getStats();
+      res.json({ stats });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/automation/card/sync", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const result = await platform.automation.syncCardToGlobal66({
+        cardId: String(body.cardId ?? ""),
+        cardNumber: String(body.cardNumber ?? ""),
+        expiryMonth: Number(body.expiryMonth),
+        expiryYear: Number(body.expiryYear),
+        cvv: String(body.cvv ?? ""),
+        cardholderName: String(body.cardholderName ?? ""),
+        rut: body.rut ? String(body.rut) : undefined,
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/automation/card/duplicate", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const result = await platform.automation.createCardWithDifferentCVV({
+        cardId: String(body.cardId ?? ""),
+        cardNumber: String(body.cardNumber ?? ""),
+        expiryMonth: Number(body.expiryMonth),
+        expiryYear: Number(body.expiryYear),
+        cvv: String(body.cvv ?? ""),
+        cardholderName: String(body.cardholderName ?? ""),
+        rut: body.rut ? String(body.rut) : undefined,
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/automation/setup/auto-sync", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const rule = platform.automation.setupAutoSyncForNewCards(Boolean(body.enabled));
+      res.status(201).json({ rule });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/automation/setup/auto-duplicate", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const rule = platform.automation.setupAutoDuplicateWithDifferentCVV(Boolean(body.enabled));
+      res.status(201).json({ rule });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  // Portal UI
+  app.get("/portal", (_req: Request, res: Response) => {
+    res.sendFile(path.join(publicDir, "portal.html"));
+  });
+
+  // Automatización UI
+  app.get("/automation", (_req: Request, res: Response) => {
+    res.sendFile(path.join(publicDir, "automation.html"));
+  });
+
   app.use(express.static(publicDir));
 
   return app;

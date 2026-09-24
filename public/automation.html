@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Automatización - Stripe a Global66</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .automation-container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .automation-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+      padding: 20px;
+      background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+      border-radius: 12px;
+      color: white;
+    }
+    .automation-header h1 {
+      margin: 0;
+      font-size: 28px;
+    }
+    .automation-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    .stat-card {
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    .stat-card h3 {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 10px;
+    }
+    .stat-card .value {
+      font-size: 28px;
+      font-weight: bold;
+      color: #333;
+    }
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    .card-section {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .card-section h2 {
+      color: #ff6b6b;
+      margin-top: 0;
+      border-bottom: 3px solid #ff6b6b;
+      padding-bottom: 10px;
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 500;
+      color: #333;
+    }
+    .form-group input, .form-group select, .form-group textarea {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 16px;
+    }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+      outline: none;
+      border-color: #ff6b6b;
+    }
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+      color: white;
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(255, 107, 107, 0.4);
+    }
+    .btn-secondary {
+      background: #f5f5f5;
+      color: #333;
+    }
+    .btn-success {
+      background: #4caf50;
+      color: white;
+    }
+    .btn-danger {
+      background: #f44336;
+      color: white;
+    }
+    .rule-list {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .rule-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .rule-item:last-child {
+      border-bottom: none;
+    }
+    .rule-info {
+      flex: 1;
+    }
+    .rule-name {
+      font-weight: bold;
+      color: #ff6b6b;
+      margin-bottom: 5px;
+    }
+    .rule-description {
+      font-size: 14px;
+      color: #666;
+    }
+    .rule-actions {
+      display: flex;
+      gap: 10px;
+    }
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 50px;
+      height: 26px;
+    }
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 26px;
+    }
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 4px;
+      bottom: 4px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    input:checked + .toggle-slider {
+      background-color: #4caf50;
+    }
+    input:checked + .toggle-slider:before {
+      transform: translateX(26px);
+    }
+    .sync-result {
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .sync-result.success {
+      background: #e8f5e9;
+      border-left: 4px solid #4caf50;
+    }
+    .sync-result.failed {
+      background: #ffebee;
+      border-left: 4px solid #f44336;
+    }
+    .sync-result .stripe-card-id {
+      font-weight: bold;
+      color: #333;
+    }
+    .sync-result .status {
+      font-size: 14px;
+    }
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.5);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal.active {
+      display: flex;
+    }
+    .modal-content {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      max-width: 600px;
+      width: 90%;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .modal-header h2 {
+      margin: 0;
+    }
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: #999;
+    }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+    .info-box {
+      background: #fff3e0;
+      border-left: 4px solid #ff9800;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+    .info-box h3 {
+      margin-top: 0;
+      color: #ff9800;
+    }
+  </style>
+</head>
+<body>
+  <div class="automation-container">
+    <div class="automation-header">
+      <h1>Automatización - Stripe a Global66 (Payoy)</h1>
+      <button class="btn btn-primary" onclick="showCreateRuleModal()">Crear Regla</button>
+    </div>
+
+    <div class="automation-stats">
+      <div class="stat-card">
+        <h3>Reglas Totales</h3>
+        <div class="value" id="totalRules">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Reglas Activas</h3>
+        <div class="value" id="enabledRules">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Sincronizaciones</h3>
+        <div class="value" id="totalSyncs">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Éxitos</h3>
+        <div class="value" id="successfulSyncs">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Duplicaciones</h3>
+        <div class="value" id="totalDuplications">0</div>
+      </div>
+    </div>
+
+    <div class="card-grid">
+      <div class="card-section">
+        <h2>Configuración Rápida</h2>
+        <div class="form-group">
+          <label>Sincronización Automática</label>
+          <p style="color: #666; font-size: 14px; margin-bottom: 15px;">
+            Activa/desactiva la sincronización automática de todas las nuevas tarjetas a Global66
+          </p>
+          <div style="display: flex; align-items: center; gap: 15px;">
+            <label class="toggle-switch">
+              <input type="checkbox" id="autoSyncToggle" onchange="toggleAutoSync()">
+              <span class="toggle-slider"></span>
+            </label>
+            <span id="autoSyncStatus">Cargando...</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Duplicación Automática con CVV</label>
+          <p style="color: #666; font-size: 14px; margin-bottom: 15px;">
+            Activa/desactiva la creación automática de tarjetas con CVV diferente para pruebas
+          </p>
+          <div style="display: flex; align-items: center; gap: 15px;">
+            <label class="toggle-switch">
+              <input type="checkbox" id="autoDuplicateToggle" onchange="toggleAutoDuplicate()">
+              <span class="toggle-slider"></span>
+            </label>
+            <span id="autoDuplicateStatus">Cargando...</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-section">
+        <h2>Sincronizar Tarjeta Manual</h2>
+        <form id="syncCardForm" onsubmit="syncCard(event)">
+          <div class="form-group">
+            <label>ID de Tarjeta Stripe</label>
+            <input type="text" id="syncCardId" placeholder="card_xxxxxxxx" required>
+          </div>
+          <div class="form-group">
+            <label>Número de Tarjeta</label>
+            <input type="text" id="syncCardNumber" placeholder="4242 4242 4242 4242" required>
+          </div>
+          <div class="form-group">
+            <label>Mes de Expiración</label>
+            <input type="number" id="syncExpiryMonth" placeholder="12" min="1" max="12" required>
+          </div>
+          <div class="form-group">
+            <label>Año de Expiración</label>
+            <input type="number" id="syncExpiryYear" placeholder="2025" min="2024" max="2030" required>
+          </div>
+          <div class="form-group">
+            <label>CVV</label>
+            <input type="text" id="syncCVV" placeholder="123" required>
+          </div>
+          <div class="form-group">
+            <label>Nombre del Titular</label>
+            <input type="text" id="syncCardholderName" placeholder="Juan Pérez" required>
+          </div>
+          <div class="form-group">
+            <label>RUT (Opcional)</label>
+            <input type="text" id="syncRut" placeholder="12345678-9">
+          </div>
+          <button type="submit" class="btn btn-primary">Sincronizar a Global66</button>
+        </form>
+        <div id="syncResult" style="margin-top: 20px;"></div>
+      </div>
+    </div>
+
+    <div class="card-section">
+      <h2>Duplicar Tarjeta con CVV Diferente</h2>
+      <form id="duplicateCardForm" onsubmit="duplicateCard(event)">
+        <div class="form-group">
+          <label>ID de Tarjeta Stripe</label>
+          <input type="text" id="duplicateCardId" placeholder="card_xxxxxxxx" required>
+        </div>
+        <div class="form-group">
+          <label>Número de Tarjeta</label>
+          <input type="text" id="duplicateCardNumber" placeholder="4242 4242 4242 4242" required>
+        </div>
+        <div class="form-group">
+          <label>Mes de Expiración</label>
+          <input type="number" id="duplicateExpiryMonth" placeholder="12" min="1" max="12" required>
+        </div>
+        <div class="form-group">
+          <label>Año de Expiración</label>
+          <input type="number" id="duplicateExpiryYear" placeholder="2025" min="2024" max="2030" required>
+        </div>
+        <div class="form-group">
+          <label>CVV Original</label>
+          <input type="text" id="duplicateCVV" placeholder="123" required>
+        </div>
+        <div class="form-group">
+          <label>Nombre del Titular</label>
+          <input type="text" id="duplicateCardholderName" placeholder="Juan Pérez" required>
+        </div>
+        <div class="form-group">
+          <label>RUT (Opcional)</label>
+          <input type="text" id="duplicateRut" placeholder="12345678-9">
+        </div>
+        <div class="form-group">
+          <label>ID de Cliente (Opcional)</label>
+          <input type="text" id="duplicateCustomerId" placeholder="cust_xxxxxxxx">
+        </div>
+        <div class="form-group">
+          <label>ID de Empresa (Opcional)</label>
+          <input type="text" id="duplicateCompanyId" placeholder="empresa_xxxxxxxx">
+        </div>
+        <button type="submit" class="btn btn-primary">Duplicar con CVV Diferente</button>
+      </form>
+      <div id="duplicateResult" style="margin-top: 20px;"></div>
+    </div>
+
+    <div class="rule-list">
+      <h2>Reglas de Automatización</h2>
+      <div id="ruleList">
+        <div class="loading">Cargando reglas...</div>
+      </div>
+    </div>
+
+    <div class="card-section">
+      <h2>Historial de Sincronizaciones</h2>
+      <div id="syncHistory">
+        <div class="loading">Cargando historial...</div>
+      </div>
+    </div>
+
+    <div class="card-section">
+      <h2>Historial de Duplicaciones</h2>
+      <div id="duplicationHistory">
+        <div class="loading">Cargando historial...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para crear regla -->
+  <div class="modal" id="createRuleModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Crear Nueva Regla</h2>
+        <button class="modal-close" onclick="closeCreateRuleModal()">&times;</button>
+      </div>
+      <form id="createRuleForm" onsubmit="createRule(event)">
+        <div class="form-group">
+          <label>Nombre</label>
+          <input type="text" id="ruleName" required>
+        </div>
+        <div class="form-group">
+          <label>Descripción</label>
+          <textarea id="ruleDescription" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Disparador</label>
+          <select id="ruleTrigger" required>
+            <option value="">Seleccionar...</option>
+            <option value="card_created">Tarjeta Creada</option>
+            <option value="card_updated">Tarjeta Actualizada</option>
+            <option value="transfer_completed">Transferencia Completada</option>
+            <option value="kyc_verified">KYC Verificado</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Acción</label>
+          <select id="ruleAction" required>
+            <option value="">Seleccionar...</option>
+            <option value="sync_to_global66">Sincronizar a Global66</option>
+            <option value="create_card_with_different_cvv">Crear tarjeta con CVV diferente</option>
+            <option value="notify">Notificar</option>
+            <option value="webhook">Webhook</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Objetivo</label>
+          <input type="text" id="ruleTarget" placeholder="all" required>
+        </div>
+        <div class="form-group">
+          <label>Activada</label>
+          <select id="ruleEnabled">
+            <option value="true">Sí</option>
+            <option value="false">No</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Crear Regla</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal para editar regla -->
+  <div class="modal" id="editRuleModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Editar Regla</h2>
+        <button class="modal-close" onclick="closeEditRuleModal()">&times;</button>
+      </div>
+      <form id="editRuleForm" onsubmit="updateRule(event)">
+        <input type="hidden" id="editRuleId">
+        <div class="form-group">
+          <label>Nombre</label>
+          <input type="text" id="editRuleName" required>
+        </div>
+        <div class="form-group">
+          <label>Descripción</label>
+          <textarea id="editRuleDescription" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Disparador</label>
+          <select id="editRuleTrigger" required>
+            <option value="card_created">Tarjeta Creada</option>
+            <option value="card_updated">Tarjeta Actualizada</option>
+            <option value="transfer_completed">Transferencia Completada</option>
+            <option value="kyc_verified">KYC Verificado</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Acción</label>
+          <select id="editRuleAction" required>
+            <option value="sync_to_global66">Sincronizar a Global66</option>
+            <option value="create_card_with_different_cvv">Crear tarjeta con CVV diferente</option>
+            <option value="notify">Notificar</option>
+            <option value="webhook">Webhook</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Objetivo</label>
+          <input type="text" id="editRuleTarget" required>
+        </div>
+        <div class="form-group">
+          <label>Activada</label>
+          <select id="editRuleEnabled">
+            <option value="true">Sí</option>
+            <option value="false">No</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Guardar Cambios</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '';
+
+    // Cargar datos al iniciar
+    loadStats();
+    loadRules();
+    loadSyncHistory();
+    loadDuplicationHistory();
+    loadAutoSyncStatus();
+    loadAutoDuplicateStatus();
+
+    function loadStats() {
+      fetch(`${API_BASE}/api/automation/stats`)
+        .then(r => r.json())
+        .then(data => {
+          document.getElementById('totalRules').textContent = data.stats.totalRules;
+          document.getElementById('enabledRules').textContent = data.stats.enabledRules;
+          document.getElementById('totalSyncs').textContent = data.stats.totalSyncs;
+          document.getElementById('successfulSyncs').textContent = data.stats.successfulSyncs;
+          document.getElementById('totalDuplications').textContent = data.stats.totalDuplications;
+        })
+        .catch(console.error);
+    }
+
+    function loadRules() {
+      fetch(`${API_BASE}/api/automation/rules`)
+        .then(r => r.json())
+        .then(data => {
+          const container = document.getElementById('ruleList');
+          if (data.rules.length === 0) {
+            container.innerHTML = '<p style="text-align: center; color: #999;">No hay reglas de automatización</p>';
+            return;
+          }
+          container.innerHTML = data.rules.map(rule => `
+            <div class="rule-item">
+              <div class="rule-info">
+                <div class="rule-name">${rule.name}</div>
+                <div class="rule-description">${rule.description}</div>
+                <div style="font-size: 12px; color: #999; margin-top: 5px;">
+                  ${rule.trigger} → ${rule.action} | Objetivo: ${rule.target}
+                </div>
+              </div>
+              <div class="rule-actions">
+                <label class="toggle-switch">
+                  <input type="checkbox" ${rule.enabled ? 'checked' : ''} onchange="toggleRule('${rule.id}', this.checked)">
+                  <span class="toggle-slider"></span>
+                </label>
+                <button class="btn btn-secondary" style="padding: 6px 12px;" onclick="showEditRuleModal('${rule.id}')">Editar</button>
+                <button class="btn btn-danger" style="padding: 6px 12px;" onclick="deleteRule('${rule.id}')">Eliminar</button>
+              </div>
+            </div>
+          `).join('');
+        })
+        .catch(console.error);
+    }
+
+    function loadSyncHistory() {
+      fetch(`${API_BASE}/api/automation/sync`)
+        .then(r => r.json())
+        .then(data => {
+          const container = document.getElementById('syncHistory');
+          if (data.results.length === 0) {
+            container.innerHTML = '<p style="text-align: center; color: #999;">No hay historial de sincronizaciones</p>';
+            return;
+          }
+          container.innerHTML = data.results.map(result => `
+            <div class="sync-result ${result.success ? 'success' : 'failed'}">
+              <div>
+                <div class="stripe-card-id">Stripe Card: ${result.stripeCardId}</div>
+                <div style="font-size: 12px; color: #666;">
+                  Global66 Card: ${result.global66CardId || 'N/A'}
+                </div>
+              </div>
+              <div class="status">${result.message}</div>
+            </div>
+          `).join('');
+        })
+        .catch(console.error);
+    }
+
+    function loadDuplicationHistory() {
+      fetch(`${API_BASE}/api/automation/duplications`)
+        .then(r => r.json())
+        .then(data => {
+          const container = document.getElementById('duplicationHistory');
+          if (data.results.length === 0) {
+            container.innerHTML = '<p style="text-align: center; color: #999;">No hay historial de duplicaciones</p>';
+            return;
+          }
+          container.innerHTML = data.results.map(result => `
+            <div class="sync-result ${result.success ? 'success' : 'failed'}">
+              <div>
+                <div class="stripe-card-id">Original: ${result.originalCardId}</div>
+                <div style="font-size: 12px; color: #666;">
+                  Duplicada: ${result.duplicatedCardId}
+                </div>
+                <div style="font-size: 12px; color: #666;">
+                  CVV Original: ${result.originalCVV} → CVV Nuevo: ${result.newCVV}
+                </div>
+              </div>
+              <div class="status">${result.message}</div>
+            </div>
+          `).join('');
+        })
+        .catch(console.error);
+    }
+
+    function loadAutoSyncStatus() {
+      fetch(`${API_BASE}/api/automation/rules`)
+        .then(r => r.json())
+        .then(data => {
+          const rule = data.rules.find(r => r.name === 'Auto Sync to Global66');
+          if (rule) {
+            document.getElementById('autoSyncToggle').checked = rule.enabled;
+            document.getElementById('autoSyncStatus').textContent = rule.enabled ? 'Activado' : 'Desactivado';
+          }
+        })
+        .catch(console.error);
+    }
+
+    function loadAutoDuplicateStatus() {
+      fetch(`${API_BASE}/api/automation/rules`)
+        .then(r => r.json())
+        .then(data => {
+          const rule = data.rules.find(r => r.name === 'Auto Duplicate with Different CVV');
+          if (rule) {
+            document.getElementById('autoDuplicateToggle').checked = rule.enabled;
+            document.getElementById('autoDuplicateStatus').textContent = rule.enabled ? 'Activado' : 'Desactivado';
+          }
+        })
+        .catch(console.error);
+    }
+
+    function toggleAutoSync() {
+      const enabled = document.getElementById('autoSyncToggle').checked;
+      fetch(`${API_BASE}/api/automation/setup/auto-sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      })
+      .then(() => {
+        document.getElementById('autoSyncStatus').textContent = enabled ? 'Activado' : 'Desactivado';
+        loadRules();
+      })
+      .catch(console.error);
+    }
+
+    function toggleAutoDuplicate() {
+      const enabled = document.getElementById('autoDuplicateToggle').checked;
+      fetch(`${API_BASE}/api/automation/setup/auto-duplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      })
+      .then(() => {
+        document.getElementById('autoDuplicateStatus').textContent = enabled ? 'Activado' : 'Desactivado';
+        loadRules();
+      })
+      .catch(console.error);
+    }
+
+    function showCreateRuleModal() {
+      document.getElementById('createRuleModal').classList.add('active');
+    }
+
+    function closeCreateRuleModal() {
+      document.getElementById('createRuleModal').classList.remove('active');
+      document.getElementById('createRuleForm').reset();
+    }
+
+    function createRule(event) {
+      event.preventDefault();
+      const name = document.getElementById('ruleName').value;
+      const description = document.getElementById('ruleDescription').value;
+      const trigger = document.getElementById('ruleTrigger').value;
+      const action = document.getElementById('ruleAction').value;
+      const target = document.getElementById('ruleTarget').value;
+      const enabled = document.getElementById('ruleEnabled').value === 'true';
+
+      fetch(`${API_BASE}/api/automation/rules`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description, trigger, action, target, enabled })
+      })
+      .then(r => r.json())
+      .then(data => {
+        closeCreateRuleModal();
+        loadRules();
+        loadStats();
+        alert('Regla creada exitosamente');
+      })
+      .catch(error => {
+        console.error(error);
+        alert('Error al crear regla');
+      });
+    }
+
+    function showEditRuleModal(ruleId) {
+      fetch(`${API_BASE}/api/automation/rules/${ruleId}`)
+        .then(r => r.json())
+        .then(data => {
+          document.getElementById('editRuleId').value = data.rule.id;
+          document.getElementById('editRuleName').value = data.rule.name;
+          document.getElementById('editRuleDescription').value = data.rule.description || '';
+          document.getElementById('editRuleTrigger').value = data.rule.trigger;
+          document.getElementById('editRuleAction').value = data.rule.action;
+          document.getElementById('editRuleTarget').value = data.rule.target;
+          document.getElementById('editRuleEnabled').value = data.rule.enabled ? 'true' : 'false';
+          document.getElementById('editRuleModal').classList.add('active');
+        })
+        .catch(console.error);
+    }
+
+    function closeEditRuleModal() {
+      document.getElementById('editRuleModal').classList.remove('active');
+    }
+
+    function updateRule(event) {
+      event.preventDefault();
+      const id = document.getElementById('editRuleId').value;
+      const name = document.getElementById('editRuleName').value;
+      const description = document.getElementById('editRuleDescription').value;
+      const trigger = document.getElementById('editRuleTrigger').value;
+      const action = document.getElementById('editRuleAction').value;
+      const target = document.getElementById('editRuleTarget').value;
+      const enabled = document.getElementById('editRuleEnabled').value === 'true';
+
+      fetch(`${API_BASE}/api/automation/rules/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description, trigger, action, target, enabled })
+      })
+      .then(r => r.json())
+      .then(data => {
+        closeEditRuleModal();
+        loadRules();
+        alert('Regla actualizada exitosamente');
+      })
+      .catch(error => {
+        console.error(error);
+        alert('Error al actualizar regla');
+      });
+    }
+
+    function toggleRule(ruleId, enabled) {
+      fetch(`${API_BASE}/api/automation/rules/${ruleId}/toggle`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      })
+      .then(() => {
+        loadRules();
+        loadStats();
+      })
+      .catch(console.error);
+    }
+
+    function deleteRule(ruleId) {
+      if (!confirm('¿Estás seguro de eliminar esta regla?')) return;
+      fetch(`${API_BASE}/api/automation/rules/${ruleId}`, {
+        method: 'DELETE'
+      })
+      .then(r => r.json())
+      .then(() => {
+        loadRules();
+        loadStats();
+        alert('Regla eliminada exitosamente');
+      })
+      .catch(console.error);
+    }
+
+    function syncCard(event) {
+      event.preventDefault();
+      const cardId = document.getElementById('syncCardId').value;
+      const cardNumber = document.getElementById('syncCardNumber').value;
+      const expiryMonth = document.getElementById('syncExpiryMonth').value;
+      const expiryYear = document.getElementById('syncExpiryYear').value;
+      const cvv = document.getElementById('syncCVV').value;
+      const cardholderName = document.getElementById('syncCardholderName').value;
+      const rut = document.getElementById('syncRut').value;
+
+      const resultContainer = document.getElementById('syncResult');
+      resultContainer.innerHTML = '<div class="loading">Sincronizando...</div>';
+
+      fetch(`${API_BASE}/api/automation/card/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cardId, cardNumber, expiryMonth, expiryYear, cvv, cardholderName, rut })
+      })
+      .then(r => r.json())
+      .then(data => {
+        resultContainer.innerHTML = `
+          <div class="sync-result ${data.success ? 'success' : 'failed'}">
+            <div>
+              <div class="stripe-card-id">Stripe Card: ${cardId}</div>
+              <div style="font-size: 12px; color: #666;">
+                Global66 Card: ${data.global66CardId || 'N/A'}
+              </div>
+            </div>
+            <div class="status">${data.message}</div>
+          </div>
+        `;
+        loadSyncHistory();
+        loadStats();
+      })
+      .catch(error => {
+        console.error(error);
+        resultContainer.innerHTML = `
+          <div class="sync-result failed">
+            <div class="stripe-card-id">Error al sincronizar</div>
+            <div class="status">${error.message}</div>
+          </div>
+        `;
+      });
+    }
+
+    function duplicateCard(event) {
+      event.preventDefault();
+      const cardId = document.getElementById('duplicateCardId').value;
+      const cardNumber = document.getElementById('duplicateCardNumber').value;
+      const expiryMonth = document.getElementById('duplicateExpiryMonth').value;
+      const expiryYear = document.getElementById('duplicateExpiryYear').value;
+      const cvv = document.getElementById('duplicateCVV').value;
+      const cardholderName = document.getElementById('duplicateCardholderName').value;
+      const rut = document.getElementById('duplicateRut').value;
+      const customerId = document.getElementById('duplicateCustomerId').value;
+      const companyId = document.getElementById('duplicateCompanyId').value;
+
+      const resultContainer = document.getElementById('duplicateResult');
+      resultContainer.innerHTML = '<div class="loading">Duplicando...</div>';
+
+      fetch(`${API_BASE}/api/automation/card/duplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cardId, cardNumber, expiryMonth, expiryYear, cvv, cardholderName, rut, customerId, companyId })
+      })
+      .then(r => r.json())
+      .then(data => {
+        resultContainer.innerHTML = `
+          <div class="sync-result ${data.success ? 'success' : 'failed'}">
+            <div>
+              <div class="stripe-card-id">Original: ${cardId}</div>
+              <div style="font-size: 12px; color: #666;">
+                Duplicada: ${data.duplicatedCardId || 'N/A'}
+              </div>
+              <div style="font-size: 12px; color: #666;">
+                CVV Original: ${data.originalCVV || cvv} → CVV Nuevo: ${data.newCVV || 'N/A'}
+              </div>
+            </div>
+            <div class="status">${data.message}</div>
+          </div>
+        `;
+        loadDuplicationHistory();
+        loadStats();
+      })
+      .catch(error => {
+        console.error(error);
+        resultContainer.innerHTML = `
+          <div class="sync-result failed">
+            <div class="stripe-card-id">Error al duplicar</div>
+            <div class="status">${error.message}</div>
+          </div>
+        `;
+      });
+    }
+
+    // Cerrar modales al hacer clic fuera
+    window.onclick = function(event) {
+      const modals = document.querySelectorAll('.modal');
+      modals.forEach(modal => {
+        if (event.target === modal) {
+          modal.classList.remove('active');
+        }
+      });
+    }
+  </script>
+</body>
+</html>

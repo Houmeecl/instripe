@@ -2,13 +2,16 @@ import { AuthModule } from "./auth/module.js";
 import type { AppConfig, GatewayName } from "./config.js";
 import { PlatformError } from "./errors.js";
 import { AppsModule } from "./modules/apps/module.js";
+import { AutomationModule } from "./modules/automation/module.js";
 import { CobrosModule } from "./modules/cobros/module.js";
+import { ColaboradoresModule } from "./modules/colaboradores/module.js";
 import { ConnectModule } from "./modules/connect/module.js";
 import { CuentasModule } from "./modules/cuentas/module.js";
 import { DisenoModule } from "./modules/diseno/module.js";
 import { EmpresasModule } from "./modules/empresas/module.js";
 import { KYCModule } from "./modules/kyc/module.js";
 import { LaboralModule } from "./modules/laboral/module.js";
+import { PortalModule } from "./modules/portal/module.js";
 import { SegurosModule, type ClaimInput, type FrostingInput, type SubscribeInput } from "./modules/seguros/module.js";
 import { RegistroModule } from "./modules/registro/module.js";
 import { TarjetasModule } from "./modules/tarjetas/module.js";
@@ -38,6 +41,9 @@ export class Platform {
   readonly empresas: EmpresasModule;
   readonly laboral: LaboralModule;
   readonly kyc: KYCModule;
+  readonly colaboradores: ColaboradoresModule;
+  readonly portal: PortalModule;
+  readonly automation: AutomationModule;
   readonly auth: AuthModule;
 
   readonly store: PlatformStore;
@@ -57,11 +63,14 @@ export class Platform {
     this.empresas = new EmpresasModule(this.payments, this.store);
     this.laboral = new LaboralModule(this.store, config.publicBaseUrl);
     this.kyc = new KYCModule(config, this.store);
+    this.colaboradores = new ColaboradoresModule(this.payments, config, this.store);
+    this.portal = new PortalModule(this.payments, config, this.store);
+    this.automation = new AutomationModule(this.payments, config, this.store);
     this.auth = new AuthModule(this.store, config.seedPassword);
   }
 
   listModules() {
-    return [this.cuentas, this.cobros, this.seguros, this.connect, this.treasury, this.tarjetas, this.diseno, this.apps, this.registro, this.empresas, this.laboral, this.kyc].map((mod) => ({
+    return [this.cuentas, this.cobros, this.seguros, this.connect, this.treasury, this.tarjetas, this.diseno, this.apps, this.registro, this.empresas, this.laboral, this.kyc, this.colaboradores, this.portal, this.automation].map((mod) => ({
       id: mod.id,
       label: mod.label,
       connected: true as const,

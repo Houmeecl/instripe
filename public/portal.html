@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Portal de Clientes - Onboarding</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .portal-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .portal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+      padding: 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 12px;
+      color: white;
+    }
+    .portal-header h1 {
+      margin: 0;
+      font-size: 28px;
+    }
+    .portal-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    .stat-card {
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    .stat-card h3 {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 10px;
+    }
+    .stat-card .value {
+      font-size: 28px;
+      font-weight: bold;
+      color: #333;
+    }
+    .onboarding-flow {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 30px;
+    }
+    .steps-container {
+      display: flex;
+      justify-content: space-between;
+      margin: 30px 0;
+      position: relative;
+    }
+    .steps-container::before {
+      content: '';
+      position: absolute;
+      top: 20px;
+      left: 50px;
+      right: 50px;
+      height: 4px;
+      background: #e0e0e0;
+      z-index: 1;
+    }
+    .step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative;
+      z-index: 2;
+    }
+    .step-number {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #e0e0e0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .step.active .step-number {
+      background: #667eea;
+      color: white;
+    }
+    .step.completed .step-number {
+      background: #4caf50;
+      color: white;
+    }
+    .step-label {
+      font-size: 14px;
+      color: #666;
+      text-align: center;
+    }
+    .step.active .step-label {
+      color: #667eea;
+      font-weight: bold;
+    }
+    .step.completed .step-label {
+      color: #4caf50;
+    }
+    .session-list {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .session-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .session-item:last-child {
+      border-bottom: none;
+    }
+    .session-id {
+      font-weight: bold;
+      color: #667eea;
+    }
+    .session-status {
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+    .session-status.pending { background: #ffc107; color: white; }
+    .session-status.kyc_started { background: #2196f3; color: white; }
+    .session-status.kyc_completed { background: #8bc34a; color: white; }
+    .session-status.connect_created { background: #00bcd4; color: white; }
+    .session-status.card_created { background: #9c27b0; color: white; }
+    .session-status.completed { background: #4caf50; color: white; }
+    .session-status.failed { background: #f44336; color: white; }
+    .form-section {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 500;
+      color: #333;
+    }
+    .form-group input, .form-group select {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 16px;
+    }
+    .form-group input:focus, .form-group select:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    .btn-secondary {
+      background: #f5f5f5;
+      color: #333;
+    }
+    .btn-success {
+      background: #4caf50;
+      color: white;
+    }
+    .btn-danger {
+      background: #f44336;
+      color: white;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 8px;
+      background: #e0e0e0;
+      border-radius: 4px;
+      margin: 20px 0;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      border-radius: 4px;
+      transition: width 0.3s;
+    }
+    .customer-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+      margin-top: 20px;
+    }
+    .customer-card {
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .customer-card h3 {
+      margin-top: 0;
+      color: #667eea;
+    }
+    .customer-info {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 15px;
+    }
+    .customer-info span {
+      font-size: 14px;
+      color: #666;
+    }
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.5);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal.active {
+      display: flex;
+    }
+    .modal-content {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      max-width: 500px;
+      width: 90%;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .modal-header h2 {
+      margin: 0;
+    }
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: #999;
+    }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+    .success-message {
+      background: #e8f5e9;
+      color: #2e7d32;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+    .error-message {
+      background: #ffebee;
+      color: #c62828;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="portal-container">
+    <div class="portal-header">
+      <h1>Portal de Clientes - Onboarding</h1>
+      <button class="btn btn-primary" onclick="showCreateSessionModal()">Nueva Sesión</button>
+    </div>
+
+    <div class="portal-stats">
+      <div class="stat-card">
+        <h3>Sesiones Totales</h3>
+        <div class="value" id="totalSessions">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Completadas</h3>
+        <div class="value" id="completedSessions">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Pendientes</h3>
+        <div class="value" id="pendingSessions">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Clientes</h3>
+        <div class="value" id="totalCustomers">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>KYC Verificados</h3>
+        <div class="value" id="kycVerified">0</div>
+      </div>
+    </div>
+
+    <div class="onboarding-flow">
+      <h2>Flujo de Onboarding</h2>
+      <div class="steps-container" id="stepsContainer">
+        <div class="step active">
+          <div class="step-number">1</div>
+          <div class="step-label">Iniciar</div>
+        </div>
+        <div class="step">
+          <div class="step-number">2</div>
+          <div class="step-label">KYC</div>
+        </div>
+        <div class="step">
+          <div class="step-number">3</div>
+          <div class="step-label">Connect</div>
+        </div>
+        <div class="step">
+          <div class="step-number">4</div>
+          <div class="step-label">Tarjeta</div>
+        </div>
+        <div class="step">
+          <div class="step-number">5</div>
+          <div class="step-label">Completar</div>
+        </div>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-bar-fill" id="progressFill" style="width: 0%"></div>
+      </div>
+    </div>
+
+    <div class="session-list">
+      <h2>Sesiones de Onboarding</h2>
+      <div id="sessionList">
+        <div class="loading">Cargando sesiones...</div>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h2>Clientes Registrados</h2>
+      <div class="customer-grid" id="customerGrid">
+        <div class="loading">Cargando clientes...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para crear sesión -->
+  <div class="modal" id="createSessionModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Nueva Sesión de Onboarding</h2>
+        <button class="modal-close" onclick="closeCreateSessionModal()">&times;</button>
+      </div>
+      <form id="createSessionForm" onsubmit="createSession(event)">
+        <div class="form-group">
+          <label>Correo Electrónico</label>
+          <input type="email" id="sessionEmail" required>
+        </div>
+        <div class="form-group">
+          <label>Empresa (Opcional)</label>
+          <input type="text" id="sessionCompanyId" placeholder="ID de la empresa">
+        </div>
+        <button type="submit" class="btn btn-primary">Crear Sesión</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal para onboarding completo -->
+  <div class="modal" id="completeOnboardingModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Onboarding Completo</h2>
+        <button class="modal-close" onclick="closeCompleteOnboardingModal()">&times;</button>
+      </div>
+      <form id="completeOnboardingForm" onsubmit="createCompleteOnboarding(event)">
+        <div class="form-group">
+          <label>Correo Electrónico</label>
+          <input type="email" id="completeEmail" required>
+        </div>
+        <div class="form-group">
+          <label>Nombre</label>
+          <input type="text" id="completeName" required>
+        </div>
+        <div class="form-group">
+          <label>Teléfono (Opcional)</label>
+          <input type="text" id="completePhone">
+        </div>
+        <div class="form-group">
+          <label>Dirección (Opcional)</label>
+          <input type="text" id="completeAddress">
+        </div>
+        <div class="form-group">
+          <label>RUT (Opcional)</label>
+          <input type="text" id="completeRut">
+        </div>
+        <div class="form-group">
+          <label>ID de Empresa (Opcional)</label>
+          <input type="text" id="completeCompanyId">
+        </div>
+        <div class="form-group">
+          <label>Tipo de Negocio</label>
+          <select id="completeBusinessType">
+            <option value="individual">Individual</option>
+            <option value="company">Empresa</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-success">Crear Onboarding Completo</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal para detalles de sesión -->
+  <div class="modal" id="sessionDetailModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Detalles de Sesión</h2>
+        <button class="modal-close" onclick="closeSessionDetailModal()">&times;</button>
+      </div>
+      <div id="sessionDetailContent">
+        <div class="loading">Cargando...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '';
+
+    // Cargar datos al iniciar
+    loadStats();
+    loadSessions();
+    loadCustomers();
+
+    function loadStats() {
+      fetch(`${API_BASE}/api/portal/stats`)
+        .then(r => r.json())
+        .then(data => {
+          document.getElementById('totalSessions').textContent = data.stats.totalSessions;
+          document.getElementById('completedSessions').textContent = data.stats.completed;
+          document.getElementById('pendingSessions').textContent = data.stats.pending;
+          document.getElementById('totalCustomers').textContent = data.stats.totalCustomers;
+          document.getElementById('kycVerified').textContent = data.stats.kycVerified;
+        })
+        .catch(console.error);
+    }
+
+    function loadSessions() {
+      fetch(`${API_BASE}/api/portal/sessions`)
+        .then(r => r.json())
+        .then(data => {
+          const container = document.getElementById('sessionList');
+          if (data.sessions.length === 0) {
+            container.innerHTML = '<p style="text-align: center; color: #999;">No hay sesiones de onboarding</p>';
+            return;
+          }
+          container.innerHTML = data.sessions.map(session => `
+            <div class="session-item">
+              <div>
+                <div class="session-id">${session.id}</div>
+                <div style="color: #666; font-size: 14px;">${session.email}</div>
+              </div>
+              <div>
+                <span class="session-status ${session.status}">${session.status.replace('_', ' ')}</span>
+                <button class="btn btn-secondary" style="margin-left: 10px; padding: 6px 12px;" onclick="showSessionDetail('${session.id}')">Ver</button>
+              </div>
+            </div>
+          `).join('');
+        })
+        .catch(console.error);
+    }
+
+    function loadCustomers() {
+      fetch(`${API_BASE}/api/portal/customers`)
+        .then(r => r.json())
+        .then(data => {
+          const container = document.getElementById('customerGrid');
+          if (data.customers.length === 0) {
+            container.innerHTML = '<p style="text-align: center; color: #999;">No hay clientes registrados</p>';
+            return;
+          }
+          container.innerHTML = data.customers.map(customer => `
+            <div class="customer-card">
+              <h3>${customer.name}</h3>
+              <div class="customer-info">
+                <span><strong>Email:</strong> ${customer.email}</span>
+                <span><strong>KYC:</strong> ${customer.kycVerified ? 'Verificado' : 'Pendiente'}</span>
+                <span><strong>Connect:</strong> ${customer.connectAccountId ? 'Sí' : 'No'}</span>
+                <span><strong>Tarjeta:</strong> ${customer.cardId ? 'Sí' : 'No'}</span>
+              </div>
+            </div>
+          `).join('');
+        })
+        .catch(console.error);
+    }
+
+    function showCreateSessionModal() {
+      document.getElementById('createSessionModal').classList.add('active');
+    }
+
+    function closeCreateSessionModal() {
+      document.getElementById('createSessionModal').classList.remove('active');
+      document.getElementById('createSessionForm').reset();
+    }
+
+    function createSession(event) {
+      event.preventDefault();
+      const email = document.getElementById('sessionEmail').value;
+      const companyId = document.getElementById('sessionCompanyId').value;
+
+      fetch(`${API_BASE}/api/portal/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, companyId: companyId || undefined })
+      })
+      .then(r => r.json())
+      .then(data => {
+        closeCreateSessionModal();
+        loadSessions();
+        loadStats();
+        alert('Sesión creada exitosamente');
+      })
+      .catch(error => {
+        console.error(error);
+        alert('Error al crear sesión');
+      });
+    }
+
+    function showCompleteOnboardingModal() {
+      document.getElementById('completeOnboardingModal').classList.add('active');
+    }
+
+    function closeCompleteOnboardingModal() {
+      document.getElementById('completeOnboardingModal').classList.remove('active');
+      document.getElementById('completeOnboardingForm').reset();
+    }
+
+    function createCompleteOnboarding(event) {
+      event.preventDefault();
+      const email = document.getElementById('completeEmail').value;
+      const name = document.getElementById('completeName').value;
+      const phone = document.getElementById('completePhone').value;
+      const address = document.getElementById('completeAddress').value;
+      const rut = document.getElementById('completeRut').value;
+      const companyId = document.getElementById('completeCompanyId').value;
+      const businessType = document.getElementById('completeBusinessType').value;
+
+      fetch(`${API_BASE}/api/portal/onboarding/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          name,
+          phone: phone || undefined,
+          address: address || undefined,
+          rut: rut || undefined,
+          companyId: companyId || undefined,
+          businessType
+        })
+      })
+      .then(r => r.json())
+      .then(data => {
+        closeCompleteOnboardingModal();
+        loadSessions();
+        loadCustomers();
+        loadStats();
+        alert('Onboarding completado exitosamente');
+      })
+      .catch(error => {
+        console.error(error);
+        alert('Error al crear onboarding');
+      });
+    }
+
+    function showSessionDetail(sessionId) {
+      fetch(`${API_BASE}/api/portal/sessions/${sessionId}/progress`)
+        .then(r => r.json())
+        .then(data => {
+          const container = document.getElementById('sessionDetailContent');
+          container.innerHTML = `
+            <div>
+              <p><strong>ID:</strong> ${data.session.id}</p>
+              <p><strong>Email:</strong> ${data.session.email}</p>
+              <p><strong>Estado:</strong> <span class="session-status ${data.session.status}">${data.session.status.replace('_', ' ')}</span></p>
+              <p><strong>Progreso:</strong> ${data.progress.toFixed(0)}%</p>
+              <p><strong>Creado:</strong> ${new Date(data.session.createdAt).toLocaleString()}</p>
+            </div>
+            <div style="margin-top: 20px;">
+              <h3>Pasos:</h3>
+              <div class="steps-container">
+                ${data.steps.map(step => `
+                  <div class="step ${step.status}">
+                    <div class="step-number">${step.stepNumber + 1}</div>
+                    <div class="step-label">${step.name}</div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          `;
+          document.getElementById('sessionDetailModal').classList.add('active');
+        })
+        .catch(error => {
+          console.error(error);
+          alert('Error al cargar detalles');
+        });
+    }
+
+    function closeSessionDetailModal() {
+      document.getElementById('sessionDetailModal').classList.remove('active');
+    }
+
+    // Cerrar modales al hacer clic fuera
+    window.onclick = function(event) {
+      const modals = document.querySelectorAll('.modal');
+      modals.forEach(modal => {
+        if (event.target === modal) {
+          modal.classList.remove('active');
+        }
+      });
+    }
+
+    // Actualizar progreso visual
+    function updateProgress(session) {
+      const progress = (session.currentStep / session.totalSteps) * 100;
+      document.getElementById('progressFill').style.width = `${progress}%`;
+      
+      const steps = document.querySelectorAll('.step');
+      steps.forEach((step, index) => {
+        step.classList.remove('active', 'completed');
+        if (index === session.currentStep) {
+          step.classList.add('active');
+        } else if (index < session.currentStep) {
+          step.classList.add('completed');
+        }
+      });
+    }
+  </script>
+</body>
+</html>

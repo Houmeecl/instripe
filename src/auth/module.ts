@@ -23,18 +23,22 @@ export const OPTIONS = [
 ] as const;
 
 export type Option = (typeof OPTIONS)[number];
-export type Role = "operacion" | "comercio" | "titular";
+export type Role = "operacion" | "comercio" | "titular" | "colaborador" | "administrador_empresa";
 
 const ROLE_OPTIONS: Record<Role, readonly Option[]> = {
   operacion: OPTIONS,
-  comercio: ["overview", "empresas", "clases"],
+  comercio: ["overview", "empresas", "clases", "payments", "connect", "treasury", "cards"],
   titular: ["overview", "empresas", "clases"],
+  colaborador: ["overview", "empresas"],
+  administrador_empresa: ["overview", "empresas", "clases", "payments", "connect", "treasury", "cards"],
 };
 
 const ROLE_LABEL: Record<Role, string> = {
   operacion: "Operación",
   comercio: "Comercio",
   titular: "Titular",
+  colaborador: "Colaborador",
+  administrador_empresa: "Administrador Empresa",
 };
 
 const KEYLEN = 32;

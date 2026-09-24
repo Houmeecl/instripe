@@ -1,0 +1,1254 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Instructor - Comercios Stripe</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="icon" href="/favicon.png" type="image/png" />
+    <style>
+      :root {
+        --primary: #0e3e66;
+        --secondary: #f5f7fb;
+        --accent: #635bff;
+        --success: #10b981;
+        --warning: #f59e0b;
+        --danger: #ef4444;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+        background: var(--secondary);
+        color: #1f2937;
+        line-height: 1.6;
+      }
+
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 2rem;
+      }
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 2rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid #e5e7eb;
+      }
+
+      .header h1 {
+        color: var(--primary);
+        font-size: 1.5rem;
+        font-weight: 600;
+      }
+
+      .user-info {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        font-size: 0.875rem;
+        color: #6b7280;
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+      }
+
+      .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      }
+
+      .stat-card .stat-value {
+        font-size: 2rem;
+        font-weight: 600;
+        color: var(--primary);
+      }
+
+      .stat-card .stat-label {
+        font-size: 0.75rem;
+        color: #6b7280;
+        margin-top: 0.25rem;
+      }
+
+      .stat-card .stat-icon {
+        font-size: 2rem;
+        margin-bottom: 0.5rem;
+      }
+
+      .section {
+        margin-bottom: 2rem;
+      }
+
+      .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+      }
+
+      .section-header h2 {
+        color: var(--primary);
+        font-size: 1.25rem;
+      }
+
+      .filters {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1rem;
+      }
+
+      .filter-group {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .filter-group label {
+        font-size: 0.875rem;
+        color: #6b7280;
+      }
+
+      .filter-group select,
+      .filter-group input {
+        padding: 0.5rem 1rem;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        font-size: 0.875rem;
+      }
+
+      .card {
+        background: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        margin-bottom: 1rem;
+      }
+
+      .commerce-list {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .commerce-card {
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 1.5rem;
+        transition: box-shadow 0.2s, border-color 0.2s;
+      }
+
+      .commerce-card:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        border-color: var(--primary);
+      }
+
+      .commerce-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 1rem;
+      }
+
+      .commerce-info h3 {
+        color: var(--primary);
+        margin-bottom: 0.25rem;
+      }
+
+      .commerce-info p {
+        font-size: 0.875rem;
+        color: #6b7280;
+      }
+
+      .commerce-status {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+      }
+
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 500;
+      }
+
+      .status-connected {
+        background: #d1fae5;
+        color: #065f46;
+      }
+
+      .status-pending {
+        background: #fef3c7;
+        color: #92400e;
+      }
+
+      .status-disconnected {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+
+      .status-demo {
+        background: #dbeafe;
+        color: #1e40af;
+      }
+
+      .commerce-details {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid #e5e7eb;
+      }
+
+      .detail-item {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+
+      .detail-label {
+        font-size: 0.75rem;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .detail-value {
+        font-weight: 500;
+        color: var(--primary);
+      }
+
+      .amount {
+        font-weight: 600;
+        color: var(--success);
+      }
+
+      .amount-negative {
+        color: var(--danger);
+      }
+
+      .actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid #e5e7eb;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        border: none;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-decoration: none;
+      }
+
+      .btn-primary {
+        background: var(--primary);
+        color: white;
+      }
+
+      .btn-primary:hover {
+        background: #0a2d4a;
+      }
+
+      .btn-secondary {
+        background: var(--secondary);
+        color: var(--primary);
+        border: 1px solid var(--primary);
+      }
+
+      .btn-secondary:hover {
+        background: #e5e7eb;
+      }
+
+      .btn-success {
+        background: var(--success);
+        color: white;
+      }
+
+      .btn-danger {
+        background: var(--danger);
+        color: white;
+      }
+
+      .btn-sm {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.75rem;
+      }
+
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      .table th,
+      .table td {
+        padding: 1rem;
+        text-align: left;
+        border-bottom: 1px solid #e5e7eb;
+      }
+
+      .table th {
+        background: #f8fafc;
+        font-weight: 600;
+        color: var(--primary);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .table tr:hover {
+        background: #f8fafc;
+      }
+
+      .loading {
+        display: none;
+        text-align: center;
+        padding: 2rem;
+      }
+
+      .loading.active {
+        display: block;
+      }
+
+      .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid #e5e7eb;
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 1rem;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      .empty-state {
+        text-align: center;
+        padding: 3rem;
+        color: #6b7280;
+      }
+
+      .empty-state h3 {
+        color: var(--primary);
+        margin-bottom: 0.5rem;
+      }
+
+      .transfer-modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .transfer-modal.active {
+        display: flex;
+      }
+
+      .modal-content {
+        background: white;
+        border-radius: 12px;
+        padding: 2rem;
+        max-width: 500px;
+        width: 90%;
+      }
+
+      .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid #e5e7eb;
+      }
+
+      .modal-header h2 {
+        color: var(--primary);
+        font-size: 1.25rem;
+      }
+
+      .form-group {
+        margin-bottom: 1rem;
+      }
+
+      .form-group label {
+        display: block;
+        font-weight: 500;
+        color: var(--primary);
+        margin-bottom: 0.5rem;
+      }
+
+      .form-group input,
+      .form-group select {
+        width: 100%;
+        padding: 0.75rem;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        font-size: 1rem;
+        transition: border-color 0.2s;
+      }
+
+      .form-group input:focus,
+      .form-group select:focus {
+        outline: none;
+        border-color: var(--primary);
+      }
+
+      .modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 1rem;
+        margin-top: 1.5rem;
+        padding-top: 1rem;
+        border-top: 1px solid #e5e7eb;
+      }
+
+      .chart-container {
+        background: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        margin-bottom: 1rem;
+      }
+
+      .chart-bar {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.5rem;
+        height: 200px;
+        margin-top: 1rem;
+      }
+
+      .bar {
+        flex: 1;
+        background: #e5e7eb;
+        border-radius: 4px 4px 0 0;
+        position: relative;
+        transition: height 0.5s;
+      }
+
+      .bar.fill {
+        background: var(--primary);
+      }
+
+      .bar-label {
+        position: absolute;
+        bottom: -25px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 0.75rem;
+        color: #6b7280;
+        white-space: nowrap;
+      }
+
+      .bar-value {
+        position: absolute;
+        top: -25px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--primary);
+      }
+
+      @media (max-width: 768px) {
+        .container {
+          padding: 1rem;
+        }
+
+        .stats-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .commerce-list {
+          grid-template-columns: 1fr;
+        }
+
+        .commerce-details {
+          grid-template-columns: 1fr;
+        }
+
+        .modal-content {
+          width: 95%;
+          margin: 1rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header class="header">
+        <div>
+          <h1>🏫 Instructor - Comercios Stripe</h1>
+          <p style="font-size: 0.875rem; color: #6b7280; margin-top: 0.25rem;">
+            Gesti\u00f3n de comercios conectados y transferencias
+          </p>
+        </div>
+        <div class="user-info">
+          <span id="userName">Instructor</span>
+          <span id="userRole">-</span>
+        </div>
+      </header>
+
+      <div class="loading" id="loading">
+        <div class="spinner"></div>
+        <p>Cargando datos de comercios...</p>
+      </div>
+
+      <main id="mainContent">
+        <!-- Stats -->
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon">🏪</div>
+            <div class="stat-value" id="totalComercios">0</div>
+            <div class="stat-label">Comercios Conectados</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">💳</div>
+            <div class="stat-value" id="totalTransferencias">0</div>
+            <div class="stat-label">Transferencias Totales</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">💰</div>
+            <div class="stat-value" id="totalMonto">$0</div>
+            <div class="stat-label">Monto Total Transferido</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">✅</div>
+            <div class="stat-value" id="comerciosActivos">0</div>
+            <div class="stat-label">Comercios Activos</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">⏳</div>
+            <div class="stat-value" id="comerciosPendientes">0</div>
+            <div class="stat-label">Pendientes</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon">📊</div>
+            <div class="stat-value" id="promedioTransferencia">$0</div>
+            <div class="stat-label">Promedio por Transferencia</div>
+          </div>
+        </div>
+
+        <!-- Filtros -->
+        <section class="section">
+          <div class="section-header">
+            <h2>Comercios Conectados</h2>
+            <div class="filters">
+              <div class="filter-group">
+                <label>Estado:</label>
+                <select id="filterStatus" onchange="filterComercios()">
+                  <option value="all">Todos</option>
+                  <option value="connected">Conectados</option>
+                  <option value="pending">Pendientes</option>
+                  <option value="demo">Demo</option>
+                </select>
+              </div>
+              <div class="filter-group">
+                <label>Ordenar:</label>
+                <select id="sortBy" onchange="sortComercios()">
+                  <option value="name">Nombre</option>
+                  <option value="amount">Monto Transferido</option>
+                  <option value="date">Fecha de Conexi\u00f3n</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div id="comerciosList" class="commerce-list">
+              <div class="empty-state">
+                <h3>No hay comercios conectados</h3>
+                <p>No se encontraron comercios con cuentas Stripe Connect</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Gr\u00e1fico de Transferencias -->
+        <section class="section">
+          <div class="section-header">
+            <h2>Transferencias por Comercio</h2>
+          </div>
+          <div class="chart-container">
+            <h3>Montos Transferidos (\u00daltimos 7 d\u00edas)</h3>
+            <div class="chart-bar" id="transferChart">
+              <div class="empty-state" style="padding: 2rem;">
+                <p>No hay datos de transferencias para mostrar</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Historial de Transferencias -->
+        <section class="section">
+          <div class="section-header">
+            <h2>\u00daltimas Transferencias</h2>
+            <button class="btn btn-primary btn-sm" onclick="refreshData()">
+              🔄 Recargar
+            </button>
+          </div>
+          <div class="card">
+            <div style="overflow-x: auto;">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Comercio</th>
+                    <th>Monto</th>
+                    <th>Estado</th>
+                    <th>M\u00e9todo</th>
+                    <th>Referencia</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody id="transferTableBody">
+                  <tr>
+                    <td colspan="7" class="empty-state">
+                      <p>No hay transferencias recientes</p>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Resumen -->
+        <section class="section">
+          <div class="section-header">
+            <h2>Resumen</h2>
+          </div>
+          <div class="card">
+            <h3>Estados de Conexi\u00f3n</h3>
+            <div id="statusSummary" style="margin-top: 1rem;">
+              <p>Cargando resumen...</p>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- Modal de Transferencia -->
+    <div id="transferModal" class="transfer-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Realizar Transferencia</h2>
+          <button class="btn btn-secondary btn-sm" onclick="closeTransferModal()">
+            Cerrar
+          </button>
+        </div>
+        
+        <div id="transferForm">
+          <div class="form-group">
+            <label>Comercio Destino</label>
+            <select id="transferCommerceId">
+              <option value="">Seleccionar comercio...</option>
+            </select>
+          </div>
+          
+          <div class="form-group">
+            <label>Monto (CLP)</label>
+            <input type="number" id="transferAmount" placeholder="100000" min="1" />
+          </div>
+          
+          <div class="form-group">
+            <label>Descripci\u00f3n</label>
+            <input type="text" id="transferDescription" placeholder="Pago de servicio" />
+          </div>
+          
+          <div class="form-group">
+            <label>Gateway</label>
+            <select id="transferGateway">
+              <option value="stripe">Stripe</option>
+              <option value="chile">Chile</option>
+              <option value="global66">Global66 (Payoy)</option>
+            </select>
+          </div>
+          
+          <div class="alert alert-info" style="margin: 1rem 0; padding: 1rem; border-radius: 8px; background: #dbeafe; color: #1e40af;">
+            <strong>ℹ️ Informaci\u00f3n:</strong> La transferencia se realizara a la cuenta Connect del comercio seleccionado.
+          </div>
+        </div>
+        
+        <div class="modal-footer">
+          <button class="btn btn-primary" onclick="processTransfer()">
+            Realizar Transferencia
+          </button>
+          <button class="btn btn-secondary" onclick="closeTransferModal()">
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal de Detalles -->
+    <div id="detailsModal" class="transfer-modal">
+      <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+          <h2>Detalles del Comercio</h2>
+          <button class="btn btn-secondary btn-sm" onclick="closeDetailsModal()">
+            Cerrar
+          </button>
+        </div>
+        
+        <div id="detailsContent">
+          <p>Cargando detalles...</p>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // State
+      let comercios = [];
+      let transferencias = [];
+      let currentUser = null;
+
+      // API Configuration
+      const API_BASE = '';
+
+      // Initialize
+      async function init() {
+        showLoading();
+        try {
+          // Get current user
+          const userResponse = await fetch(`${API_BASE}/api/session`);
+          if (userResponse.ok) {
+            const data = await userResponse.json();
+            currentUser = data.user;
+            if (currentUser) {
+              document.getElementById('userName').textContent = currentUser.name;
+              document.getElementById('userRole').textContent = currentUser.roleLabel || currentUser.role;
+            }
+          }
+
+          await loadData();
+          updateStats();
+          renderCharts();
+        } catch (error) {
+          console.error('Error initializing:', error);
+          showError('Error al cargar los datos');
+        } finally {
+          hideLoading();
+        }
+      }
+
+      // Loading
+      function showLoading() {
+        document.getElementById('loading').classList.add('active');
+        document.getElementById('mainContent').style.display = 'none';
+      }
+
+      function hideLoading() {
+        document.getElementById('loading').classList.remove('active');
+        document.getElementById('mainContent').style.display = 'block';
+      }
+
+      // Data Loading
+      async function loadData() {
+        try {
+          // Load connect accounts (comercios)
+          const connectResponse = await fetch(`${API_BASE}/api/connect`);
+          if (connectResponse.ok) {
+            const data = await connectResponse.json();
+            comercios = data.accounts || [];
+            renderComercios();
+          }
+
+          // Load payments/transfers
+          const paymentsResponse = await fetch(`${API_BASE}/api/payments`);
+          if (paymentsResponse.ok) {
+            const data = await paymentsResponse.json();
+            transferencias = data.payments || [];
+            renderTransferencias();
+          }
+
+          // Load exits (transferencias pendientes)
+          const exitsResponse = await fetch(`${API_BASE}/api/salidas`);
+          if (exitsResponse.ok) {
+            const data = await exitsResponse.json();
+            const exits = data.exits || [];
+            transferencias = [...transferencias, ...exits];
+            renderTransferencias();
+          }
+        } catch (error) {
+          console.error('Error loading data:', error);
+        }
+      }
+
+      function updateStats() {
+        const totalComercios = comercios.length;
+        const comerciosConectados = comercios.filter(c => c.mode === 'live' && c.stripeAccountId).length;
+        const comerciosPendientes = comercios.filter(c => c.mode === 'pending').length;
+        const comerciosDemo = comercios.filter(c => c.mode === 'demo').length;
+
+        // Calculate transfer amounts
+        let totalMonto = 0;
+        let transferCount = 0;
+        
+        for (const transfer of transferencias) {
+          if (transfer.amount) {
+            totalMonto += transfer.amount;
+            transferCount++;
+          }
+        }
+
+        const promedio = transferCount > 0 ? Math.round(totalMonto / transferCount) : 0;
+
+        document.getElementById('totalComercios').textContent = totalComercios;
+        document.getElementById('totalTransferencias').textContent = transferCount;
+        document.getElementById('totalMonto').textContent = formatCurrency(totalMonto);
+        document.getElementById('comerciosActivos').textContent = comerciosConectados;
+        document.getElementById('comerciosPendientes').textContent = comerciosPendientes + comerciosDemo;
+        document.getElementById('promedioTransferencia').textContent = formatCurrency(promedio);
+
+        // Update status summary
+        const statusSummary = document.getElementById('statusSummary');
+        statusSummary.innerHTML = `
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+            <div style="background: #d1fae5; padding: 1rem; border-radius: 8px;">
+              <strong style="color: #065f46;">✅ Conectados:</strong> ${comerciosConectados}
+            </div>
+            <div style="background: #fef3c7; padding: 1rem; border-radius: 8px;">
+              <strong style="color: #92400e;">⏳ Pendientes:</strong> ${comerciosPendientes}
+            </div>
+            <div style="background: #dbeafe; padding: 1rem; border-radius: 8px;">
+              <strong style="color: #1e40af;">🎭 Demo:</strong> ${comerciosDemo}
+            </div>
+          </div>
+        `;
+      }
+
+      function renderComercios() {
+        const container = document.getElementById('comerciosList');
+        
+        if (comercios.length === 0) {
+          container.innerHTML = `
+            <div class="empty-state">
+              <h3>No hay comercios conectados</h3>
+              <p>No se encontraron comercios con cuentas Stripe Connect</p>
+            </div>
+          `;
+          return;
+        }
+
+        // Sort and filter
+        let filtered = [...comercios];
+        const statusFilter = document.getElementById('filterStatus').value;
+        if (statusFilter !== 'all') {
+          filtered = filtered.filter(c => c.mode === statusFilter);
+        }
+
+        const sortBy = document.getElementById('sortBy').value;
+        filtered.sort((a, b) => {
+          switch (sortBy) {
+            case 'name':
+              return a.businessName.localeCompare(b.businessName);
+            case 'date':
+              return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+            default:
+              return 0;
+          }
+        });
+
+        container.innerHTML = filtered.map(comercio => {
+          const statusClass = comercio.mode === 'live' && comercio.stripeAccountId ? 'status-connected' : 
+                            comercio.mode === 'pending' ? 'status-pending' : 'status-demo';
+          const statusText = comercio.mode === 'live' && comercio.stripeAccountId ? 'Conectado' : 
+                           comercio.mode === 'pending' ? 'Pendiente' : 'Demo';
+
+          // Find transfers for this comercio
+          const comercioTransfers = transferencias.filter(t => {
+            return t.metadata?.connect_account_id === comercio.id || 
+                   t.description?.includes(comercio.businessName);
+          });
+          
+          const totalTransferido = comercioTransfers.reduce((sum, t) => sum + (t.amount || 0), 0);
+
+          return `
+            <div class="commerce-card">
+              <div class="commerce-header">
+                <div class="commerce-info">
+                  <h3>${comercio.businessName}</h3>
+                  <p>${comercio.email}</p>
+                </div>
+                <div class="commerce-status">
+                  <span class="status-badge ${statusClass}">${statusText}</span>
+                  ${comercio.hasCard ? '<span class="status-badge status-connected">💳 Tarjeta</span>' : ''}
+                </div>
+              </div>
+              
+              <div class="commerce-details">
+                <div class="detail-item">
+                  <span class="detail-label">ID Connect</span>
+                  <span class="detail-value">${comercio.stripeAccountId ? comercio.stripeAccountId.substring(0, 15) + '...' : 'N/A'}</span>
+                </div>
+                <div class="detail-item">
+                  <span class="detail-label">Transferido</span>
+                  <span class="detail-value amount">${formatCurrency(totalTransferido)}</span>
+                </div>
+                <div class="detail-item">
+                  <span class="detail-label">Transacciones</span>
+                  <span class="detail-value">${comercioTransfers.length}</span>
+                </div>
+                <div class="detail-item">
+                  <span class="detail-label">Creado</span>
+                  <span class="detail-value">${new Date(comercio.createdAt).toLocaleDateString()}</span>
+                </div>
+              </div>
+              
+              <div class="actions">
+                <button class="btn btn-secondary btn-sm" onclick="showDetails('${comercio.id}')">
+                  📋 Detalles
+                </button>
+                <button class="btn btn-primary btn-sm" onclick="initiateTransfer('${comercio.id}', '${comercio.businessName}')">
+                  💸 Transferir
+                </button>
+                ${comercio.onboardingUrl ? `
+                  <button class="btn btn-success btn-sm" onclick="window.open('${comercio.onboardingUrl}', '_blank')">
+                    🔗 Onboarding
+                  </button>
+                ` : ''}
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      function renderTransferencias() {
+        const tbody = document.getElementById('transferTableBody');
+        
+        if (transferencias.length === 0) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="7" class="empty-state">
+                <p>No hay transferencias recientes</p>
+              </td>
+            </tr>
+          `;
+          return;
+        }
+
+        // Sort by date, most recent first
+        const sorted = [...transferencias].sort((a, b) => {
+          const dateA = a.createdAt || a.updatedAt || '';
+          const dateB = b.createdAt || b.updatedAt || '';
+          return new Date(dateB).getTime() - new Date(dateA).getTime();
+        });
+
+        tbody.innerHTML = sorted.slice(0, 20).map(transfer => {
+          const statusClass = transfer.status === 'paid' ? 'status-success' : 
+                            transfer.status === 'pending' ? 'status-pending' : 'status-disconnected';
+          const statusText = transfer.status === 'paid' ? 'Pagado' : 
+                           transfer.status === 'pending' ? 'Pendiente' : transfer.status || 'Desconocido';
+          
+          const date = transfer.createdAt || transfer.updatedAt || '';
+          const formattedDate = date ? new Date(date).toLocaleString() : 'N/A';
+          
+          const amount = transfer.amount || 0;
+          const formattedAmount = formatCurrency(amount);
+          
+          // Find comercio name
+          const comercio = comercios.find(c => c.id === transfer.destination || c.stripeAccountId === transfer.destination);
+          const comercioName = comercio ? comercio.businessName : transfer.destination || 'N/A';
+
+          return `
+            <tr>
+              <td>${formattedDate}</td>
+              <td>${comercioName}</td>
+              <td class="amount">${formattedAmount}</td>
+              <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+              <td>${transfer.gateway || 'N/A'}</td>
+              <td>${transfer.reference || transfer.id || 'N/A'}</td>
+              <td>
+                <button class="btn btn-secondary btn-sm" onclick="showTransferDetails(${JSON.stringify(transfer).replace(/"/g, '&quot;')})">
+                  Ver
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      function renderCharts() {
+        const chart = document.getElementById('transferChart');
+        
+        if (comercios.length === 0) {
+          chart.innerHTML = `
+            <div class="empty-state" style="padding: 2rem;">
+              <p>No hay datos para mostrar</p>
+            </div>
+          `;
+          return;
+        }
+
+        // Calculate amounts per comercio
+        const comercioAmounts = comercios.map(comercio => {
+          const transfers = transferencias.filter(t => {
+            return t.metadata?.connect_account_id === comercio.id || 
+                   t.description?.includes(comercio.businessName);
+          });
+          const total = transfers.reduce((sum, t) => sum + (t.amount || 0), 0);
+          return { name: comercio.businessName, amount: total };
+        }).filter(c => c.amount > 0);
+
+        if (comercioAmounts.length === 0) {
+          chart.innerHTML = `
+            <div class="empty-state" style="padding: 2rem;">
+              <p>No hay transferencias para graficar</p>
+            </div>
+          `;
+          return;
+        }
+
+        const maxAmount = Math.max(...comercioAmounts.map(c => c.amount));
+
+        chart.innerHTML = comercioAmounts.map(c => {
+          const percentage = maxAmount > 0 ? (c.amount / maxAmount) * 100 : 0;
+          return `
+            <div style="flex: 1; display: flex; flex-direction: column; align-items: center;">
+              <div class="bar fill" style="height: ${percentage}%; width: 80%;"></div>
+              <div class="bar-label">${c.name.substring(0, 10)}...</div>
+              <div class="bar-value">${formatCurrency(c.amount)}</div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      function filterComercios() {
+        renderComercios();
+      }
+
+      function sortComercios() {
+        renderComercios();
+      }
+
+      async function refreshData() {
+        showLoading();
+        try {
+          await loadData();
+          updateStats();
+          renderCharts();
+        } catch (error) {
+          console.error('Error refreshing data:', error);
+        } finally {
+          hideLoading();
+        }
+      }
+
+      // Modal Functions
+      function initiateTransfer(comercioId, comercioName) {
+        document.getElementById('transferCommerceId').value = comercioId;
+        document.getElementById('transferDescription').value = `Transferencia a ${comercioName}`;
+        document.getElementById('transferModal').classList.add('active');
+      }
+
+      function closeTransferModal() {
+        document.getElementById('transferModal').classList.remove('active');
+      }
+
+      async function processTransfer() {
+        const comercioId = document.getElementById('transferCommerceId').value;
+        const amount = parseInt(document.getElementById('transferAmount').value) || 0;
+        const description = document.getElementById('transferDescription').value;
+        const gateway = document.getElementById('transferGateway').value;
+
+        if (!comercioId || amount <= 0) {
+          showError('Seleccione un comercio y monto valido');
+          return;
+        }
+
+        showLoading();
+        try {
+          const response = await fetch(`${API_BASE}/api/connect/${comercioId}/pago`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ amount, gateway, description })
+          });
+
+          if (!response.ok) throw new Error('Error al realizar transferencia');
+          
+          const result = await response.json();
+          closeTransferModal();
+          showSuccess('Transferencia iniciada exitosamente');
+          await loadData();
+          updateStats();
+        } catch (error) {
+          console.error('Error processing transfer:', error);
+          showError('Error al realizar transferencia');
+        } finally {
+          hideLoading();
+        }
+      }
+
+      function showDetails(comercioId) {
+        const comercio = comercios.find(c => c.id === comercioId);
+        if (!comercio) return;
+
+        const detailsContent = document.getElementById('detailsContent');
+        
+        // Find transfers for this comercio
+        const comercioTransfers = transferencias.filter(t => {
+          return t.metadata?.connect_account_id === comercio.id || 
+                 t.description?.includes(comercio.businessName);
+        });
+        
+        const totalTransferido = comercioTransfers.reduce((sum, t) => sum + (t.amount || 0), 0);
+
+        detailsContent.innerHTML = `
+          <div class="commerce-card" style="margin-bottom: 1rem;">
+            <div class="commerce-header">
+              <div class="commerce-info">
+                <h3>${comercio.businessName}</h3>
+                <p>${comercio.email}</p>
+              </div>
+            </div>
+            
+            <div class="commerce-details">
+              <div class="detail-item">
+                <span class="detail-label">ID</span>
+                <span class="detail-value">${comercio.id}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Stripe Account ID</span>
+                <span class="detail-value">${comercio.stripeAccountId || 'N/A'}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Estado</span>
+                <span class="detail-value">${comercio.mode === 'live' && comercio.stripeAccountId ? 'Conectado' : comercio.mode === 'pending' ? 'Pendiente' : 'Demo'}</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">Tarjeta</span>
+                <span class="detail-value">${comercio.hasCard ? '✅ Si' : '❌ No'}</span>
+              </div>
+            </div>
+          </div>
+          
+          <h4 style="margin: 1rem 0;">Transferencias</h4>
+          <div style="overflow-x: auto;">
+            <table class="table" style="margin-bottom: 1rem;">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Monto</th>
+                  <th>Estado</th>
+                  <th>Gateway</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${comercioTransfers.length > 0 ? comercioTransfers.map(t => {
+                  const date = t.createdAt || t.updatedAt || '';
+                  const formattedDate = date ? new Date(date).toLocaleString() : 'N/A';
+                  return `
+                    <tr>
+                      <td>${formattedDate}</td>
+                      <td class="amount">${formatCurrency(t.amount || 0)}</td>
+                      <td><span class="status-badge status-${t.status || 'pending'}">${t.status || 'Pendiente'}</span></td>
+                      <td>${t.gateway || 'N/A'}</td>
+                    </tr>
+                  `;
+                }).join('') : '<tr><td colspan="4">No hay transferencias</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+          
+          <div style="background: #f8fafc; padding: 1rem; border-radius: 8px;">
+            <strong>Total Transferido:</strong> <span class="amount">${formatCurrency(totalTransferido)}</span>
+          </div>
+        `;
+
+        document.getElementById('detailsModal').classList.add('active');
+      }
+
+      function closeDetailsModal() {
+        document.getElementById('detailsModal').classList.remove('active');
+      }
+
+      function showTransferDetails(transfer) {
+        const detailsContent = document.getElementById('detailsContent');
+        detailsContent.innerHTML = `
+          <h3>Detalles de la Transferencia</h3>
+          <div class="commerce-details" style="margin-top: 1rem;">
+            <div class="detail-item">
+              <span class="detail-label">ID</span>
+              <span class="detail-value">${transfer.id}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">Monto</span>
+              <span class="detail-value amount">${formatCurrency(transfer.amount || 0)}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">Estado</span>
+              <span class="detail-value"><span class="status-badge status-${transfer.status || 'pending'}">${transfer.status || 'Pendiente'}</span></span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">Gateway</span>
+              <span class="detail-value">${transfer.gateway || 'N/A'}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">Descripci\u00f3n</span>
+              <span class="detail-value">${transfer.description || 'N/A'}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">Referencia</span>
+              <span class="detail-value">${transfer.reference || 'N/A'}</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">Creado</span>
+              <span class="detail-value">${transfer.createdAt ? new Date(transfer.createdAt).toLocaleString() : 'N/A'}</span>
+            </div>
+          </div>
+        `;
+        document.getElementById('detailsModal').classList.add('active');
+      }
+
+      function showError(message) {
+        alert('❌ Error: ' + message);
+      }
+
+      function showSuccess(message) {
+        alert('✅ ' + message);
+      }
+
+      function formatCurrency(amount) {
+        return '$' + (amount || 0).toLocaleString('es-CL');
+      }
+
+      // Initialize on page load
+      document.addEventListener('DOMContentLoaded', init);
+    </script>
+  </body>
+</html>
