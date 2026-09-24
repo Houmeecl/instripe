@@ -1,8 +1,43 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
-coverage/
-*.log
+
+# Environment files
 .env
 .env.local
-data/
+.env.*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+
+# SQLite database
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# PM2
+.pm2/
+
+# Scripts output
+scripts/.env
+
+# GitHub Actions
+.github/workflows/.env
