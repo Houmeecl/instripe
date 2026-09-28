@@ -4,20 +4,23 @@ import path from "node:path";
 import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { createApp } from "../src/app.js";
-import { DEFAULT_SEED_PASSWORD, loadConfig } from "../src/config.js";
+import { loadConfig } from "../src/config.js";
 import { activateVirtualGift, issueVirtualGift } from "../src/modules/regalos/issue.js";
 import { Platform } from "../src/platform.js";
 
 const TEST_PASSWORD = "Operacion.1831";
+const SEED_PASSWORD = "Test-seed-password.1831";
 
 function app(env: NodeJS.ProcessEnv = {}) {
-  return createApp(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:", ...env }));
+  return createApp(
+    loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:", AUTH_SEED_PASSWORD: SEED_PASSWORD, ...env }),
+  );
 }
 
 async function signedIn(
   server: ReturnType<typeof app>,
   email = "operacion@proveedorregional.cl",
-  password = DEFAULT_SEED_PASSWORD,
+  password = SEED_PASSWORD,
 ) {
   const agent = request.agent(server);
   const login = await agent.post("/api/session").send({ email, password });
@@ -50,6 +53,12 @@ function creditPolicy(overrides: Record<string, unknown> = {}) {
 }
 
 describe("instripe BaaS platform", () => {
+  it("requires an explicit seed password", () => {
+    expect(() => loadConfig({ PORT: "3000", DATABASE_PATH: ":memory:" })).toThrow(
+      "AUTH_SEED_PASSWORD must be configured",
+    );
+  });
+
   it("reports health in demo mode with CLP and Chile default gateway", async () => {
     const res = await request(app()).get("/health");
     expect(res.status).toBe(200);
@@ -196,7 +205,9 @@ describe("instripe BaaS platform", () => {
   });
 
   it("keeps the float unchanged until a pending Stripe policy is fulfilled, once", () => {
-    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:" }));
+    const platform = new Platform(
+      loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:", AUTH_SEED_PASSWORD: SEED_PASSWORD }),
+    );
     const policy = platform.listPolicies()[0];
     expect(policy).toBeUndefined();
 
@@ -252,7 +263,9 @@ describe("instripe BaaS platform", () => {
   });
 
   it("rejects a claim on a policy that is still awaiting payment", async () => {
-    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:" }));
+    const platform = new Platform(
+      loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:", AUTH_SEED_PASSWORD: SEED_PASSWORD }),
+    );
     const { policy: created } = platform.holdPremium({
       holderName: "Ana Díaz",
       email: "ana@demo.cl",
@@ -321,7 +334,9 @@ describe("instripe BaaS platform", () => {
   });
 
   it("settles a cobro reference as cobros, not as a policy", () => {
-    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:" }));
+    const platform = new Platform(
+      loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:", AUTH_SEED_PASSWORD: SEED_PASSWORD }),
+    );
     platform.payments.openCollect({
       module: "cobros",
       reference: "cob_demo",
@@ -508,7 +523,7 @@ describe("instripe BaaS platform", () => {
 
   it("keeps accounts, balances and terms when a new platform opens the same database", async () => {
     const databasePath = path.join(mkdtempSync(path.join(tmpdir(), "pr-db-")), "platform.db");
-    const env = { PORT: "3000", CURRENCY: "clp", DATABASE_PATH: databasePath };
+    const env = { PORT: "3000", CURRENCY: "clp", DATABASE_PATH: databasePath, AUTH_SEED_PASSWORD: SEED_PASSWORD };
     const first = new Platform(loadConfig(env));
     const opened = first.cuentas.open({ name: "Bodega Centro", email: "bodega@proveedorregional.cl" });
     const funded = await first.cuentas.fund({
@@ -543,12 +558,12 @@ describe("instripe BaaS platform", () => {
     expect(wrong.status).toBe(401);
     expect(wrong.headers["set-cookie"]).toBeUndefined();
 
-    const missing = await request(server).post("/api/session").send({ email: "nadie@proveedorregional.cl", password: "Antofagasta.183" });
+    const missing = await request(server).post("/api/session").send({ email: "nadie@proveedorregional.cl", password: SEED_PASSWORD });
     expect(missing.status).toBe(401);
 
     const operacion = await request(server).post("/api/session").send({
       email: "operacion@proveedorregional.cl",
-      password: DEFAULT_SEED_PASSWORD,
+      password: SEED_PASSWORD,
     });
     expect(operacion.status).toBe(201);
     expect(operacion.body.user).toMatchObject({
@@ -582,7 +597,7 @@ describe("instripe BaaS platform", () => {
     expect(cookie).toContain("SameSite=Lax");
     const secureLogin = await request(app({ PUBLIC_BASE_URL: "https://proveedorregional.cl" }))
       .post("/api/session")
-      .send({ email: "operacion@proveedorregional.cl", password: DEFAULT_SEED_PASSWORD });
+      .send({ email: "operacion@proveedorregional.cl", password: SEED_PASSWORD });
     expect(String(secureLogin.headers["set-cookie"])).toContain("Secure");
 
     const comercio = await signedIn(server, "caja@taller.cl");
@@ -626,7 +641,7 @@ describe("instripe BaaS platform", () => {
     expect(changed.status).toBe(200);
     const stale = await request(server).post("/api/session").send({
       email: "ana@proveedorregional.cl",
-      password: DEFAULT_SEED_PASSWORD,
+      password: SEED_PASSWORD,
     });
     expect(stale.status).toBe(401);
     const next = await request(server).post("/api/session").send({
@@ -778,7 +793,9 @@ describe("instripe BaaS platform", () => {
 
   it("settles a webhook only when amount, currency and payment status match, then reverses a refund", async () => {
     const server = app();
-    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:" }));
+    const platform = new Platform(
+      loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:", AUTH_SEED_PASSWORD: SEED_PASSWORD }),
+    );
     const { policy } = platform.holdPremium({
       holderName: "Ana Díaz",
       email: "ana@demo.cl",
@@ -825,11 +842,11 @@ describe("instripe BaaS platform", () => {
     const server = app();
     const login = await request(server).post("/api/session").send({
       email: "operacion@proveedorregional.cl",
-      password: DEFAULT_SEED_PASSWORD,
+      password: SEED_PASSWORD,
     });
     expect(login.body.user.mustChangePassword).toBe(true);
     const agent = request.agent(server);
-    await agent.post("/api/session").send({ email: "operacion@proveedorregional.cl", password: DEFAULT_SEED_PASSWORD });
+    await agent.post("/api/session").send({ email: "operacion@proveedorregional.cl", password: SEED_PASSWORD });
     expect((await agent.get("/api/overview")).status).toBe(403);
 
     const norte = await signedIn(server, "pago@norte.cl");

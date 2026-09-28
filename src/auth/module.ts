@@ -123,6 +123,7 @@ export function requiredOption(pathname: string): Option | "any" | "deny" {
     [/^\/api\/payments$/, "payments"],
     [/^\/api\/salidas(?:\/.*)?$/, "payments"],
     [/^\/api\/stripe\/events$/, "payments"],
+    [/^\/api\/advisor(?:\/.*)?$/, "configuracion"],
   ];
   for (const [pattern, option] of rules) {
     if (pattern.test(pathname)) return option;
