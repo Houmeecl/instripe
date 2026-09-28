@@ -193,6 +193,93 @@ revisar el cambio sintetizado, aprobar el costo del NAT Gateway y ejecutar el
 bootstrap de CDK. No ejecute `cdk deploy` hasta que la migración PostgreSQL y
 el plan de corte estén aprobados.
 
+## Despliegue automático a VPS
+
+El workflow de GitHub Actions (`.github/workflows/deploy-vps.yml`) despliega automáticamente la aplicación al VPS en cada push a las ramas `main` y `agents/ok`:
+
+1. **Build y tests**: Compila TypeScript, ejecuta tests.
+2. **SSH a VPS**: Se conecta via SSH con clave privada.
+3. **Pull & restart**: Tira los cambios más recientes, reinstala dependencias, compila y reinicia PM2.
+
+### Configuración de Secrets
+
+En **GitHub → Settings → Secrets and variables → Actions**, agregue:
+
+| Secret          | Valor                                  | Descripción                  |
+| --------------- | -------------------------------------- | ---------------------------- |
+| `VPS_HOST`      | IP pública o dominio del VPS           | Host SSH                     |
+| `VPS_USERNAME`  | `deploy` (o el usuario SSH en VPS)     | Usuario SSH                  |
+| `VPS_SSH_KEY`   | Contenido de `~/.ssh/id_ed25519` (privada) | Clave SSH privada        |
+| `VPS_PORT`      | `22` (o puerto SSH personalizado)      | Puerto SSH (opcional)        |
+
+### Generar clave SSH
+
+En la máquina local (Windows):
+
+```powershell
+# Si no existe:
+ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh\id_ed25519 -N ""
+
+# Ver contenido (privada):
+Get-Content $env:USERPROFILE\.ssh\id_ed25519
+```
+
+En el VPS, agregue la clave pública a `~/.ssh/authorized_keys`:
+
+```bash
+echo "ssh-ed25519 AAAAC3N... (contenido de id_ed25519.pub)" >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+```
+
+### Ramas y triggers
+
+- **`main`**: Branch de producción. Push a `main` despliega a VPS en producción.
+- **`agents/ok`**: Branch experimental con agentes (Copilot). Push a `agents/ok` también despliega automáticamente.
+
+Esto permite probar cambios en `agents/ok` sin afectar `main`, pero ambos desplazan a la misma instancia VPS. Para ambientes separados (staging/prod), cree otra rama o un segundo VPS.
+
+## Operations Advisor (Bedrock)
+
+Un nuevo módulo experimental integra AWS Bedrock Converse para proporcionar análisis operacional en lenguaje natural:
+
+- **Consultas sin ejecución**: Usuarios con rol `operacion` hacen preguntas.
+- **Análisis con Bedrock**: Claude Sonnet genera propuestas (no vinculantes).
+- **Auditoría**: Cada consulta y propuesta queda registrada.
+
+### Configuración en VPS/ECS
+
+Agregue variables de entorno:
+
+```bash
+export AWS_REGION=us-east-1
+export BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-6  # opcional
+```
+
+Sin `AWS_REGION`, el módulo funciona en modo local (almacena consultas pero no invoca Bedrock).
+
+### Permisos IAM
+
+El rol de ejecución de la tarea ECS necesita:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "bedrock:InvokeModel",
+  "Resource": "arn:aws:bedrock:us-east-1::foundation-model/us.anthropic.claude-sonnet-4-6"
+}
+```
+
+Consulte [`docs/BEDROCK_IAM.md`](./docs/BEDROCK_IAM.md) para detalles.
+
+### Endpoints
+
+- `POST /api/advisor/query` — crear consulta (operacion)
+- `GET /api/advisor/queries` — listar consultas (operacion)
+- `GET /api/advisor/proposals` — listar propuestas (operacion, administrador_empresa)
+- `POST /api/advisor/proposals/:id/review` — revisar propuesta (operacion, administrador_empresa)
+
+Consulte [`docs/OPERATIONS_ADVISOR.md`](./docs/OPERATIONS_ADVISOR.md) para endpoints completos y ejemplo de flujo.
+
 ## Producción / próximos pasos
 
 - Integración real: SDK de Transbank (Webpay Plus), Khipu o Flow para Chile, y
