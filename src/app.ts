@@ -1743,6 +1743,99 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
   });
 
+  // Operations Advisor: read-only AI analysis for operacion role
+  app.post("/api/advisor/query", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    const user = res.locals.user as SessionUser;
+    try {
+      const result = await platform.advisor.query(user, {
+        category: body.category as any,
+        question: String(body.question ?? ""),
+        context: body.context,
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/advisor/queries", (req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    try {
+      if (user.role !== "operacion") {
+        res.status(403).json({ error: "Solo operación puede acceder a consultas" });
+        return;
+      }
+      const queries = platform.advisor.listQueries(Number(req.query.limit) || 50);
+      res.json({ queries });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/advisor/queries/:id", (req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    try {
+      if (user.role !== "operacion") {
+        res.status(403).json({ error: "Solo operación puede acceder a consultas" });
+        return;
+      }
+      const query = platform.advisor.getQuery(String(req.params.id));
+      res.json({ query });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/advisor/proposals/:id/review", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    const user = res.locals.user as SessionUser;
+    try {
+      if (user.role !== "operacion" && user.role !== "administrador_empresa") {
+        res.status(403).json({ error: "Solo operación/admin empresa puede revisar propuestas" });
+        return;
+      }
+      const proposal = platform.advisor.reviewProposal(
+        String(req.params.id),
+        user,
+        Boolean(body.approved),
+        body.notes ? String(body.notes) : undefined,
+      );
+      res.json({ proposal });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/advisor/proposals", (req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    try {
+      if (user.role !== "operacion" && user.role !== "administrador_empresa") {
+        res.status(403).json({ error: "Solo operación/admin empresa puede revisar propuestas" });
+        return;
+      }
+      const status = req.query.status as any;
+      const proposals = platform.advisor.listProposals(status);
+      res.json({ proposals });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/advisor/proposals/:id", (req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    try {
+      if (user.role !== "operacion" && user.role !== "administrador_empresa") {
+        res.status(403).json({ error: "Solo operación/admin empresa puede revisar propuestas" });
+        return;
+      }
+      const proposal = platform.advisor.getProposal(String(req.params.id));
+      res.json({ proposal });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
   app.use(express.static(publicDir));
 
   return app;

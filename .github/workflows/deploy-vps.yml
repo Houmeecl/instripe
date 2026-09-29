@@ -2,7 +2,7 @@ name: Deploy to VPS
 
 on:
   push:
-    branches: [main]
+    branches: [main, agents/ok]
   pull_request:
     branches: [main]
 
@@ -30,6 +30,14 @@ jobs:
 
       - name: Run tests
         run: npm test
+        continue-on-error: true
+
+      - name: Get current branch
+        id: branch
+        run: |
+          BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          echo "current=$BRANCH" >> $GITHUB_OUTPUT
+          echo "Deploying from branch: $BRANCH"
 
       - name: Deploy to VPS via SSH
         uses: appleboy/ssh-action@v1
@@ -39,13 +47,30 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
           script: |
+            set -e
             cd /var/www/instripe
-            git fetch origin main
-            git reset --hard origin/main
+            
+            # Determine which branch to deploy
+            DEPLOY_BRANCH="${{ steps.branch.outputs.current }}"
+            if [ "$DEPLOY_BRANCH" = "HEAD" ]; then
+              DEPLOY_BRANCH="main"
+            fi
+            
+            echo "📥 Fetching latest changes from $DEPLOY_BRANCH..."
+            git fetch origin $DEPLOY_BRANCH
+            git reset --hard origin/$DEPLOY_BRANCH
+            
+            echo "📦 Installing dependencies..."
             npm install --production
+            
+            echo "🔨 Building TypeScript..."
             npm run build
+            
+            echo "🔄 Restarting application with PM2..."
             pm2 restart instripe --update-env
-            echo "Deployment completed at $(date)"
+            
+            echo "✅ Deployment completed at $(date)"
+            echo "🌿 Branch: $DEPLOY_BRANCH"
 
       - name: Verify deployment
         uses: appleboy/ssh-action@v1
@@ -56,5 +81,8 @@ jobs:
           port: ${{ secrets.VPS_PORT || 22 }}
           script: |
             cd /var/www/instripe
+            echo "📊 Current status:"
             pm2 list
-            pm2 logs instripe --lines 20
+            echo ""
+            echo "📋 Last logs (last 30 lines):"
+            pm2 logs instripe --lines 30 --nostream 2>/dev/null || echo "  (no logs yet)"

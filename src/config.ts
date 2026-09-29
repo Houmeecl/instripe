@@ -41,12 +41,14 @@ export interface AppConfig {
   };
 }
 
-export const DEFAULT_SEED_PASSWORD = "Antofagasta.183";
-
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsedPort = Number.parseInt(env.PORT ?? "3000", 10);
   const port = Number.isNaN(parsedPort) ? 3000 : parsedPort;
   const defaultGateway: GatewayName = env.DEFAULT_GATEWAY === "stripe" ? "stripe" : "chile";
+  const seedPassword = env.AUTH_SEED_PASSWORD?.trim();
+  if (!seedPassword) {
+    throw new Error("AUTH_SEED_PASSWORD must be configured before the application can start");
+  }
   return {
     port,
     bindHost: env.BIND_HOST?.trim() || "0.0.0.0",
@@ -67,7 +69,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     },
     appManifestPath: env.APP_MANIFEST_PATH?.trim() || "stripe-app.json",
     databasePath: env.DATABASE_PATH?.trim() || "data/platform.db",
-    seedPassword: env.AUTH_SEED_PASSWORD?.trim() || DEFAULT_SEED_PASSWORD,
+    seedPassword,
     mail: {
       host: env.MAIL_HOST?.trim() || "mail.proveedorregional.cl",
       user: env.MAIL_USER?.trim() || undefined,

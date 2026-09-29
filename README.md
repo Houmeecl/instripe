@@ -44,7 +44,9 @@ credenciales, cada pasarela usa su API real automáticamente.
 ## Puesta en marcha
 
 ```bash
-npm install
+cp .env.example .env
+# Define AUTH_SEED_PASSWORD con una contraseña temporal única antes de iniciar.
+npm ci
 npm run dev      # http://localhost:3000
 ```
 
@@ -63,6 +65,7 @@ Copia `.env.example` a `.env` (opcional). El servidor lo carga al arrancar y no 
 | `CHILE_GATEWAY_API_KEY`       | _(vacío)_               | Credencial de la pasarela chilena (modo live).          |
 | `CHILE_GATEWAY_COMMERCE_CODE` | _(vacío)_               | Código de comercio de la pasarela chilena.              |
 | `PUBLIC_BASE_URL`             | `http://localhost:3000` | Base para URLs de retorno/redirección.                  |
+| `AUTH_SEED_PASSWORD`          | _(requerido)_           | Contraseña temporal única para las cuentas iniciales; se debe rotar al primer acceso. |
 
 ## Scripts
 
@@ -115,10 +118,173 @@ En producción, mueve las llaves a los Secrets del entorno en lugar de `.env`.
 La llave secreta no debe commitearse. Si se pegó en un chat, rótala en el
 Dashboard de Stripe.
 
+## Contenedor y ECS
+
+La imagen de producción se construye sin secretos y ejecuta como el usuario
+sin privilegios `node`:
+
+```bash
+docker build -t instripe:local .
+docker run --rm -p 3000:3000 \
+  -e AUTH_SEED_PASSWORD='contraseña-temporal-unica' \
+  instripe:local
+```
+
+En ECS, configure `AUTH_SEED_PASSWORD`, credenciales de pasarelas y correo con
+el campo `secrets` de la definición de tarea, apuntando a AWS Secrets Manager;
+no los agregue al Dockerfile, la imagen ni variables visibles de CI. La tarea
+debe usar `/health` como health check del balanceador.
+
+La persistencia actual usa SQLite local. No despliegue más de una tarea ni use
+esta imagen como servicio productivo de ECS hasta migrar el almacenamiento a
+PostgreSQL/Aurora y validar la migración de datos; el almacenamiento efímero de
+Fargate perdería la base ante un reemplazo de tarea.
+
+### Exportación de SQLite para el corte a PostgreSQL
+
+Antes de cualquier corte, detenga las escrituras en la aplicación del VPS y
+realice una copia de seguridad de su archivo SQLite. La herramienta genera un
+archivo SQL con el total y checksum de origen; el archivo contiene datos de la
+plataforma y está ignorado por Git.
+
+```bash
+node scripts/export-sqlite-to-postgres.mjs \
+  /ruta/segura/platform.db \
+  /ruta/segura/platform.instripe-migration.sql
+```
+
+Ejecute el SQL una sola vez contra una base PostgreSQL/Aurora vacía usando una
+conexión segura y sin registrar la URL ni contraseña:
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f /ruta/segura/platform.instripe-migration.sql
+```
+
+El script se niega a sobrescribir un archivo existente y el SQL se revierte si
+la tabla destino contiene datos o el conteo importado no coincide. Conserve la
+copia SQLite para reversión hasta completar la validación funcional.
+
+La exportación y `PostgresPlatformStore` son preparación de migración, no un
+corte ya conectado: la aplicación sigue usando el almacenamiento SQLite
+síncrono. Los módulos mantienen además estado en memoria y algunos usan
+transacciones síncronas. Hay que adaptar y probar esos flujos antes de conectar
+la aplicación a PostgreSQL; no cambie `DATABASE_PATH` por una URL esperando que
+la aplicación la use.
+
+### Infraestructura AWS como código
+
+El proyecto CDK en [`infra/`](./infra) define únicamente la base compartida:
+VPC de dos zonas, subredes públicas, privadas de aplicación y aisladas para
+datos, un NAT Gateway, ECR con análisis de imágenes y etiquetas inmutables,
+CloudWatch Logs y un clúster ECS. No define todavía una base de datos, servicio
+ni balanceador, para impedir un despliegue accidental de la aplicación mientras
+dependa de SQLite.
+
+```bash
+cd infra
+npm ci
+npm run build
+npm run synth
+```
+
+La primera implementación en `632404568231` / `us-east-1` requerirá primero
+revisar el cambio sintetizado, aprobar el costo del NAT Gateway y ejecutar el
+bootstrap de CDK. No ejecute `cdk deploy` hasta que la migración PostgreSQL y
+el plan de corte estén aprobados.
+
+## Despliegue automático a VPS
+
+El workflow de GitHub Actions (`.github/workflows/deploy-vps.yml`) despliega automáticamente la aplicación al VPS en cada push a las ramas `main` y `agents/ok`:
+
+1. **Build y tests**: Compila TypeScript, ejecuta tests.
+2. **SSH a VPS**: Se conecta via SSH con clave privada.
+3. **Pull & restart**: Tira los cambios más recientes, reinstala dependencias, compila y reinicia PM2.
+
+### Configuración de Secrets
+
+En **GitHub → Settings → Secrets and variables → Actions**, agregue:
+
+| Secret          | Valor                                  | Descripción                  |
+| --------------- | -------------------------------------- | ---------------------------- |
+| `VPS_HOST`      | IP pública o dominio del VPS           | Host SSH                     |
+| `VPS_USERNAME`  | `deploy` (o el usuario SSH en VPS)     | Usuario SSH                  |
+| `VPS_SSH_KEY`   | Contenido de `~/.ssh/id_ed25519` (privada) | Clave SSH privada        |
+| `VPS_PORT`      | `22` (o puerto SSH personalizado)      | Puerto SSH (opcional)        |
+
+### Generar clave SSH
+
+En la máquina local (Windows):
+
+```powershell
+# Si no existe:
+ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh\id_ed25519 -N ""
+
+# Ver contenido (privada):
+Get-Content $env:USERPROFILE\.ssh\id_ed25519
+```
+
+En el VPS, agregue la clave pública a `~/.ssh/authorized_keys`:
+
+```bash
+echo "ssh-ed25519 AAAAC3N... (contenido de id_ed25519.pub)" >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+```
+
+### Ramas y triggers
+
+- **`main`**: Branch de producción. Push a `main` despliega a VPS en producción.
+- **`agents/ok`**: Branch experimental con agentes (Copilot). Push a `agents/ok` también despliega automáticamente.
+
+Esto permite probar cambios en `agents/ok` sin afectar `main`, pero ambos desplazan a la misma instancia VPS. Para ambientes separados (staging/prod), cree otra rama o un segundo VPS.
+
+## Operations Advisor (Bedrock)
+
+Un nuevo módulo experimental integra AWS Bedrock Converse para proporcionar análisis operacional en lenguaje natural:
+
+- **Consultas sin ejecución**: Usuarios con rol `operacion` hacen preguntas.
+- **Análisis con Bedrock**: Claude Sonnet genera propuestas (no vinculantes).
+- **Auditoría**: Cada consulta y propuesta queda registrada.
+
+### Configuración en VPS/ECS
+
+Agregue variables de entorno:
+
+```bash
+export AWS_REGION=us-east-1
+export BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-6  # opcional
+```
+
+Sin `AWS_REGION`, el módulo funciona en modo local (almacena consultas pero no invoca Bedrock).
+
+### Permisos IAM
+
+El rol de ejecución de la tarea ECS necesita:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "bedrock:InvokeModel",
+  "Resource": "arn:aws:bedrock:us-east-1::foundation-model/us.anthropic.claude-sonnet-4-6"
+}
+```
+
+Consulte [`docs/BEDROCK_IAM.md`](./docs/BEDROCK_IAM.md) para detalles.
+
+### Endpoints
+
+- `POST /api/advisor/query` — crear consulta (operacion)
+- `GET /api/advisor/queries` — listar consultas (operacion)
+- `GET /api/advisor/proposals` — listar propuestas (operacion, administrador_empresa)
+- `POST /api/advisor/proposals/:id/review` — revisar propuesta (operacion, administrador_empresa)
+
+Consulte [`docs/OPERATIONS_ADVISOR.md`](./docs/OPERATIONS_ADVISOR.md) para endpoints completos y ejemplo de flujo.
+
 ## Producción / próximos pasos
 
 - Integración real: SDK de Transbank (Webpay Plus), Khipu o Flow para Chile, y
   Stripe Connect para dispersión de fondos multi-cuenta.
-- Persistencia: reemplazar el libro mayor en memoria por Postgres.
+- Persistencia: migrar la base SQLite local a PostgreSQL/Aurora antes de
+  desplegar más de una tarea ECS.
 - Estas integraciones requieren credenciales y cuentas (se configuran como
   secretos del entorno).

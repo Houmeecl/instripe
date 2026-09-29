@@ -5,6 +5,8 @@ import { createApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { listInbox, sendLetter } from "../src/mail/box.js";
 
+const SEED_PASSWORD = "Test-seed-password.1831";
+
 function listen(server: net.Server): Promise<number> {
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
@@ -32,6 +34,7 @@ describe("correo de la empresa", () => {
     });
     const port = await listen(server);
     const config = loadConfig({
+      AUTH_SEED_PASSWORD: SEED_PASSWORD,
       MAIL_HOST: "127.0.0.1",
       MAIL_IMAP_PORT: String(port),
       MAIL_USER: "edward@proveedorregional.cl",
@@ -67,6 +70,7 @@ describe("correo de la empresa", () => {
     });
     const port = await listen(server);
     const config = loadConfig({
+      AUTH_SEED_PASSWORD: SEED_PASSWORD,
       PORT: "3000",
       DATABASE_PATH: ":memory:",
       MAIL_HOST: "127.0.0.1",
@@ -79,14 +83,14 @@ describe("correo de la empresa", () => {
     server.close();
     expect(received.join("")).toContain("Subject: Hola");
 
-    const app = createApp(loadConfig({ PORT: "3000", DATABASE_PATH: ":memory:" }));
+    const app = createApp(loadConfig({ PORT: "3000", DATABASE_PATH: ":memory:", AUTH_SEED_PASSWORD: SEED_PASSWORD }));
     const comercio = request.agent(app);
-    await comercio.post("/api/session").send({ email: "caja@taller.cl", password: "Antofagasta.183" });
+    await comercio.post("/api/session").send({ email: "caja@taller.cl", password: SEED_PASSWORD });
     expect((await comercio.get("/api/correo")).status).toBe(403);
     const operacion = request.agent(app);
-    const login = await operacion.post("/api/session").send({ email: "operacion@proveedorregional.cl", password: "Antofagasta.183" });
+    const login = await operacion.post("/api/session").send({ email: "operacion@proveedorregional.cl", password: SEED_PASSWORD });
     if (login.body.user.mustChangePassword) {
-      await operacion.post("/api/session/password").send({ currentPassword: "Antofagasta.183", newPassword: "Operacion.1831" });
+      await operacion.post("/api/session/password").send({ currentPassword: SEED_PASSWORD, newPassword: "Operacion.1831" });
     }
     expect((await operacion.get("/api/correo")).status).toBe(503);
   });

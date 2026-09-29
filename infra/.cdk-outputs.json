@@ -1,0 +1,8 @@
+{
+  "InstripeFoundation": {
+    "ServiceLogGroupName": "InstripeFoundation-ServiceLogs24DEC314-lN4EN3FKxO3N",
+    "VpcId": "vpc-0009f6f1bb0f4061d",
+    "ClusterName": "InstripeFoundation-ClusterEB0386A7-KV5Pr8R8D2LI",
+    "RepositoryUri": "632404568231.dkr.ecr.us-east-1.amazonaws.com/instripefoundation-repository22e53bbd-zpy7ug8pa1zo"
+  }
+}

@@ -83,7 +83,9 @@ GLOBAL66_MERCHANT_ID=
 NODE_ENV=production
 PORT=3000
 PUBLIC_BASE_URL=http://localhost:3000
-SEED_PASSWORD=Antofagasta.183
+# Required only while initializing an empty database. Set a unique temporary
+# password before starting, then require users to replace it on first sign-in.
+AUTH_SEED_PASSWORD=
 CURRENCY=CLP
 DATABASE_PATH=/var/www/instripe/data/instripe.db
 

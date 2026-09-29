@@ -17,6 +17,7 @@ import { RegistroModule } from "./modules/registro/module.js";
 import { SuscripcionModule } from "./modules/suscripcion/module.js";
 import { TarjetasModule } from "./modules/tarjetas/module.js";
 import { TreasuryModule } from "./modules/treasury/module.js";
+import { OperationsAdvisorModule } from "./modules/operations-advisor/module.js";
 import type { Role } from "./auth/module.js";
 import type { Account } from "./payments/ledger.js";
 import { Payments, type CheckoutSettlement, type SettleResult } from "./payments/service.js";
@@ -46,6 +47,7 @@ export class Platform {
   readonly portal: PortalModule;
   readonly automation: AutomationModule;
   readonly suscripcion: SuscripcionModule;
+  readonly advisor: OperationsAdvisorModule;
   readonly auth: AuthModule;
 
   readonly store: PlatformStore;
@@ -69,6 +71,7 @@ export class Platform {
     this.portal = new PortalModule(this.payments, config, this.store);
     this.automation = new AutomationModule(this.payments, config, this.store);
     this.suscripcion = new SuscripcionModule(this.payments, config, this.store);
+    this.advisor = new OperationsAdvisorModule(config);
     this.auth = new AuthModule(this.store, config.seedPassword);
   }
 
