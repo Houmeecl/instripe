@@ -479,7 +479,7 @@ describe("instripe BaaS platform", () => {
     expect(landing.text).toContain('src="/logo-mark.png"');
     expect(landing.text).toContain('src="/aplicacion"');
     expect(landing.text).toContain("Procesador de pagos");
-    expect(landing.text).toContain("El espacio ya está ocupado.");
+    expect(landing.text).toContain("Aquí empieza");
 
     const embedded = await request(server).get("/aplicacion");
     expect(embedded.status).toBe(200);
