@@ -32,6 +32,7 @@ jobs:
         run: npm test
 
       - name: Deploy to VPS via SSH
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -48,6 +49,7 @@ jobs:
             echo "Deployment completed at $(date)"
 
       - name: Verify deployment
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}

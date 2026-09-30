@@ -1,226 +1,455 @@
 <!doctype html>
-<html lang="es">
+<html lang="es-CL">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Proveedor Regional</title>
+    <meta name="theme-color" content="#f7f7f2" />
+    <title>Proveedor Regional · Crecer desde aquí</title>
     <meta
       name="description"
-      content="Institución de desarrollo de proveedores de la Región de Antofagasta. Diagnostica, forma, acompaña y mide el valor retenido en el territorio."
+      content="Diagnóstico, formación y acompañamiento para empresas de la Región de Antofagasta. Desarrollo empresarial con identidad territorial."
     />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,680&family=Outfit:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/landing.css" />
+    <link rel="stylesheet" href="/home.css" />
     <link rel="icon" href="/favicon.png" type="image/png" />
+    <script src="/home.js" defer></script>
   </head>
   <body>
-    <header class="site-head">
-      <a class="logo" href="/"><img src="/logo-mark.png" alt="" /><span>Proveedor Regional</span></a>
-      <nav>
-        <a href="#institucion">Institución</a>
-        <a href="#territorio">Territorio</a>
-        <a href="#ruta">Ruta</a>
-        <a href="#medicion">Medición</a>
+    <a class="skip" href="#contenido">Saltar al contenido</a>
+    <header class="header wrap">
+      <a class="brand" href="/" aria-label="Proveedor Regional, inicio"
+        ><img src="/logo-mark.png" alt="" width="42" height="42" /><span
+          >Proveedor<br />Regional<span class="orange">.</span></span
+        ></a
+      >
+      <button
+        class="menu-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="navigation"
+        hidden
+      >
+        Menú <span aria-hidden="true">☰</span>
+      </button>
+      <nav id="navigation" aria-label="Navegación principal">
+        <a href="#propuesta">La propuesta</a
+        ><a href="#territorio">El territorio</a
+        ><a href="#ruta">Tu desarrollo</a>
       </nav>
-      <a class="nav-enter" href="#aplicacion">Entrar</a>
+      <a class="button button-small header-access" href="#aplicacion"
+        >Mi espacio <span aria-hidden="true">↗</span></a
+      >
     </header>
-
-    <main>
-      <section class="hero">
-        <img src="/fotos/faro.jpg" alt="Faro y costa de Antofagasta, con la ciudad y el mar." />
-        <div class="hero-copy">
-          <p class="eyebrow">Región de Antofagasta</p>
-          <h1>Una institución para los proveedores del territorio.</h1>
-          <p class="lede">
-            Diagnostica, forma, acompaña y mide el valor que las empresas retienen en la región.
-            La opera la Fundación Entretodos.
+    <main id="contenido">
+      <section class="hero wrap" aria-labelledby="hero-title">
+        <div class="hero-top">
+          <p class="eyebrow">
+            <span class="status-dot"></span> DESDE ANTOFAGASTA. CON VISIÓN DE
+            FUTURO.
           </p>
-          <div class="hero-actions">
-            <a class="cta" href="#ruta">Ver la ruta</a>
-            <a class="cta ghost" href="#medicion">Cómo se mide</a>
+          <span class="edition">TERRITORIO + EMPRESA + DESARROLLO</span>
+        </div>
+        <div class="hero-heading">
+          <h1 id="hero-title">
+            El próximo paso<br />es
+            <span class="word-accent"
+              >crecer desde aquí<svg
+                viewBox="0 0 600 20"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <path d="M4 14 Q260 -2 596 10" /></svg></span
+            ><span class="orange">.</span>
+          </h1>
+          <div class="hero-description">
+            <p>
+              Tu empresa tiene un lugar en el futuro de la región. Te
+              acompañamos a prepararla para lo que viene.
+            </p>
+            <a class="text-link" href="#propuesta"
+              >Conoce la propuesta <span aria-hidden="true">↗</span></a
+            >
+          </div>
+        </div>
+        <div class="hero-scene">
+          <img
+            class="hero-image"
+            src="/fotos/puerto.jpg"
+            alt="Vista de la costa y la ciudad de Antofagasta junto al océano Pacífico"
+            fetchpriority="high"
+            width="1600"
+            height="900"
+          />
+          <div class="scene-shade"></div>
+          <span class="scene-tag"
+            ><span aria-hidden="true">↗</span> UNA REGIÓN. MUCHAS
+            POSIBILIDADES.</span
+          >
+          <div class="scene-bottom">
+            <div>
+              <p>
+                Donde somos locales,<br /><strong
+                  >podemos llegar más lejos.</strong
+                >
+              </p>
+              <span class="location">ANTOFAGASTA · CHILE</span>
+            </div>
+            <a href="#aplicacion" class="button button-white"
+              >Acceder a mi espacio <span aria-hidden="true">↗</span></a
+            >
+          </div>
+          <div class="orbit" aria-hidden="true">
+            <svg viewBox="0 0 120 120">
+              <defs>
+                <path
+                  id="circle"
+                  d="M60,60 m-44,0 a44,44 0 1,1 88,0 a44,44 0 1,1 -88,0"
+                />
+              </defs>
+              <text>
+                <textPath href="#circle" textLength="276">
+                  IDENTIDAD LOCAL · VISIÓN REGIONAL ·
+                </textPath>
+              </text></svg
+            ><span>↗</span>
+          </div>
+        </div>
+        <div class="hero-caption">
+          <span>El desarrollo comienza con las empresas de aquí.</span
+          ><button
+            id="motion-toggle"
+            class="motion-toggle"
+            type="button"
+            aria-pressed="false"
+            hidden
+          >
+            Pausar movimiento</button
+          ><a href="#propuesta"
+            >SIGUE EXPLORANDO <span aria-hidden="true">↓</span></a
+          >
+        </div>
+      </section>
+      <section
+        class="section wrap"
+        id="propuesta"
+        aria-labelledby="proposal-title"
+      >
+        <div class="section-heading reveal">
+          <p class="eyebrow">01 / EL IMPULSO QUE NECESITAS</p>
+          <div>
+            <h2 id="proposal-title">
+              Tú conoces tu negocio.<br /><span class="muted"
+                >Crezcamos desde ahí.</span
+              >
+            </h2>
+            <p>
+              Diagnóstico, formación y acompañamiento. Una ruta que parte de tu
+              realidad y fortalece lo que tu empresa puede hacer.
+            </p>
+          </div>
+        </div>
+        <div class="service-grid">
+          <article class="service-card reveal">
+            <div class="card-top">
+              <span class="service-icon" aria-hidden="true">⌁</span
+              ><span>01</span>
+            </div>
+            <h3>Entiende tu<br />punto de partida.</h3>
+            <p>
+              Un diagnóstico para reconocer capacidades y oportunidades en
+              gestión, finanzas, cumplimiento y digitalización.
+            </p>
+            <span class="card-label">DIAGNÓSTICO</span>
+          </article>
+          <article class="service-card service-dark reveal">
+            <div class="card-top">
+              <span class="service-icon" aria-hidden="true">✳</span
+              ><span>02</span>
+            </div>
+            <h3>Transforma conocimiento<br />en capacidades.</h3>
+            <p>
+              Formación práctica y acompañamiento para fortalecer tu empresa,
+              con una mirada puesta en el territorio.
+            </p>
+            <span class="card-label">ACADEMIA Y ACOMPAÑAMIENTO</span>
+          </article>
+          <article class="service-card service-peach reveal">
+            <div class="card-top">
+              <span class="service-icon" aria-hidden="true">↗</span
+              ><span>03</span>
+            </div>
+            <h3>Haz visible<br />lo que aportas.</h3>
+            <p>
+              Una identidad empresarial respaldada por evidencia y una forma de
+              medir el valor que permanece en la región.
+            </p>
+            <span class="card-label">IDENTIDAD Y VALOR REGIONAL</span>
+          </article>
+        </div>
+      </section>
+      <section
+        class="territory-section"
+        id="territorio"
+        aria-labelledby="territory-title"
+      >
+        <div class="wrap">
+          <div class="section-heading reveal">
+            <p class="eyebrow">02 / UN TERRITORIO QUE NOS UNE</p>
+            <div>
+              <h2 id="territory-title">
+                De la costa al altiplano.<br /><span class="muted"
+                  >El futuro tiene raíces.</span
+                >
+              </h2>
+              <p>
+                Nueve comunas. Distintas vocaciones. Un mismo propósito:
+                fortalecer a las empresas que dan vida a nuestra región.
+              </p>
+            </div>
+          </div>
+          <div class="territory-layout reveal">
+            <div class="territory-visual">
+              <img
+                id="territory-image"
+                src="/fotos/puerto.jpg"
+                alt="Costa de Antofagasta"
+                loading="lazy"
+                width="1200"
+                height="900"
+              />
+              <div class="territory-overlay">
+                <span id="territory-index">01 / 09</span>
+                <div aria-live="polite" aria-atomic="true">
+                  <h3 id="territory-name">Antofagasta</h3>
+                  <p id="territory-description">
+                    Puerto, servicios y comercio. Una ciudad que conecta el
+                    desierto con el océano.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div class="territory-selector">
+              <p class="selector-label">
+                EXPLORA NUESTRAS COMUNAS <span aria-hidden="true">↙</span>
+              </p>
+              <div
+                class="commune-list"
+                role="group"
+                aria-label="Seleccionar comuna"
+              >
+                <button
+                  type="button"
+                  data-commune="antofagasta"
+                  aria-pressed="true"
+                >
+                  <span>01</span>Antofagasta<i aria-hidden="true">↗</i>
+                </button>
+                <button
+                  type="button"
+                  data-commune="calama"
+                  aria-pressed="false"
+                >
+                  <span>02</span>Calama<i aria-hidden="true">↗</i>
+                </button>
+                <button
+                  type="button"
+                  data-commune="mejillones"
+                  aria-pressed="false"
+                >
+                  <span>03</span>Mejillones<i aria-hidden="true">↗</i>
+                </button>
+                <button
+                  type="button"
+                  data-commune="tocopilla"
+                  aria-pressed="false"
+                >
+                  <span>04</span>Tocopilla<i aria-hidden="true">↗</i>
+                </button>
+                <button
+                  type="button"
+                  data-commune="maria-elena"
+                  aria-pressed="false"
+                >
+                  <span>05</span>María Elena<i aria-hidden="true">↗</i>
+                </button>
+                <button
+                  type="button"
+                  data-commune="san-pedro"
+                  aria-pressed="false"
+                >
+                  <span>06</span>San Pedro de Atacama<i aria-hidden="true">↗</i>
+                </button>
+                <button
+                  type="button"
+                  data-commune="sierra-gorda"
+                  aria-pressed="false"
+                >
+                  <span>07</span>Sierra Gorda<i aria-hidden="true">↗</i>
+                </button>
+                <button
+                  type="button"
+                  data-commune="taltal"
+                  aria-pressed="false"
+                >
+                  <span>08</span>Taltal<i aria-hidden="true">↗</i>
+                </button>
+                <button
+                  type="button"
+                  data-commune="ollague"
+                  aria-pressed="false"
+                >
+                  <span>09</span>Ollagüe<i aria-hidden="true">↗</i>
+                </button>
+              </div>
+              <p class="image-note" id="territory-note">
+                Fotografía de Antofagasta.
+              </p>
+              <noscript
+                ><p>
+                  Activa JavaScript para explorar la descripción de cada comuna.
+                </p></noscript
+              >
+            </div>
           </div>
         </div>
       </section>
-
-      <section class="figures" aria-label="Cifras del programa">
-        <div>
-          <strong>183</strong>
-          <span>pymes seleccionadas</span>
+      <section
+        class="section wrap route"
+        id="ruta"
+        aria-labelledby="route-title"
+      >
+        <div class="route-intro reveal">
+          <p class="eyebrow">03 / TU SIGUIENTE VERSIÓN</p>
+          <h2 id="route-title">
+            Cada avance<br />deja <span class="orange">huella.</span>
+          </h2>
+          <p>
+            El desarrollo se demuestra con evidencia. El diagnóstico orienta tu
+            ruta; la formación, el cumplimiento y el valor retenido acompañan
+            cada etapa.
+          </p>
+          <a class="text-link" href="#aplicacion"
+            >Encuentra tu punto de partida <span aria-hidden="true">↗</span></a
+          >
         </div>
-        <div>
-          <strong>9</strong>
-          <span>comunas con presencia</span>
-        </div>
-        <div>
-          <strong>4</strong>
-          <span>perfiles de desarrollo</span>
-        </div>
-      </section>
-
-      <section class="gallery" aria-label="Lugares de la región">
-        <figure>
-          <img src="/fotos/puerto.jpg" alt="Costa de Antofagasta." />
-          <figcaption>Antofagasta</figcaption>
-        </figure>
-        <figure>
-          <img src="/fotos/mejillones.jpg" alt="Puerto Angamos, en Mejillones." />
-          <figcaption>Mejillones</figcaption>
-        </figure>
-        <figure>
-          <img src="/fotos/san-pedro.jpg" alt="Calle Caracoles, en San Pedro de Atacama." />
-          <figcaption>San Pedro de Atacama</figcaption>
-        </figure>
-      </section>
-
-      <section class="split" id="institucion">
-        <div>
-          <p class="kicker">Institución</p>
-          <h2>Prepara, acompaña y mide.</h2>
-          <p>Una plataforma conecta. Una institución sostiene el proceso y responde ante el territorio.</p>
-        </div>
-        <ul class="rules">
-          <li>
-            <h3>Diagnóstico</h3>
-            <p>La situación de la empresa en gestión, finanzas, cumplimiento y digitalización.</p>
-          </li>
-          <li>
-            <h3>Índice de retención</h3>
-            <p>Cuánto del ingreso permanece en la región, más allá del gasto local.</p>
-          </li>
-          <li>
-            <h3>Ejecutivo asignado</h3>
-            <p>Acompañamiento continuo y coordinación de especialistas.</p>
-          </li>
-          <li>
-            <h3>Academia</h3>
-            <p>Formación práctica en gestión, finanzas y pertinencia territorial.</p>
-          </li>
-          <li>
-            <h3>Identidad digital</h3>
-            <p>Un perfil que se demuestra con evidencia, no una etiqueta declarada.</p>
-          </li>
-          <li>
-            <h3>Financiamiento y protección</h3>
-            <p>Orientación en crédito, garantías y coberturas.</p>
-          </li>
-        </ul>
-      </section>
-
-      <figure class="band">
-        <img src="/fotos/miscanti.jpg" alt="Laguna Miscanti, en el altiplano de la región." />
-        <figcaption>Laguna Miscanti</figcaption>
-      </figure>
-
-      <figure class="band band-second">
-        <img src="/fotos/salar.jpg" alt="Ferrocarril en el salar de Carcote." />
-        <figcaption>Salar de Carcote</figcaption>
-      </figure>
-
-      <section class="territory" id="territorio">
-        <p class="kicker">Territorio</p>
-        <h2>Nueve comunas, una misma ruta.</h2>
-        <ul>
-          <li><strong>Antofagasta</strong> Puerto, servicios y comercio</li>
-          <li><strong>Calama</strong> Oasis del Loa y capital minera</li>
-          <li><strong>Mejillones</strong> Puerto industrial y logística</li>
-          <li><strong>Tocopilla</strong> Energía, industria y borde costero</li>
-          <li><strong>María Elena</strong> Pampa salitrera</li>
-          <li><strong>San Pedro de Atacama</strong> Turismo e identidad</li>
-          <li><strong>Sierra Gorda</strong> Operaciones y encadenamientos</li>
-          <li><strong>Taltal</strong> Caleta y memoria salitrera</li>
-          <li><strong>Ollagüe</strong> Altiplano y frontera</li>
-        </ul>
-      </section>
-
-      <section class="route" id="ruta">
-        <p class="kicker">Ruta</p>
-        <h2>Un nivel se demuestra, no se declara.</h2>
-        <p class="section-lead">
-          El índice de retención es necesario para avanzar. También cuentan el cumplimiento, la certificación y la formación.
-          Cada perfil dura doce meses.
-        </p>
-        <ol>
-          <li>
-            <span>01</span>
+        <div class="route-steps">
+          <article class="route-step reveal">
+            <span class="step-number">01</span>
             <div>
               <h3>Inicial</h3>
-              <p class="range">Bajo 30%</p>
-              <p>Perfil digital, un ejecutivo y la Academia.</p>
+              <p>Reconocer tu empresa y empezar a fortalecer sus bases.</p>
             </div>
-          </li>
-          <li>
-            <span>02</span>
+            <span class="step-mark" aria-hidden="true">↗</span>
+          </article>
+          <article class="route-step reveal">
+            <span class="step-number">02</span>
             <div>
               <h3>En desarrollo</h3>
-              <p class="range">30% a 50%</p>
-              <p>Rondas entre oferta y demanda, y prioridad en financiamiento.</p>
+              <p>Construir capacidades y avanzar en tu plan de trabajo.</p>
             </div>
-          </li>
-          <li>
-            <span>03</span>
+            <span class="step-mark" aria-hidden="true">↗</span>
+          </article>
+          <article class="route-step reveal">
+            <span class="step-number">03</span>
             <div>
               <h3>Preparado</h3>
-              <p class="range">50% a 70%</p>
-              <p>Respaldo para presentarse ante un gran comprador.</p>
+              <p>Demostrar tu gestión y prepararte para nuevos desafíos.</p>
             </div>
-          </li>
-          <li>
-            <span>04</span>
+            <span class="step-mark" aria-hidden="true">↗</span>
+          </article>
+          <article class="route-step reveal">
+            <span class="step-number">04</span>
             <div>
               <h3>De conexión</h3>
-              <p class="range">Sobre 70%</p>
-              <p>Caso que la Fundación puede referir, con auditoría externa.</p>
+              <p>Proyectar tus capacidades y tu aporte al territorio.</p>
             </div>
-          </li>
-        </ol>
-      </section>
-
-      <section class="measure" id="medicion">
-        <div>
-          <p class="kicker">Medición</p>
-          <h2>Del gasto local al valor que se queda.</h2>
-          <p>
-            El gasto local mira a quién se le paga. El valor retenido mira qué parte queda en salarios,
-            compras a otros proveedores de la región y utilidades que no salen del territorio.
-          </p>
-          <p class="formula">Índice de retención = valor retenido regional ÷ ventas regionales.</p>
+            <span class="step-mark" aria-hidden="true">↗</span>
+          </article>
         </div>
-        <aside>
-          <p class="kicker">Ejemplo del manual</p>
-          <p>
-            Una empresa tipo del documento, con ventas regionales de 500 millones, queda en 63,2%: perfil preparado.
-            Es un ejemplo de cálculo, no el resultado de una empresa real.
-          </p>
-          <p>Lo que se publica es un agregado: al menos cinco empresas, y ninguna por sobre el 30% de la cifra.</p>
-        </aside>
       </section>
-
-      <section class="govern">
-        <p>
-          El directorio reserva cupos al sector empresarial, a las empresas proveedoras, a la academia y al sector público.
-          La institución no representa a un comprador ni a un proveedor. Los umbrales de la ruta y de la medición
-          se cambian con el acuerdo de dos tercios del directorio.
-        </p>
-      </section>
-
-      <section class="embed" id="aplicacion">
-        <div class="embed-copy">
-          <p class="kicker">Empresas incorporadas</p>
-          <h2>El espacio ya está ocupado.</h2>
-          <p>Las empresas seleccionadas entran por etapas. Aquí se aceptan los términos y se abre ese mismo espacio.</p>
+      <section class="value-band">
+        <div class="wrap value-content reveal">
+          <span class="value-symbol" aria-hidden="true">✳</span>
+          <div>
+            <p class="eyebrow">EL VALOR DE CRECER JUNTOS</p>
+            <h2>
+              Que a tu empresa le vaya bien.<br />Que a tu región, también.
+            </h2>
+            <p>
+              Miramos el valor que se queda en salarios, compras regionales y
+              utilidades que permanecen en el territorio. Porque crecer también
+              es aportar.
+            </p>
+          </div>
         </div>
-        <iframe src="/aplicacion" title="Aplicación de Proveedor Regional"></iframe>
+      </section>
+      <section
+        class="section wrap access-section"
+        id="aplicacion"
+        aria-labelledby="access-title"
+      >
+        <div class="section-heading reveal">
+          <p class="eyebrow">04 / TU ESPACIO, TU PRÓXIMO PASO</p>
+          <div>
+            <h2 id="access-title">
+              Aquí empieza<br /><span class="muted">lo que viene.</span>
+            </h2>
+            <div>
+              <p>
+                Si tu empresa ya está prerregistrada, accede a tu espacio y
+                revisa las condiciones de incorporación.
+              </p>
+              <a class="text-link" href="/aplicacion"
+                >Abrir la aplicación <span aria-hidden="true">↗</span></a
+              >
+            </div>
+          </div>
+        </div>
+        <div class="app-frame">
+          <div class="frame-bar">
+            <span
+              ><span class="status-dot"></span> ESPACIO PROVEEDOR REGIONAL</span
+            ><span>ACCESO A EMPRESAS</span>
+          </div>
+          <iframe
+            src="/aplicacion"
+            title="Aplicación de Proveedor Regional"
+            loading="lazy"
+          ></iframe>
+        </div>
       </section>
     </main>
-
-    <footer class="site-foot">
-      <span>proveedorregional.cl · Fundación Entretodos</span>
-      <span class="credits">Fotos: Iván Cortés, Javier Jofre, Victorddt, Gallardoval y Diego Delso, CC BY-SA, Wikimedia Commons.</span>
-      <span>Procesador de pagos: Stripe</span>
+    <footer class="footer">
+      <div class="wrap">
+        <div class="footer-top">
+          <a class="brand" href="/" aria-label="Proveedor Regional, inicio"
+            ><img src="/logo-mark.png" alt="" width="42" height="42" /><span
+              >Proveedor<br />Regional<span class="orange">.</span></span
+            ></a
+          >
+          <p>
+            Empresas de aquí.<br /><strong
+              >Desarrollo que se queda aquí.</strong
+            >
+          </p>
+          <a href="#contenido" class="back-top" aria-label="Volver al inicio"
+            >↑</a
+          >
+        </div>
+        <div class="footer-bottom">
+          <span>Fundación Entretodos · Región de Antofagasta</span
+          ><span>Procesador de pagos: Stripe</span>
+        </div>
+        <p class="credits">
+          Fotografías: Iván Cortés, Javier Jofre, Victorddt, Gallardoval y Diego
+          Delso · CC BY-SA · Wikimedia Commons.
+        </p>
+      </div>
     </footer>
   </body>
 </html>
