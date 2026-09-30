@@ -5,7 +5,7 @@
   "description": "BaaS + insurtech payments infrastructure for Chile (Stripe + Chilean gateway, fund dispersion).",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",

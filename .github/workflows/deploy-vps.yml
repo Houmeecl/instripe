@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -37,12 +37,24 @@ jobs:
           port: ${{ secrets.VPS_PORT || 22 }}
           script: |
             cd /var/www/instripe
+            test -f package.json
+            node -e "const [major, minor] = process.versions.node.split('.').map(Number); if (major < 22 || (major === 22 && minor < 5)) process.exit(1)"
+            pm2 describe instripe >/dev/null
             git fetch origin main
             git reset --hard origin/main
-            npm install --production
+            npm ci
             npm run build
+            npm prune --omit=dev
             pm2 restart instripe --update-env
-            echo "Deployment completed at $(date)"
+            for attempt in $(seq 1 10); do
+              if curl --fail --silent http://127.0.0.1:3000/health >/dev/null; then
+                echo "Deployment healthy at $(date)"
+                exit 0
+              fi
+              sleep 3
+            done
+            echo "Health check failed after deployment" >&2
+            exit 1
 
       - name: Verify deployment
         uses: appleboy/ssh-action@v1
@@ -52,6 +64,4 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
           script: |
-            cd /var/www/instripe
-            pm2 list
-            pm2 logs instripe --lines 20
+            curl --fail --silent http://127.0.0.1:3000/health

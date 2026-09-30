@@ -39,7 +39,7 @@ credenciales, cada pasarela usa su API real automáticamente.
 
 ## Requisitos
 
-- Node.js >= 20 (desarrollado en Node 22)
+- Node.js >= 22.5 (`node:sqlite` requiere Node 22.5 o posterior)
 - npm
 
 ## Puesta en marcha
