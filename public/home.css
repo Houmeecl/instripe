@@ -3,6 +3,7 @@
   --ink: #173e52;
   --muted: #536976;
   --orange: #c34e20;
+  --aqua: #83c5c8;
   --line: #d8dfdc;
   --peach: #f2e4d7;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -17,7 +18,9 @@ html {
 body {
   margin: 0;
   color: var(--ink);
-  background: var(--paper);
+  background:
+    radial-gradient(circle at 6% 0%, #fffaf0 0, transparent 31rem),
+    var(--paper);
   font-family: Outfit, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -62,11 +65,16 @@ a:focus-visible {
   transform: translateY(0);
 }
 .header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   display: flex;
   align-items: center;
   gap: 36px;
   padding-block: 25px;
   border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 86%, transparent);
+  backdrop-filter: blur(18px);
 }
 .brand {
   display: flex;
@@ -115,7 +123,7 @@ a:focus-visible {
   padding: 18px 24px;
   background: var(--ink);
   color: white;
-  border-radius: 9px;
+  border-radius: 999px;
   font-size: 15px;
   font-weight: 500;
   transition:
@@ -151,7 +159,19 @@ a:focus-visible {
   color: var(--ink);
 }
 .hero {
+  position: relative;
   padding-top: 37px;
+}
+.hero::before {
+  content: "";
+  position: absolute;
+  top: 2rem;
+  right: -4rem;
+  width: 15rem;
+  height: 15rem;
+  border: 1px solid #83c5c855;
+  border-radius: 50%;
+  pointer-events: none;
 }
 .hero-top {
   display: flex;
@@ -253,6 +273,7 @@ h1 {
   isolation: isolate;
   overflow: hidden;
   background: var(--ink);
+  box-shadow: 0 24px 70px #173e5226;
 }
 .hero-image {
   position: absolute;
@@ -261,6 +282,11 @@ h1 {
   object-fit: cover;
   object-position: center 48%;
   animation: scene-enter 1.8s var(--ease) both;
+  transition: transform 1.2s var(--ease), filter 1.2s var(--ease);
+}
+.hero-scene:hover .hero-image {
+  transform: scale(1.035);
+  filter: saturate(1.08) contrast(1.03);
 }
 .scene-shade {
   position: absolute;
@@ -282,6 +308,11 @@ h1 {
   display: flex;
   align-items: center;
   gap: 10px;
+  padding: 8px 12px 8px 8px;
+  border: 1px solid #ffffff40;
+  border-radius: 999px;
+  background: #173e5240;
+  backdrop-filter: blur(12px);
 }
 .scene-tag > span {
   display: grid;
@@ -326,6 +357,7 @@ h1 {
   background: #edaf78;
   border-radius: 50%;
   color: var(--ink);
+  box-shadow: 0 12px 30px #071d2940;
 }
 .orbit svg {
   width: 100%;
