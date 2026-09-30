@@ -90,4 +90,10 @@ export class Ledger {
   entriesFor(accountId: string): LedgerEntry[] {
     return this.entries.filter((entry) => entry.accountId === accountId);
   }
+
+  forgetAccounts(accountIds: readonly string[]): void {
+    const ids = new Set(accountIds);
+    for (const id of ids) this.accounts.delete(id);
+    this.entries.splice(0, this.entries.length, ...this.entries.filter((entry) => !ids.has(entry.accountId)));
+  }
 }

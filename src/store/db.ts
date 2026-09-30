@@ -40,6 +40,13 @@ export class PlatformStore {
       .run(collection, id, JSON.stringify(body));
   }
 
+  putIfAbsent(collection: string, id: string, body: unknown): boolean {
+    const result = this.db
+      .prepare("INSERT INTO records (collection, id, body) VALUES (?, ?, ?) ON CONFLICT (collection, id) DO NOTHING")
+      .run(collection, id, JSON.stringify(body));
+    return result.changes > 0;
+  }
+
   delete(collection: string, id: string): void {
     this.db.prepare("DELETE FROM records WHERE collection = ? AND id = ?").run(collection, id);
   }

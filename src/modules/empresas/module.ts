@@ -1,7 +1,13 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import type { Role } from "../../auth/module.js";
 import { PlatformError } from "../../errors.js";
-import { formatAmount } from "../../money.js";
+import {
+  decryptGlobal66Secret,
+  encryptGlobal66Secret,
+  Global66BusinessApi,
+  type Global66Credentials,
+  type Global66WalletSnapshot,
+} from "../../gateways/global66BusinessApi.js";
 import type { Payments } from "../../payments/service.js";
 import {
   GIFT_DISCLAIMER,
@@ -35,15 +41,6 @@ export interface CardOptions {
   alerts: boolean;
 }
 
-export interface CardMovement {
-  id: string;
-  kind: "credit" | "debit";
-  amount: number;
-  displayAmount: string;
-  reference: string;
-  createdAt: string;
-}
-
 interface CompanyRecord {
   id: string;
   name: string;
@@ -53,8 +50,19 @@ interface CompanyRecord {
   logo: string | null;
   commune: string | null;
   last4: string;
-  ledgerAccountId: string;
+  ledgerAccountId?: string;
   options: CardOptions;
+  global66?: {
+    clientId: string;
+    accountId: string;
+    encryptedClientSecret: string;
+    configuredAt: string;
+  };
+  portal?: {
+    slug: string;
+    createdAt: string;
+    enabled: true;
+  };
   createdAt: string;
 }
 
@@ -64,20 +72,37 @@ interface WorkerRecord {
   name: string;
   email: string;
   last4: string;
-  ledgerAccountId: string;
+  ledgerAccountId?: string;
   options: CardOptions;
   createdAt: string;
 }
 
-interface TransferRecord {
+interface Global66TransferRecord {
   id: string;
   companyId: string;
-  kind: "abono" | "to_worker" | "to_company";
-  workerId?: string;
-  workerName?: string;
+  workerId: string;
+  workerName: string;
+  idempotencyKey: string;
+  requestFingerprint: string;
+  externalReferenceId: string;
   amount: number;
-  actorUserId: string;
+  status: "SUBMITTING" | "PROCESSING" | "SUCCESSFUL" | "FAILED" | "UNKNOWN";
+  transactionId: string | null;
   createdAt: string;
+}
+
+export interface Global66TransferView {
+  id: string;
+  workerName: string;
+  externalReferenceId: string;
+  amount: number;
+  status: Global66TransferRecord["status"];
+  transactionId: string | null;
+  createdAt: string;
+}
+
+export interface Global66CompanyWalletView extends Global66WalletSnapshot {
+  transfers: Global66TransferView[];
 }
 
 interface GiftRecord extends IssuedGift {
@@ -108,22 +133,10 @@ export interface PrepaidCardView {
   name: string;
   email: string;
   last4: string;
-  /** Book balance on the local prepaid ledger. */
-  balance: number;
-  displayBalance: string;
-  /**
-   * Money Stripe has settled. A demo or internal abono never counts.
-   * Transfers stay on the local ledger and do not fund a Stripe Transfer.
-   */
-  available: number;
-  displayAvailable: string;
-  realFunds: boolean;
   logo: string | null;
   kind: "debito";
   plastic: false;
   options: CardOptions;
-  movements: CardMovement[];
-  receipts: CardMovement[];
   contract: DebitContract | null;
 }
 
@@ -134,22 +147,25 @@ export interface CompanyView {
   logo: string | null;
   commune: string | null;
   last4: string;
-  balance: number;
-  displayBalance: string;
-  available: number;
-  displayAvailable: string;
-  realFunds: boolean;
   canManage: boolean;
-  canFund: boolean;
+  canViewWorkers: boolean;
   ownWorkerId?: string;
   contract: DebitContract | null;
   card: PrepaidCardView;
   workers: PrepaidCardView[];
-  transfers: Array<TransferRecord & { displayAmount: string }>;
   gifts: GiftView[];
   users: CompanyMemberView[];
-  /** Present only for operación. Comercio and titular do not receive these records. */
-  globalAccounts?: GlobalAccountsView;
+  global66Connection?: {
+    configured: boolean;
+    accountId: string | null;
+    clientIdHint: string | null;
+  };
+  portal: {
+    slug: string;
+    path: string;
+    createdAt: string;
+    enabled: boolean;
+  };
 }
 
 export interface HomeView {
@@ -200,59 +216,6 @@ export interface GiftView {
   money: false;
 }
 
-/**
- * Global66 opens accounts in other countries so money can be deposited into them.
- * Public docs list movements and payments, not account opening.
- * https://documents-b2b.global66.com/available-apis/movements/
- * The local request stays pending. Stripe stays in Spain and receives nothing here.
- */
-export const DEPOSIT_ACCOUNTS_LABEL = "Cuentas para depositar en otros países";
-
-export const GLOBAL66_DOCS_NOTICE =
-  "Las cuentas para depositar en otros países quedan pendientes. Global66 abre cuentas en otros países para depositar; la documentación pública lista movimientos y pagos, no la apertura, así que no hay número de cuenta. La cuenta de Stripe permanece en España.";
-
-export type GlobalAccountKind = "cuenta_virtual" | "cuenta_puente";
-
-export interface GlobalAccountView {
-  id: string;
-  kind: GlobalAccountKind;
-  label: string;
-  purpose: string;
-  /** Money is deposited into the account in another country. */
-  direction: "deposito";
-  status: "pending";
-  /** Absent on purpose: Global66 did not return an account id. */
-  externalId: null;
-  createdAt: string;
-}
-
-export interface GlobalAccountsView {
-  notice: string;
-  accounts: GlobalAccountView[];
-}
-
-interface GlobalAccountRecord {
-  id: string;
-  companyId: string;
-  kind: GlobalAccountKind;
-  label: string;
-  purpose: string;
-  status: "pending";
-  externalId: null;
-  createdAt: string;
-}
-
-const GLOBAL_ACCOUNT_COPY: Record<GlobalAccountKind, { label: string; purpose: string }> = {
-  cuenta_virtual: {
-    label: "Cuenta para depositar en otro país",
-    purpose: "Se deposita en una cuenta de otro país, al estilo Global66.",
-  },
-  cuenta_puente: {
-    label: "Cuenta para depositar en otro país",
-    purpose: "El depósito entra a la cuenta del otro país. La cuenta de Stripe permanece en España.",
-  },
-};
-
 export interface CompanyMemberView {
   id: string;
   name: string;
@@ -260,6 +223,11 @@ export interface CompanyMemberView {
   role: "comercio" | "titular";
   roleLabel: string;
   companyId: string;
+}
+
+export interface CompanyDeletionPlan {
+  ledgerAccountIds: string[];
+  ownerUserId: string;
 }
 
 export interface CardOptionsInput {
@@ -276,34 +244,64 @@ const COLOR = /^#[0-9a-fA-F]{6}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const PERIODS = new Set<UsagePeriod>(["siempre", "mensual", "rango"]);
 
+function maskIdentifier(value: string): string {
+  return value.length <= 8 ? "****" : `${value.slice(0, 4)}****${value.slice(-4)}`;
+}
+
+function createCompanyPortal(name: string, companyId: string, createdAt: string) {
+  const base = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/g, "") || "empresa";
+  return {
+    slug: `${base}-${companyId.slice(-8).toLowerCase()}`,
+    createdAt,
+    enabled: true as const,
+  };
+}
+
 /**
- * Company and worker virtual debit cards.
- * Balances stay on their own ledger accounts. Nothing is sent to Stripe Issuing or Transfer.
- * Available funds are only money Stripe has settled, so a demo abono stays at zero there.
+ * Company and worker card profiles. These are descriptive views, not issued cards
+ * or stored-value accounts; company funds and card balances are handled elsewhere.
  */
 export class EmpresasModule {
   readonly id = "empresas";
   readonly label = "Empresas";
   private readonly companies = new Map<string, CompanyRecord>();
   private readonly workers = new Map<string, WorkerRecord>();
-  private readonly transfers: TransferRecord[] = [];
+  private readonly global66Transfers: Global66TransferRecord[] = [];
   private readonly contracts = new Map<string, DebitContract>();
   private readonly contractByCard = new Map<string, DebitContract>();
   private readonly gifts = new Map<string, GiftRecord>();
   private readonly members = new Map<string, CompanyMemberRecord>();
-  private readonly globalAccounts: GlobalAccountRecord[] = [];
+  private readonly global66Api: Global66BusinessApi;
 
   constructor(
     private readonly payments: Payments,
     private readonly store: PlatformStore,
+    private readonly global66EncryptionKey: string | undefined,
+    global66Api = new Global66BusinessApi(),
   ) {
-    for (const company of store.list<CompanyRecord>("companies")) this.companies.set(company.id, company);
-    for (const worker of store.list<WorkerRecord>("company_workers")) this.workers.set(worker.id, worker);
-    this.transfers.push(...store.list<TransferRecord>("company_transfers"));
+    this.global66Api = global66Api;
+    const companies = store.list<CompanyRecord>("companies");
+    const workers = store.list<WorkerRecord>("company_workers");
+    this.purgeLegacyDemoMoney(companies, workers);
+    for (const company of companies) {
+      if (!company.portal) {
+        company.portal = createCompanyPortal(company.name, company.id, company.createdAt);
+        store.put("companies", company.id, company);
+      }
+      this.companies.set(company.id, company);
+    }
+    for (const worker of workers) this.workers.set(worker.id, worker);
+    this.global66Transfers.push(...store.list<Global66TransferRecord>("company_global66_transfers"));
     for (const contract of store.list<DebitContract>("debit_contracts")) this.rememberContract(contract, false);
     for (const gift of store.list<GiftRecord>("virtual_gifts")) this.gifts.set(gift.id, gift);
     for (const member of store.list<CompanyMemberRecord>("company_users")) this.members.set(member.id, member);
-    this.globalAccounts.push(...store.list<GlobalAccountRecord>("company_global_accounts"));
   }
 
   list(actor: CompanyActor): { companies: CompanyView[]; canCreate: boolean } {
@@ -312,6 +310,284 @@ export class EmpresasModule {
       canCreate: actor.role === "operacion",
       companies: visible.map((company) => this.present(actor, company)),
     };
+  }
+
+  prepareDeletion(actor: CompanyActor, companyId: string, confirmation: string): CompanyDeletionPlan {
+    if (actor.role !== "operacion") throw new PlatformError("Solo operación puede eliminar empresas", 403);
+    const company = this.require(companyId);
+    if (confirmation !== company.name) throw new PlatformError("Escribe el nombre exacto de la empresa para confirmar", 400);
+
+    const workers = [...this.workers.values()].filter((worker) => worker.companyId === company.id);
+    const ledgerAccountIds = [company.ledgerAccountId, ...workers.map((worker) => worker.ledgerAccountId)]
+      .filter((id): id is string => Boolean(id));
+    if (this.global66Transfers.some(
+      (transfer) => transfer.companyId === company.id && ["SUBMITTING", "PROCESSING", "UNKNOWN"].includes(transfer.status),
+    )) {
+      throw new PlatformError("No se puede eliminar mientras haya transferencias Global66 sin resolver", 409);
+    }
+    return { ledgerAccountIds, ownerUserId: company.ownerUserId };
+  }
+
+  forgetDeletedCompany(companyId: string): void {
+    const workerIds = new Set(
+      [...this.workers.values()].filter((worker) => worker.companyId === companyId).map((worker) => worker.id),
+    );
+    this.companies.delete(companyId);
+    for (const workerId of workerIds) this.workers.delete(workerId);
+    this.global66Transfers.splice(
+      0,
+      this.global66Transfers.length,
+      ...this.global66Transfers.filter((transfer) => transfer.companyId !== companyId),
+    );
+    for (const [id, contract] of this.contracts) {
+      if (contract.companyId !== companyId) continue;
+      this.contracts.delete(id);
+      this.contractByCard.delete(contract.cardId);
+    }
+    for (const [id, gift] of this.gifts) {
+      if (gift.companyId === companyId) this.gifts.delete(id);
+    }
+    for (const [id, member] of this.members) {
+      if (member.companyId === companyId) this.members.delete(id);
+    }
+  }
+
+  private purgeLegacyDemoMoney(companies: CompanyRecord[], workers: WorkerRecord[]): void {
+    const accountIds = new Set(
+      [...companies.map((company) => company.ledgerAccountId), ...workers.map((worker) => worker.ledgerAccountId)]
+        .filter((id): id is string => Boolean(id)),
+    );
+    const entries = this.store.list<{ id: string; accountId: string }>("ledger_entries")
+      .filter((entry) => accountIds.has(entry.accountId));
+    const accounts = this.store.list<{ id: string }>("ledger_accounts")
+      .filter((account) => accountIds.has(account.id));
+    const transfers = this.store.list<{ id: string }>("company_transfers");
+    this.store.transaction(() => {
+      for (const account of accounts) this.store.delete("ledger_accounts", account.id);
+      for (const entry of entries) this.store.delete("ledger_entries", entry.id);
+      for (const transfer of transfers) this.store.delete("company_transfers", transfer.id);
+      for (const company of companies) {
+        if (!company.ledgerAccountId) continue;
+        delete company.ledgerAccountId;
+        this.store.put("companies", company.id, company);
+      }
+      for (const worker of workers) {
+        if (!worker.ledgerAccountId) continue;
+        delete worker.ledgerAccountId;
+        this.store.put("company_workers", worker.id, worker);
+      }
+    });
+    this.payments.ledger.forgetAccounts([...accountIds]);
+  }
+
+  configureGlobal66(
+    actor: CompanyActor,
+    companyId: string,
+    input: { clientId: string; clientSecret: string; accountId: string },
+  ): CompanyView {
+    const company = this.require(companyId);
+    this.requireWalletManager(actor, company);
+    const clientId = input.clientId.trim();
+    const clientSecret = input.clientSecret.trim();
+    const accountId = input.accountId.trim();
+    if (!clientId || !clientSecret || !accountId) {
+      throw new PlatformError("clientId, clientSecret y accountId son requeridos", 400);
+    }
+    if (!this.global66EncryptionKey) {
+      throw new PlatformError("Global66 no está habilitado: falta GLOBAL66_CREDENTIALS_ENCRYPTION_KEY en el servidor", 503);
+    }
+    const duplicate = [...this.companies.values()].find(
+      (other) => other.id !== company.id && other.global66?.clientId === clientId,
+    );
+    if (duplicate) {
+      throw new PlatformError("Esa credencial Global66 ya está asociada a otra empresa", 409);
+    }
+    company.global66 = {
+      clientId,
+      accountId,
+      encryptedClientSecret: encryptGlobal66Secret(clientSecret, this.global66EncryptionKey),
+      configuredAt: new Date().toISOString(),
+    };
+    this.companies.set(company.id, company);
+    this.store.put("companies", company.id, company);
+    return this.present(actor, company);
+  }
+
+  async global66Wallet(actor: CompanyActor, companyId: string): Promise<Global66CompanyWalletView> {
+    const company = this.require(companyId);
+    this.requireWalletManager(actor, company);
+    const wallet = await this.global66WalletSnapshot(company);
+    this.reconcileGlobal66Transfers(company.id, wallet.movements);
+    return {
+      ...wallet,
+      transfers: this.global66Transfers
+        .filter((transfer) => transfer.companyId === company.id)
+        .slice(-20)
+        .reverse()
+        .map(({ id, workerName, externalReferenceId, amount, status, transactionId, createdAt }) => ({
+          id,
+          workerName,
+          externalReferenceId,
+          amount,
+          status,
+          transactionId,
+          createdAt,
+        })),
+    };
+  }
+
+  async transferToBank(
+    actor: CompanyActor,
+    companyId: string,
+    input: {
+      workerId: string;
+      idempotencyKey: string;
+      amount: number;
+      beneficiaryName: string;
+      beneficiaryLastName: string;
+      accountType: string;
+      accountNumber: string;
+      documentNumber: string;
+      documentType: string;
+      purposeCode: number;
+    },
+  ): Promise<Global66TransferView> {
+    const company = this.require(companyId);
+    this.requireWalletManager(actor, company);
+    const worker = this.workers.get(input.workerId);
+    if (!worker || worker.companyId !== company.id) throw new PlatformError("Colaborador desconocido", 404);
+    this.assertAmount(input.amount);
+    const credentials = this.credentialsFor(company);
+    const encryptionKey = this.requireGlobal66EncryptionKey();
+
+    const idempotencyKey = input.idempotencyKey.trim();
+    const beneficiaryName = input.beneficiaryName.trim();
+    const beneficiaryLastName = input.beneficiaryLastName.trim();
+    const accountType = input.accountType.trim();
+    const accountNumber = input.accountNumber.trim();
+    const documentNumber = input.documentNumber.trim();
+    const documentType = input.documentType.trim();
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(idempotencyKey)) {
+      throw new PlatformError("La clave idempotente de la transferencia no es válida", 400);
+    }
+    if (!beneficiaryName || !beneficiaryLastName || !accountType || !accountNumber || !documentNumber || !documentType) {
+      throw new PlatformError("Completa los datos bancarios y de identificación del beneficiario", 400);
+    }
+    if (!Number.isInteger(input.purposeCode) || input.purposeCode <= 0) {
+      throw new PlatformError("El código de propósito de Global66 debe ser un entero positivo", 400);
+    }
+    const requestFingerprint = createHmac("sha256", encryptionKey)
+      .update(JSON.stringify({
+        workerId: worker.id,
+        amount: input.amount,
+        beneficiaryName,
+        beneficiaryLastName,
+        accountType,
+        accountNumber,
+        documentNumber,
+        documentType,
+        purposeCode: input.purposeCode,
+      }))
+      .digest("hex");
+    const existing = this.global66Transfers.find(
+      (transfer) => transfer.companyId === company.id && transfer.idempotencyKey === idempotencyKey,
+    );
+    if (existing) {
+      if (existing.requestFingerprint !== requestFingerprint) {
+        throw new PlatformError("Esa clave idempotente ya se usó con datos diferentes", 409);
+      }
+      if (existing.status === "PROCESSING") return this.global66TransferView(existing);
+      throw new PlatformError(
+        `La transferencia ${existing.externalReferenceId} ya está ${existing.status}; verifica su estado con Global66 antes de intentar otra`,
+        409,
+      );
+    }
+
+    const wallet = await this.global66Api.walletSnapshot(credentials);
+    if (wallet.balance === null) throw new PlatformError("Global66 no informó un saldo; la transferencia no se envió", 409);
+    if (wallet.currency !== "CLP") {
+      throw new PlatformError("La cuenta Global66 no confirmó saldo en CLP para una transferencia nacional", 422);
+    }
+    if (wallet.balance < input.amount) throw new PlatformError("Saldo insuficiente en la wallet Global66", 422);
+
+    const transfer: Global66TransferRecord = {
+      id: `g66t_${createHash("sha256").update(`${company.id}\0${idempotencyKey}`).digest("hex")}`,
+      companyId: company.id,
+      workerId: worker.id,
+      workerName: worker.name,
+      idempotencyKey,
+      requestFingerprint,
+      externalReferenceId: `pr_${company.id}_${idempotencyKey}`,
+      amount: input.amount,
+      status: "SUBMITTING",
+      transactionId: null,
+      createdAt: new Date().toISOString(),
+    };
+    if (!this.reserveGlobal66Transfer(transfer)) {
+      const existingReservation = this.store.get<Global66TransferRecord>("company_global66_transfers", transfer.id);
+      if (!existingReservation) {
+        throw new PlatformError("No se pudo reservar la referencia de transferencia; verifica el historial antes de reenviar", 409);
+      }
+      if (existingReservation.requestFingerprint !== requestFingerprint) {
+        throw new PlatformError("Esa clave idempotente ya se usó con datos diferentes", 409);
+      }
+      if (existingReservation.status === "PROCESSING") return this.global66TransferView(existingReservation);
+      throw new PlatformError(
+        `La transferencia ${existingReservation.externalReferenceId} ya está ${existingReservation.status}; verifica su estado con Global66 antes de intentar otra`,
+        409,
+      );
+    }
+    this.global66Transfers.push(transfer);
+
+    let result: Awaited<ReturnType<Global66BusinessApi["createBankTransfer"]>>;
+    try {
+      result = await this.global66Api.createBankTransfer(
+        credentials,
+        {
+          amount: input.amount,
+          originCurrency: "CLP",
+          destinationCurrency: "CLP",
+          purposeCode: [input.purposeCode],
+          beneficiaryName,
+          beneficiaryLastName,
+          countryCode: "CL",
+          accountType,
+          accountNumber,
+          documentNumber,
+          documentType,
+          externalReferenceId: transfer.externalReferenceId,
+        },
+      );
+    } catch (error) {
+      transfer.status = "UNKNOWN";
+      this.updateGlobal66Transfer(transfer);
+      const detail = error instanceof Error ? error.message : "error no identificado";
+      console.error(`Global66 transfer outcome unknown ref=${transfer.externalReferenceId}: ${detail}`);
+      throw new PlatformError(
+        `No se pudo confirmar el resultado con Global66. No repitas con otra referencia; verifica ${transfer.externalReferenceId} con Global66`,
+        502,
+      );
+    }
+
+    if (!result.valid) {
+      transfer.status = "FAILED";
+      this.updateGlobal66Transfer(transfer);
+      throw new PlatformError(result.violations.join("; ") || "Global66 rechazó la transferencia", 422);
+    }
+    if (result.status !== "PROCESSING") {
+      transfer.status = "UNKNOWN";
+      transfer.transactionId = result.transactionId;
+      this.updateGlobal66Transfer(transfer);
+      throw new PlatformError(
+        `Global66 no confirmó el estado de la transferencia ${transfer.externalReferenceId}; verifica antes de reenviar`,
+        502,
+      );
+    }
+
+    transfer.status = "PROCESSING";
+    transfer.transactionId = result.transactionId;
+    this.updateGlobal66Transfer(transfer);
+    return this.global66TransferView(transfer);
   }
 
   home(actor: CompanyActor, communeFallback: string | null): HomeView {
@@ -388,11 +664,6 @@ export class EmpresasModule {
     if (!name) throw new PlatformError("El nombre de la empresa es requerido", 400);
     if (!COLOR.test(color)) throw new PlatformError("El color de la tarjeta debe ser hexadecimal", 400);
     const owner = input.owner ?? { id: actor.id, email: actor.email, name: actor.name || name };
-    const ledger = this.payments.ledger.createAccount({
-      name,
-      email: owner.email,
-      currency: this.payments.walletAccount.currency,
-    });
     const company: CompanyRecord = {
       id: `emp_${randomUUID().slice(0, 8)}`,
       name,
@@ -402,10 +673,10 @@ export class EmpresasModule {
       logo: input.logo ? normalizeLogo(input.logo) : null,
       commune: cleanCommune(input.commune),
       last4: fourDigits(),
-      ledgerAccountId: ledger.id,
       options: defaultOptions(),
       createdAt: new Date().toISOString(),
     };
+    company.portal = createCompanyPortal(company.name, company.id, company.createdAt);
     this.companies.set(company.id, company);
     this.store.put("companies", company.id, company);
     this.rememberContract(openDebitContract({
@@ -459,21 +730,15 @@ export class EmpresasModule {
     const email = input.email.trim().toLowerCase();
     if (!name || !email.includes("@")) throw new PlatformError("Nombre y correo del trabajador son requeridos", 400);
     const taken = [...this.workers.values()].some((worker) => worker.companyId === company.id && worker.email === email);
-    if (taken) throw new PlatformError("Ese trabajador ya tiene prepago en la empresa", 409);
+    if (taken) throw new PlatformError("Ese trabajador ya está agregado a la empresa", 409);
     const otherCompany = [...this.workers.values()].some((worker) => worker.email === email && worker.companyId !== company.id);
     if (otherCompany) throw new PlatformError("Ese cliente ya pertenece a otra empresa", 409);
-    const ledger = this.payments.ledger.createAccount({
-      name,
-      email,
-      currency: this.payments.walletAccount.currency,
-    });
     const worker: WorkerRecord = {
       id: `wrk_${randomUUID().slice(0, 8)}`,
       companyId: company.id,
       name,
       email,
       last4: fourDigits(),
-      ledgerAccountId: ledger.id,
       options: defaultOptions(),
       createdAt: new Date().toISOString(),
     };
@@ -592,98 +857,25 @@ export class EmpresasModule {
     return [...this.workers.values()].find((worker) => worker.email === normalized)?.companyId;
   }
 
-  fund(actor: CompanyActor, companyId: string, amount: number): CompanyView {
-    if (actor.role !== "operacion") throw new PlatformError("Solo operación carga el prepago de la empresa", 403);
-    const company = this.require(companyId);
-    this.assertAmount(amount);
-    this.payments.ledger.post("credit", company.ledgerAccountId, amount, `Abono prepago ${company.name}`);
-    this.remember({
-      id: `ptr_${randomUUID().slice(0, 8)}`,
-      companyId: company.id,
-      kind: "abono",
-      amount,
-      actorUserId: actor.id,
-      createdAt: new Date().toISOString(),
-    });
-    return this.present(actor, company);
-  }
-
-  transfer(
-    actor: CompanyActor,
-    companyId: string,
-    input: { workerId: string; amount: number; direction: "to_worker" | "to_company" },
-  ): CompanyView {
-    const company = this.require(companyId);
-    this.requireAdmin(actor);
-    const worker = this.workers.get(input.workerId);
-    if (!worker || worker.companyId !== company.id) throw new PlatformError("Trabajador desconocido", 404);
-    this.assertAmount(input.amount);
-    const toWorker = input.direction === "to_worker";
-    if (toWorker && cardOptions(company.options).blocked) {
-      throw new PlatformError("La tarjeta de la empresa está bloqueada", 422);
-    }
-    if (!toWorker && cardOptions(worker.options).blocked) {
-      throw new PlatformError("La tarjeta del trabajador está bloqueada", 422);
-    }
-    const source = toWorker ? company.ledgerAccountId : worker.ledgerAccountId;
-    const target = toWorker ? worker.ledgerAccountId : company.ledgerAccountId;
-    if ((this.payments.ledger.getAccount(source)?.balance ?? 0) < input.amount) {
-      throw new PlatformError("Saldo insuficiente en la tarjeta", 422);
-    }
-    const label = toWorker ? `Prepago a ${worker.name}` : `Prepago de ${worker.name} a la empresa`;
-    this.payments.ledger.post("debit", source, input.amount, label);
-    this.payments.ledger.post("credit", target, input.amount, label);
-    this.remember({
-      id: `ptr_${randomUUID().slice(0, 8)}`,
-      companyId: company.id,
-      kind: toWorker ? "to_worker" : "to_company",
-      workerId: worker.id,
-      workerName: worker.name,
-      amount: input.amount,
-      actorUserId: actor.id,
-      createdAt: new Date().toISOString(),
-    });
-    return this.present(actor, company);
-  }
-
-  /**
-   * Local request for deposit accounts in other countries, Global66-style.
-   * Nothing is sent to Global66, Prometeo, or Stripe. Debit cards stay on their own ledger.
-   */
-  requestGlobalAccounts(actor: CompanyActor, companyId: string): { company: CompanyView; created: boolean } {
-    const company = this.require(companyId);
-    if (actor.role !== "operacion") throw new PlatformError("Solo operación solicita las cuentas para depositar en otros países", 403);
-    const existing = this.globalAccounts.filter((account) => account.companyId === company.id);
-    const createdAt = new Date().toISOString();
-    let created = false;
-    for (const kind of ["cuenta_virtual", "cuenta_puente"] as const) {
-      if (existing.some((account) => account.kind === kind)) continue;
-      this.rememberGlobal(pendingGlobalAccount(company.id, kind, createdAt));
-      created = true;
-    }
-    return { company: this.present(actor, company), created };
-  }
-
   private present(actor: CompanyActor, company: CompanyRecord): CompanyView {
     const manage = actor.role === "operacion";
-    const seeCompanyMoney = manage || this.isHolder(actor, company);
-    const currency = this.payments.walletAccount.currency;
+    const companyPortal = this.isHolder(actor, company);
+    const canViewWorkers = manage || companyPortal;
+    const seeCompanyMoney = manage;
     const workers = [...this.workers.values()].filter((worker) => worker.companyId === company.id);
     const own = workers.find((worker) => this.isWorker(actor, worker));
-    const visibleWorkers = manage ? workers : own ? [own] : [];
+    const visibleWorkers = canViewWorkers ? workers : own ? [own] : [];
     const logo = company.logo ?? null;
     const card = this.cardView(
       company.id,
       company.name,
       seeCompanyMoney ? company.ownerEmail : "",
       seeCompanyMoney ? company.last4 : "",
-      company.ledgerAccountId,
-      currency,
       logo,
       seeCompanyMoney ? company.options : undefined,
-      seeCompanyMoney,
     );
     if (!seeCompanyMoney) card.contract = null;
+    const portal = company.portal ?? createCompanyPortal(company.name, company.id, company.createdAt);
     const view: CompanyView = {
       id: company.id,
       name: company.name,
@@ -691,44 +883,38 @@ export class EmpresasModule {
       logo,
       commune: seeCompanyMoney ? company.commune ?? null : null,
       last4: seeCompanyMoney ? company.last4 : "",
-      balance: seeCompanyMoney ? card.balance : 0,
-      displayBalance: seeCompanyMoney ? card.displayBalance : "—",
-      available: seeCompanyMoney ? card.available : 0,
-      displayAvailable: seeCompanyMoney ? card.displayAvailable : "—",
-      realFunds: seeCompanyMoney ? card.realFunds : false,
       canManage: manage,
-      canFund: manage,
+      canViewWorkers,
       ownWorkerId: own?.id,
       contract: card.contract,
       card,
       workers: visibleWorkers.map((worker) =>
         this.cardView(
-          worker.id,
-          worker.name,
-          worker.email,
-          worker.last4,
-          worker.ledgerAccountId,
-          currency,
-          logo,
-          worker.options,
-          manage || worker.id === own?.id,
+        worker.id,
+        worker.name,
+        manage || !companyPortal ? worker.email : "",
+        worker.last4,
+        logo,
+        worker.options,
         ),
       ),
       gifts: this.visibleGifts(actor, company),
       users: manage ? this.membersOf(company.id) : [],
-      transfers: manage
-        ? this.transfers
-            .filter((transfer) => transfer.companyId === company.id)
-            .slice(-12)
-            .reverse()
-            .map((transfer) => ({ ...transfer, displayAmount: formatAmount(transfer.amount, currency) }))
-        : [],
+      portal: {
+        slug: portal.slug,
+        path: `#/portal/${portal.slug}`,
+        createdAt: portal.createdAt,
+        enabled: portal.enabled,
+      },
     };
-    if (actor.role === "operacion") {
-      view.globalAccounts = {
-        notice: GLOBAL66_DOCS_NOTICE,
-        accounts: this.globalAccountsOf(company.id),
-      };
+    if (canViewWorkers) {
+      view.global66Connection = company.global66
+        ? {
+            configured: true,
+            accountId: company.global66.accountId,
+            clientIdHint: maskIdentifier(company.global66.clientId),
+          }
+        : { configured: false, accountId: null, clientIdHint: null };
     }
     return view;
   }
@@ -738,52 +924,89 @@ export class EmpresasModule {
     name: string,
     email: string,
     last4: string,
-    ledgerAccountId: string,
-    currency: string,
     logo: string | null,
     options: CardOptions | undefined,
-    showMoney: boolean,
   ): PrepaidCardView {
-    const balance = this.payments.ledger.getAccount(ledgerAccountId)?.balance ?? 0;
-    const available = 0;
-    const movements = showMoney ? this.movements(ledgerAccountId, currency) : [];
     return {
       id,
       name,
       email,
       last4,
-      balance: showMoney ? balance : 0,
-      displayBalance: showMoney ? formatAmount(balance, currency) : "—",
-      available: showMoney ? available : 0,
-      displayAvailable: showMoney ? formatAmount(available, currency) : "—",
-      realFunds: false,
       logo,
       kind: "debito",
       plastic: false,
       options: cardOptions(options),
-      movements,
-      receipts: movements.map((item) => ({ ...item })),
       contract: this.contractByCard.get(id) ?? null,
     };
   }
 
-  private movements(ledgerAccountId: string, currency: string): CardMovement[] {
-    return this.payments.ledger
-      .entriesFor(ledgerAccountId)
-      .slice(-12)
-      .reverse()
-      .map((entry) => ({
-        id: entry.id,
-        kind: entry.kind,
-        amount: entry.amount,
-        displayAmount: formatAmount(entry.amount, currency),
-        reference: entry.reference,
-        createdAt: entry.createdAt,
-      }));
-  }
-
   private requireAdmin(actor: CompanyActor): void {
     if (actor.role !== "operacion") throw new PlatformError("Solo operación configura la cuenta", 403);
+  }
+
+  private requireWalletManager(actor: CompanyActor, company: CompanyRecord): void {
+    if (actor.role === "operacion" || this.isHolder(actor, company)) return;
+    throw new PlatformError("Solo operación o el administrador de esta empresa puede configurar su wallet", 403);
+  }
+
+  private credentialsFor(company: CompanyRecord): Global66Credentials {
+    if (!company.global66) throw new PlatformError("Conecta primero la cuenta B2B de Global66", 409);
+    const encryptionKey = this.requireGlobal66EncryptionKey();
+    return {
+      clientId: company.global66.clientId,
+      accountId: company.global66.accountId,
+      clientSecret: decryptGlobal66Secret(company.global66.encryptedClientSecret, encryptionKey),
+    };
+  }
+
+  private requireGlobal66EncryptionKey(): string {
+    if (!this.global66EncryptionKey) {
+      throw new PlatformError("Global66 no está habilitado: falta GLOBAL66_CREDENTIALS_ENCRYPTION_KEY en el servidor", 503);
+    }
+    return this.global66EncryptionKey;
+  }
+
+  private async global66WalletSnapshot(company: CompanyRecord): Promise<Global66WalletSnapshot> {
+    return this.global66Api.walletSnapshot(this.credentialsFor(company));
+  }
+
+  private reconcileGlobal66Transfers(companyId: string, movements: Global66WalletSnapshot["movements"]): void {
+    const byId = new Map(movements.map((movement) => [movement.id, movement]));
+    for (const transfer of this.global66Transfers) {
+      if (transfer.companyId !== companyId || transfer.status !== "PROCESSING" || !transfer.transactionId) continue;
+      const movement = byId.get(transfer.transactionId);
+      if (!movement) continue;
+      const status = movement.status.toUpperCase();
+      if (status === "PAID" || status === "COMPLETED" || status === "SUCCESSFUL") {
+        transfer.status = "SUCCESSFUL";
+        this.updateGlobal66Transfer(transfer);
+      } else if (status === "REJECTED" || status === "FAILED") {
+        transfer.status = "FAILED";
+        this.updateGlobal66Transfer(transfer);
+      }
+    }
+  }
+
+  private reserveGlobal66Transfer(transfer: Global66TransferRecord): boolean {
+    return this.store.putIfAbsent("company_global66_transfers", transfer.id, transfer);
+  }
+
+  private updateGlobal66Transfer(transfer: Global66TransferRecord): void {
+    const index = this.global66Transfers.findIndex((current) => current.id === transfer.id);
+    if (index >= 0) this.global66Transfers[index] = transfer;
+    this.store.put("company_global66_transfers", transfer.id, transfer);
+  }
+
+  private global66TransferView(transfer: Global66TransferRecord): Global66TransferView {
+    return {
+      id: transfer.id,
+      workerName: transfer.workerName,
+      externalReferenceId: transfer.externalReferenceId,
+      amount: transfer.amount,
+      status: transfer.status,
+      transactionId: transfer.transactionId,
+      createdAt: transfer.createdAt,
+    };
   }
 
   private isHolder(actor: CompanyActor, company: CompanyRecord): boolean {
@@ -813,33 +1036,6 @@ export class EmpresasModule {
 
   private assertAmount(amount: number): void {
     if (!Number.isInteger(amount) || amount <= 0) throw new PlatformError("El monto debe ser un entero positivo", 400);
-  }
-
-  private remember(transfer: TransferRecord): void {
-    this.transfers.push(transfer);
-    this.store.put("company_transfers", transfer.id, transfer);
-  }
-
-  private rememberGlobal(account: GlobalAccountRecord): void {
-    this.globalAccounts.push(account);
-    this.store.put("company_global_accounts", account.id, account);
-  }
-
-  private globalAccountsOf(companyId: string): GlobalAccountView[] {
-    const order: Record<GlobalAccountKind, number> = { cuenta_virtual: 0, cuenta_puente: 1 };
-    return this.globalAccounts
-      .filter((account): account is GlobalAccountRecord & { kind: GlobalAccountKind } => account.companyId === companyId && account.kind in order)
-      .sort((left, right) => order[left.kind] - order[right.kind])
-      .map((account) => ({
-        id: account.id,
-        kind: account.kind,
-        label: GLOBAL_ACCOUNT_COPY[account.kind].label,
-        purpose: GLOBAL_ACCOUNT_COPY[account.kind].purpose,
-        direction: "deposito" as const,
-        status: "pending" as const,
-        externalId: null,
-        createdAt: account.createdAt,
-      }));
   }
 
   private rememberContract(contract: DebitContract, persist = true): void {
@@ -890,6 +1086,8 @@ export class EmpresasModule {
 export function debitContractText(input: { holderName: string; companyName: string; openedAt: string }): string {
   const date = new Intl.DateTimeFormat("es-CL", { dateStyle: "long", timeZone: "UTC" }).format(new Date(input.openedAt));
   return [
+    "BORRADOR — requiere revisión y aceptación de las partes. No acredita firma, emisión de tarjeta ni apertura de una cuenta bancaria.",
+    "",
     "Contrato de apertura de cuenta de débito",
     "",
     `Partes: Proveedor Regional y ${input.holderName}.`,
@@ -947,20 +1145,6 @@ function presentGift(gift: GiftRecord, access: { reveal: boolean; canActivate: b
     qr: showCode ? gift.qr : null,
     createdAt: gift.createdAt,
     money: false,
-  };
-}
-
-function pendingGlobalAccount(companyId: string, kind: GlobalAccountKind, createdAt: string): GlobalAccountRecord {
-  const copy = GLOBAL_ACCOUNT_COPY[kind];
-  return {
-    id: `gac_${randomUUID().slice(0, 8)}`,
-    companyId,
-    kind,
-    label: copy.label,
-    purpose: copy.purpose,
-    status: "pending",
-    externalId: null,
-    createdAt,
   };
 }
 

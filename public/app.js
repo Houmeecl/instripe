@@ -12,11 +12,14 @@ const state = {
   cards: [],
   issuing: null,
   companies: [],
+  global66Wallets: {},
   canCreateCompany: false,
   courses: [],
+  courseSubmissions: [],
   sicr3p: null,
   actuarial: [],
   frosting: null,
+  pilotPlan: null,
   design: null,
   appManifest: null,
   stripeEvents: [],
@@ -41,6 +44,7 @@ const ICONS = {
   activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/>',
   inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5 5h14l3 7v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-6l3-7Z"/>',
+  more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
 };
 function icon(name) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ""}</svg>`;
@@ -51,10 +55,11 @@ const NAV = [
     group: "Operación",
     items: [
       { route: "overview", label: "Inicio", icon: "home", title: "Inicio", sub: "Tus datos y la entrada a cursos." },
-      { route: "correo", label: "Correo", icon: "inbox", title: "Correo", sub: "Bandeja de la empresa." },
+      { route: "correo", label: "Correo", icon: "inbox", title: "Correo", sub: "Bandeja y administración de buzones." },
       { route: "clases", label: "Cursos", icon: "layers", title: "Cursos", sub: "Gestión financiera, débito, gastos, seguros y riesgos." },
       { route: "configuracion", label: "Configuración", icon: "file", title: "Configuración", sub: "SICR3P es un sitio externo. Este panel no reenvía su tráfico." },
       { route: "actuarial", label: "Tasas", icon: "activity", title: "Vista actuarial", sub: "Clases de riesgo de Frosting. Aparte de los cursos." },
+      { route: "pilot", label: "Plan piloto IA", icon: "activity", title: "Plan de piloto con IA", sub: "Borrador y checklist; no ejecuta acciones." },
     ],
   },
   {
@@ -80,7 +85,13 @@ const NAV = [
   {
     group: "Débito",
     items: [
-      { route: "empresas", label: "Débito", icon: "card", title: "Tarjetas virtuales", sub: "Débito prepago. Sin plástico y sin línea de crédito." },
+      { route: "empresas", label: "Débito", icon: "card", title: "Tarjetas virtuales", sub: "Tarjetas informativas. Sin plástico y sin línea de crédito." },
+    ],
+  },
+  {
+    group: "Empresas",
+    items: [
+      { route: "portales", label: "Portales", icon: "layers", title: "Portales de empresa", sub: "Un portal privado y un enlace único por empresa." },
     ],
   },
   {
@@ -102,6 +113,9 @@ const NAV = [
   },
 ];
 
+const PRIMARY_ROUTES = new Set(["overview", "empresas", "accounts", "portales"]);
+const MOODLE_LOGIN_URL = "https://vps-6165621-x.dattaweb.com/login/index.php";
+
 function allowed(option) {
   return Boolean(state.user && state.user.options.includes(option));
 }
@@ -112,7 +126,7 @@ function visibleGroups() {
   return NAV.map((group) => ({
     ...group,
     group: accountHolder && group.group === "Operación" ? "Cuenta" : group.group,
-    items: group.items.filter((item) => options.has(item.route)),
+    items: group.items.filter((item) => options.has(item.route) && (item.route !== "portales" || state.user.role === "operacion")),
   })).filter((group) => group.items.length);
 }
 
@@ -168,7 +182,11 @@ function toast(message, kind = "ok") {
 async function api(path, options) {
   const res = await fetch(path, options);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+  if (!res.ok) {
+    const error = new Error(data.error || `Error ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
   return data;
 }
 
@@ -351,15 +369,33 @@ async function confirmReturnedCheckout() {
 
 function renderNav() {
   const nav = document.getElementById("nav");
-  nav.innerHTML = visibleGroups()
-    .map(
-      (group) =>
-        `<div class="nav-label${group.tone ? " " + group.tone : ""}">${group.group}</div>` +
-        group.items
-          .map((n) => `<a href="#/${n.route}" data-route="${n.route}">${icon(n.icon)}<span>${n.label}</span></a>`)
-          .join(""),
-    )
-    .join("");
+  const groups = visibleGroups();
+  const primaryGroups = groups
+    .map((group) => ({ ...group, items: group.items.filter((item) => PRIMARY_ROUTES.has(item.route)) }))
+    .filter((group) => group.items.length);
+  const secondaryGroups = groups
+    .map((group) => ({ ...group, items: group.items.filter((item) => !PRIMARY_ROUTES.has(item.route)) }))
+    .filter((group) => group.items.length);
+  const activeRoute = (location.hash || "#/overview").replace("#/", "");
+  const renderGroups = (items) =>
+    items
+      .map(
+        (group) =>
+          `<div class="nav-label${group.tone ? " " + group.tone : ""}">${group.group}</div>` +
+          group.items
+            .map((n) => `<a href="#/${n.route}" data-route="${n.route}" aria-label="${n.label}" title="${n.label}">${icon(n.icon)}<span>${n.label}</span></a>`)
+            .join(""),
+      )
+      .join("");
+
+  nav.innerHTML =
+    renderGroups(primaryGroups) +
+    (secondaryGroups.length
+      ? `<details class="nav-more"${secondaryGroups.some((group) => group.items.some((item) => item.route === activeRoute)) ? " open" : ""}>
+          <summary class="nav-more-toggle" aria-label="Más opciones">${icon("more")}<span>Más opciones <small>${secondaryGroups.reduce((count, group) => count + group.items.length, 0)}</small></span></summary>
+          <div class="nav-more-content">${renderGroups(secondaryGroups)}</div>
+        </details>`
+      : "");
 }
 
 function renderGatewaySelect() {
@@ -390,7 +426,9 @@ function updateModeBadge() {
 }
 
 async function refresh() {
-  state.overview = await api("/api/overview");
+  state.overview = allowed("overview")
+    ? await api("/api/overview")
+    : { float: { balance: 0, displayBalance: "—" }, policies: [], claims: [], payments: [], modules: [] };
   state.overview.payments = state.overview.payments || [];
   state.overview.policies = state.overview.policies || [];
   state.overview.claims = state.overview.claims || [];
@@ -416,7 +454,14 @@ async function refresh() {
     state.canCreateCompany = false;
   }
   state.frosting = allowed("actuarial") ? await api("/api/frosting") : null;
-  state.courses = allowed("clases") ? (await api("/api/clases")).courses || [] : [];
+  if (allowed("clases")) {
+    const courses = await api("/api/clases");
+    state.courses = courses.courses || [];
+    state.courseSubmissions = courses.submissions || [];
+  } else {
+    state.courses = [];
+    state.courseSubmissions = [];
+  }
   state.sicr3p = allowed("configuracion") ? (await api("/api/configuracion")).sicr3p || null : null;
   state.actuarial = allowed("actuarial") ? (await api("/api/actuarial")).classes || [] : [];
   if (allowed("design")) {
@@ -438,28 +483,46 @@ async function refresh() {
   }
   try {
     state.onboarding = await api("/api/onboarding");
-    state.registro = await api("/api/registro");
   } catch {
     state.onboarding = null;
-    state.registro = null;
   }
+  state.registro = allowed("accounts") ? await api("/api/registro") : null;
 }
 
 /* ---------------- router ---------------- */
 function currentRoute() {
   const r = (location.hash || "#/overview").replace("#/", "");
-  if (navItems().find((n) => n.route === r)) return r;
-  if (location.hash && location.hash !== "#/overview") {
-    history.replaceState({}, "", `${location.pathname}${location.search}#/overview`);
+  if (r === "portales" && state.user && state.user.role === "operacion") {
+    state.activePortalSlug = null;
+    return "portales";
   }
-  return "overview";
+  if (r.startsWith("portal/")) {
+    const slug = r.slice("portal/".length);
+    const portal = (state.companies || []).find(
+      (company) => company.portal && company.portal.slug === slug && company.canViewWorkers,
+    );
+    if (portal) {
+      state.activePortalSlug = slug;
+      return "portales";
+    }
+  }
+  state.activePortalSlug = null;
+  if (navItems().find((n) => n.route === r)) return r;
+  const fallbackRoute = navItems()[0] ? navItems()[0].route : "overview";
+  history.replaceState({}, "", `${location.pathname}${location.search}#/${fallbackRoute}`);
+  return fallbackRoute;
 }
 
 function route() {
   const r = currentRoute();
-  const meta = navItems().find((n) => n.route === r);
+  const meta = NAV.flatMap((group) => group.items).find((n) => n.route === r);
   let title = meta.title;
   let sub = meta.sub;
+  if (r === "portales" && state.activePortalSlug) {
+    const company = (state.companies || []).find((item) => item.portal && item.portal.slug === state.activePortalSlug);
+    title = company ? `Portal · ${company.name}` : "Portal de empresa";
+    sub = "Espacio privado y seguro para esta empresa.";
+  }
   if (r === "overview" && state.user && state.user.role === "operacion") {
     title = "Inicio";
     sub = "Resumen de la plataforma";
@@ -486,6 +549,7 @@ const VIEWS = {
   treasury: viewTreasury,
   cards: viewCards,
   empresas: viewEmpresas,
+  portales: viewPortales,
   clases: viewClases,
   configuracion: viewConfiguracion,
   actuarial: viewActuarial,
@@ -493,6 +557,7 @@ const VIEWS = {
   design: viewDesign,
   apps: viewApps,
   payments: viewPayments,
+  pilot: viewPilotPlanner,
 };
 
 function movementLabel(p) {
@@ -596,25 +661,17 @@ function viewClientHome() {
   const card = inicio.card
     ? virtualCard(inicio.card, color, "Débito virtual")
     : `<article class="plastic vcard vcard-empty"><b>Todavía no hay tarjeta</b><span>Operación abre tu cuenta.</span></article>`;
-  const note = inicio.card && inicio.card.balance > 0 && !inicio.card.realFunds
-    ? `<p class="funds-note">Este abono está en el libro. No es dinero disponible: Stripe todavía no lo liquidó.</p>`
-    : `<p class="funds-note">Disponible es solo el dinero que Stripe ya liquidó. La tarjeta es virtual y de débito.</p>`;
-  const moves = inicio.card && inicio.card.displayBalance !== "—"
-    ? `<div class="card" style="margin-top:16px"><div class="card-head"><h3>Movimientos</h3></div><div class="card-body flush">${cardFeed(inicio.card.movements)}</div></div>`
-    : "";
   return `<section class="home-board">
     <div class="home-identity">
       <p class="home-kicker">${escapeAttr(state.user.roleLabel)}</p>
       <h2>${escapeAttr(inicio.name || state.user.name)}</h2>
       <div class="identity-list">${identity}</div>
       ${contractBox(inicio.contract)}
-      <a class="btn btn-primary" href="#/clases">${icon("layers")} Entrar a cursos</a>
+      ${allowed("clases") ? `<a class="btn btn-primary" href="#/clases">${icon("layers")} Entrar a cursos</a>` : ""}
       ${allowed("empresas") ? `<a class="btn btn-ghost" href="#/empresas" style="margin-left:8px">${icon("card")} Débito</a>` : ""}
     </div>
     <div>
       ${card}
-      ${note}
-      ${moves}
     </div>
   </section>
   ${giftSection(inicio.gifts)}`;
@@ -623,7 +680,8 @@ function viewClientHome() {
 function contractBox(contract) {
   if (!contract || !contract.text) return "";
   return `<details class="contract">
-    <summary>Ver contrato</summary>
+    <summary>Ver contrato (borrador · sin firma)</summary>
+    <p class="hint">Requiere revisión y aceptación de las partes. No acredita la emisión de una tarjeta ni la apertura de una cuenta bancaria.</p>
     <pre class="contract-text">${escapeAttr(contract.text)}</pre>
   </details>`;
 }
@@ -757,7 +815,7 @@ function viewOperacionHome() {
   const configCard = allowed("configuracion")
     ? `<div class="card" style="margin-bottom:20px"><div class="card-head"><h3>SICR3P</h3></div><div class="card-body"><p class="hint">${state.sicr3p && state.sicr3p.configured ? "La URL externa ya está guardada." : "Falta la URL de SICR3P. Configúrala para salir a ese sitio."}</p><a class="btn btn-primary" href="#/configuracion">${icon("file")} Ir a configuración</a></div></div>`
     : "";
-  return `${configCard}${adminGlobalAccounts()}${workflowStrip()}${pendingExitsCard()}${kpis.length ? `<div class="grid-kpi">${kpis.join("")}</div>` : ""}
+  return `${configCard}${workflowStrip()}${pendingExitsCard()}${kpis.length ? `<div class="grid-kpi">${kpis.join("")}</div>` : ""}
     <div class="cols${activity ? "" : " single"}">
       ${activity}
       <div class="card">
@@ -1048,6 +1106,7 @@ function viewApps() {
   return `<div class="card">
     <div class="card-head"><h3>App Stripe</h3><span class="badge">${m ? m.version : "0.1.0"}</span></div>
     <div class="card-body">
+      <p class="hint">Este módulo genera un manifiesto para Stripe Apps; no crea una app móvil ni procesa pagos NFC. Stripe Terminal Tap to Pay no figura disponible para Chile en la <a href="https://docs.stripe.com/terminal/tap-to-pay-readers" target="_blank" rel="noopener noreferrer">disponibilidad regional de Stripe</a>.</p>
       <div class="grid-2">
         <div>
           <div class="field"><label>Nombre *</label><input id="app-name" value="${escapeAttr(m ? m.name : "Proveedor Regional")}" placeholder="Nombre de la app" /></div>
@@ -1077,7 +1136,7 @@ function viewApps() {
               <span class="permission-purpose">${escapeAttr(p.purpose)}</span>
               <button class="btn-icon" data-remove-permission="${escapeAttr(p.permission)}" title="Eliminar">${icon("zap")}</button>
             </div>
-          `).join("") : "<p class="hint">No hay permisos configurados</p>"}
+          `).join("") : '<p class="hint">No hay permisos configurados</p>'}
         </div>
         <div class="field">
           <label>Añadir permiso</label>
@@ -1108,7 +1167,7 @@ function viewApps() {
               <span class="view-type">${escapeAttr(v.type)}</span>
               <code class="view-url">${escapeAttr(v.url)}</code>
             </div>
-          `).join("") : "<p class="hint">No hay vistas configuradas</p>"}
+          `).join("") : '<p class="hint">No hay vistas configuradas</p>'}
         </div>
       </div>
       
@@ -1158,30 +1217,14 @@ function virtualCard(card, color, kicker) {
   const logo = card.logo
     ? `<img class="vcard-logo" src="${escapeAttr(card.logo)}" alt="" />`
     : `<span class="vcard-mark">${escapeAttr(initials(card.name || "PR"))}</span>`;
-  const book = card.displayBalance === "—" ? "" : `<div><span>Saldo en libro</span><b>${escapeAttr(card.displayBalance)}</b></div>`;
-  const available = card.displayAvailable || (card.displayBalance === "—" ? "—" : money(0));
   return `<article class="plastic vcard" style="background:linear-gradient(155deg, ${safeColor(color)} 0%, #102033 78%)">
     <div class="vcard-top">${logo}<span class="vcard-kicker">${escapeAttr(kicker)}</span></div>
     <div>
       <b class="vcard-name">${escapeAttr(card.name)}</b>
       <em>•••• ${escapeAttr(card.last4)}</em>
     </div>
-    <div class="vcard-foot">
-      <div><span>Disponible</span><strong>${escapeAttr(String(available))}</strong></div>
-      ${book}
-    </div>
+    <div class="vcard-foot"><span>Tarjeta virtual de débito</span></div>
   </article>`;
-}
-
-function cardFeed(rows) {
-  if (!rows || !rows.length) {
-    return `<div class="empty">${icon("inbox")}<div>Sin movimientos en esta tarjeta.</div></div>`;
-  }
-  return `<ul class="feed">${rows
-    .map(
-      (item) => `<li><div class="fi">${icon(item.kind === "debit" ? "zap" : "card")}</div><div><div class="ft"><b>${item.kind === "debit" ? "−" : "+"}${escapeAttr(item.displayAmount)}</b> ${escapeAttr(item.reference)}</div><div class="fdate">${escapeAttr(String(item.createdAt).slice(0, 16).replace("T", " "))}</div></div></li>`,
-    )
-    .join("")}</ul>`;
 }
 
 function cardControls(company, card) {
@@ -1193,12 +1236,7 @@ function cardControls(company, card) {
       `<label class="checkline"><input type="checkbox" data-cat="${escapeAttr(card.id)}" value="${id}" ${selected.has(id) ? "checked" : ""} ${editable ? "" : "disabled"} /> ${label}</label>`,
   ).join("");
   const period = options.period || "siempre";
-  const moneyHidden = card.displayBalance === "—";
-  const ledger = moneyHidden
-    ? `<p class="hint">El saldo, los movimientos y los comprobantes los ve solo quien usa esta tarjeta.</p>`
-    : `<h2 class="section-title">Saldo y movimientos</h2><p class="hint">Disponible ${escapeAttr(card.displayAvailable || money(0))}. En el libro: ${escapeAttr(card.displayBalance)}. ${card.realFunds ? "Stripe ya liquidó este saldo." : "Un abono de demostración no es dinero disponible."}</p>${cardFeed(card.movements)}<h2 class="section-title">Comprobantes</h2>${cardFeed(card.receipts)}`;
   return `<div class="card-options">
-    ${ledger}
     <h2 class="section-title">Opciones de la tarjeta</h2>
     <div class="inline-form">
       <div class="field"><label>Límite de gasto</label><input id="limit-${card.id}" inputmode="numeric" placeholder="Sin límite" value="${options.spendLimit || ""}" ${editable ? "" : "disabled"} /></div>
@@ -1219,86 +1257,6 @@ function cardControls(company, card) {
     </div>
     ${editable ? `<button class="btn btn-primary btn-sm" data-save-card="${escapeAttr(company.id)}:${escapeAttr(card.id)}">${icon("check")} Guardar opciones</button>` : ""}
   </div>`;
-}
-
-function adminGlobalAccounts() {
-  if (!state.user || state.user.role !== "operacion") return "";
-  const companies = state.companies || [];
-  const notice = companies.reduce(
-    (found, company) => found || (company.globalAccounts && company.globalAccounts.notice) || "",
-    "",
-  ) || "Las cuentas para depositar en otros países quedan pendientes. Global66 abre cuentas en otros países para depositar; la documentación pública lista movimientos y pagos, no la apertura, así que no hay número de cuenta. La cuenta de Stripe permanece en España.";
-  const body = companies.length
-    ? companies.map((company) => globalAccountsBox(company)).join("")
-    : `<div class="empty">${icon("inbox")}<div>Todavía no hay empresas. El débito se abre en Débito.</div></div>`;
-  return `<div class="card" style="margin-bottom:20px">
-    <div class="card-head"><h3>Cuentas para depositar en otros países</h3></div>
-    <div class="card-body">
-      <p class="funds-note">${escapeAttr(notice)}</p>
-      <p class="hint">Estilo Global66: el dinero se deposita en cuentas de otros países. La cuenta de Stripe permanece en España.</p>
-      ${body}
-    </div>
-  </div>`;
-}
-
-function globalAccountsBox(company) {
-  if (!state.user || state.user.role !== "operacion") return "";
-  const accounts = (company.globalAccounts && company.globalAccounts.accounts) || [];
-  const rows = accounts.length
-    ? `<div class="account-pair">${accounts
-        .map(
-          (account) => `<article>
-            <div class="account-head"><h3>${escapeAttr(account.label)}</h3><span class="pill amber">Pendiente</span></div>
-            <p class="hint">${escapeAttr(account.purpose)}</p>
-            <p class="funds-note">Sin número de cuenta. Para depositar en otro país.</p>
-          </article>`,
-        )
-        .join("")}</div>`
-    : `<div class="account-pair">
-        <article>
-          <div class="account-head"><h3>Cuenta para depositar en otro país</h3></div>
-          <p class="hint">Se deposita en una cuenta de otro país, al estilo Global66.</p>
-          <p class="funds-note">Sin número de cuenta</p>
-        </article>
-        <article>
-          <div class="account-head"><h3>Cuenta para depositar en otro país</h3></div>
-          <p class="hint">El depósito entra a la cuenta del otro país. La cuenta de Stripe permanece en España.</p>
-          <p class="funds-note">Sin número de cuenta</p>
-        </article>
-      </div>`;
-  const action = accounts.length >= 2
-    ? `<p class="hint">La solicitud ya está pendiente. No hay número de cuenta.</p>`
-    : `<button class="btn btn-primary" data-global-accounts="${escapeAttr(company.id)}">${icon("plus")} Solicitar cuentas para depositar en otros países</button>`;
-  return `<section>
-    <h2 class="section-title">${escapeAttr(company.name)}</h2>
-    ${rows}
-    ${action}
-  </section>`;
-}
-
-function transferLabel(transfer) {
-  if (transfer.kind === "abono") return "Abono interno a la empresa";
-  if (transfer.kind === "to_worker") return `Hacia ${transfer.workerName || "el trabajador"}`;
-  return `Desde ${transfer.workerName || "el trabajador"} a la empresa`;
-}
-
-function transferForm(company) {
-  if (!(company.workers.length && (company.canManage || company.ownWorkerId))) {
-    return `<p class="hint">Agrega un trabajador para transferir prepago.</p>`;
-  }
-  const options = company.workers
-    .map((worker) => `<option value="${escapeAttr(worker.id)}">${escapeAttr(worker.name)}</option>`)
-    .join("");
-  const directions = company.canManage
-    ? `<div class="field"><label>Hacia</label><select id="dir-${company.id}"><option value="to_worker">Al trabajador</option><option value="to_company">A la empresa</option></select></div>`
-    : `<input id="dir-${company.id}" type="hidden" value="to_company" />`;
-  return `<div class="inline-form">
-    <div class="field"><label>Tarjeta</label><select id="who-${company.id}">${options}</select></div>
-    <div class="field"><label>Monto</label><input id="amt-${company.id}" inputmode="numeric" placeholder="10000" /></div>
-    ${directions}
-    <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-transfer="${company.id}">${icon("arrow")} Transferir</button></div>
-  </div>
-  <p class="hint">La transferencia queda en el libro local. No sale por Stripe.</p>`;
 }
 
 function logoForm(company) {
@@ -1330,7 +1288,7 @@ function personalAccount(company) {
   const card = company.ownWorkerId
     ? (company.workers || []).find((worker) => worker.id === company.ownWorkerId)
     : company.card;
-  if (!card || card.displayBalance === "—") {
+  if (!card) {
     return `<div class="card"><div class="card-body"><div class="empty">${icon("card")}<div>Operación abre tu cuenta.</div></div></div></div>`;
   }
   const blocked = card.options && card.options.blocked ? `<p class="funds-note">Esta tarjeta está bloqueada.</p>` : "";
@@ -1340,17 +1298,14 @@ function personalAccount(company) {
       <div class="vcard-layout">${virtualCard(card, company.color, "Débito virtual")}</div>
       ${blocked}
       ${contractBox(card.contract)}
-      <h2 class="section-title">Movimientos</h2>
-      ${cardFeed(card.movements)}
-      <h2 class="section-title">Comprobantes</h2>
-      ${cardFeed(card.receipts)}
       ${giftList(company.gifts)}
     </div>
   </div>`;
 }
 
 function companyBlock(company) {
-  if (!company.canManage) return personalAccount(company);
+  if (!company.canManage && !company.canViewWorkers) return personalAccount(company);
+  if (!company.canManage) return companyPortalBlock(company);
   const workers = company.workers.length
     ? company.workers
         .map(
@@ -1361,50 +1316,194 @@ function companyBlock(company) {
           </section>`,
         )
         .join("")
-    : `<div class="empty">${icon("inbox")}<div>Esta empresa todavía no tiene trabajadores con prepago.</div></div>`;
-  const fund = company.canFund
-    ? `<div class="inline-form">
-        <div class="field"><label>Abono interno</label><input id="fund-${company.id}" inputmode="numeric" placeholder="50000" /></div>
-        <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-fund-company="${company.id}">${icon("plus")} Cargar prepago</button></div>
-      </div>
-      <p class="hint">Solo operación carga el saldo. El abono no pasa por Stripe.</p>`
-    : "";
+    : `<div class="empty">${icon("inbox")}<div>Esta empresa todavía no tiene colaboradores.</div></div>`;
   const add = company.canManage
     ? `<div class="inline-form">
-        <div class="field"><label>Trabajador</label><input id="worker-name-${company.id}" placeholder="Ana Díaz" /></div>
-        <div class="field"><label>Correo</label><input id="worker-email-${company.id}" type="email" placeholder="ana@proveedorregional.cl" /></div>
-        <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" data-add-worker="${company.id}">${icon("plus")} Agregar prepago</button></div>
-      </div>`
+        <div class="field"><label>Trabajador</label><input id="worker-name-${company.id}" maxlength="120" required placeholder="Ana Díaz" /></div>
+        <div class="field"><label>Correo</label><input id="worker-email-${company.id}" type="email" maxlength="254" required autocomplete="email" placeholder="ana@proveedorregional.cl" /></div>
+        <div class="field"><label>&nbsp;</label><button class="btn btn-ghost" data-add-worker="${company.id}">${icon("plus")} Agregar colaborador</button></div>
+      </div><p class="hint">Se crea una ficha informativa y un borrador de contrato; no se emite una tarjeta ni se abre una cuenta real.</p>`
     : "";
-  const transfer = transferForm(company);
-  const moves = company.transfers.length
-    ? `<ul class="feed">${company.transfers
-        .map(
-          (item) => `<li><div class="fi">${icon("arrow")}</div><div><div class="ft"><b>${escapeAttr(item.displayAmount)}</b> ${escapeAttr(transferLabel(item))}</div><div class="fdate">${escapeAttr(String(item.createdAt).slice(0, 16).replace("T", " "))}</div></div></li>`,
-        )
-        .join("")}</ul>`
-    : `<div class="empty">${icon("inbox")}<div>Sin transferencias todavía.</div></div>`;
   return `<div class="card company-block">
     <div class="card-head"><h3>${escapeAttr(company.name)}</h3><span class="pill">Débito virtual</span></div>
     <div class="card-body">
       <div class="vcard-layout">${virtualCard(company.card, company.color, "Empresa")}</div>
       ${contractBox(company.card.contract)}
       ${logoForm(company)}
-      ${fund}
       ${cardControls(company, company.card)}
       <h2 class="section-title">Trabajadores</h2>
-      ${company.canManage && company.workers.some((worker) => worker.displayBalance === "—") ? `<p class="hint">El saldo de cada trabajador lo ve solo esa persona. Puedes ajustar su tarjeta y transferir igual.</p>` : ""}
       ${workers}
       ${add}
-      <h2 class="section-title">Transferir</h2>
-      ${transfer}
       ${frostingBox(company)}
       ${giftForm(company)}
       ${usersSection(company)}
-      <h2 class="section-title">Revisar</h2>
-      ${moves}
+      <div class="company-delete">
+        <p class="hint">Elimina permanentemente los datos locales vinculados a esta empresa. No debe tener transferencias Global66 pendientes. No elimina datos almacenados en Stripe, Global66 u otros sistemas externos.</p>
+        <button class="btn btn-danger" data-delete-company="${escapeAttr(company.id)}">${icon("zap")} Eliminar empresa y datos locales</button>
+      </div>
     </div>
   </div>`;
+}
+
+function companyPortalBlock(company) {
+  const workers = company.workers.length
+    ? company.workers
+        .map(
+          (worker) => `<section class="worker-card">
+            <div class="vcard-layout">${virtualCard(worker, company.color, "Tarjeta del colaborador")}</div>
+            ${global66BankTransferForm(company, worker)}
+          </section>`,
+        )
+        .join("")
+    : `<div class="empty">${icon("inbox")}<div>Esta empresa todavía no tiene colaboradores.</div></div>`;
+  const moodleAccess = state.user && state.user.role !== "operacion"
+        ? `<section class="card" style="margin-bottom:18px">
+            <div class="card-head"><h3>Aula de capacitación</h3><span class="pill">Moodle</span></div>
+            <div class="card-body">
+              <p class="hint">Accede a los cursos y materiales de formación. Moodle abrirá en otra pestaña y requiere iniciar sesión por separado.</p>
+              <a class="btn btn-primary" href="${MOODLE_LOGIN_URL}" target="_blank" rel="noopener noreferrer">${icon("layers")} Entrar a Moodle</a>
+            </div>
+          </section>`
+        : "";
+  return `<div class="card company-block">
+        <div class="card-head"><h3>${escapeAttr(company.name)}</h3><span class="pill">Portal privado</span></div>
+        <div class="card-body">
+          ${moodleAccess}
+          ${global66WalletBox(company)}
+      <h2 class="section-title">Tarjetas de colaboradores</h2>
+      <p class="hint">Se muestran solo los últimos cuatro dígitos. Este portal no emite tarjetas Global66 ni muestra el número completo.</p>
+      ${workers}
+      <p class="hint" role="status">Las transferencias bancarias se envían a Global66 para su procesamiento. El estado se muestra en la wallet conectada.</p>
+    </div>
+  </div>`;
+}
+
+function global66BankTransferForm(company, worker) {
+  if (!company.global66Connection || !company.global66Connection.configured) return "";
+  const names = String(worker.name || "").trim().split(/\s+/);
+  const firstName = names.shift() || "";
+  const lastName = names.join(" ");
+  return `<details class="card" style="margin-top:10px">
+    <summary>Transferir a cuenta bancaria chilena</summary>
+    <div class="card-body">
+      <p class="hint">Transferencia nacional CLP→CLP. Los datos bancarios solo se envían a Global66; no se guardan en el historial local. Código de propósito inicial 1, editable y sujeto a validación de Global66.</p>
+      <div class="inline-form">
+        <div class="field"><label>Monto CLP</label><input id="g66-amount-${escapeAttr(company.id)}-${escapeAttr(worker.id)}" inputmode="numeric" placeholder="50000" /></div>
+        <div class="field"><label>Nombre beneficiario</label><input id="g66-name-${escapeAttr(company.id)}-${escapeAttr(worker.id)}" value="${escapeAttr(firstName)}" /></div>
+        <div class="field"><label>Apellido(s)</label><input id="g66-lastname-${escapeAttr(company.id)}-${escapeAttr(worker.id)}" value="${escapeAttr(lastName)}" /></div>
+        <div class="field"><label>Tipo de cuenta</label><input id="g66-account-type-${escapeAttr(company.id)}-${escapeAttr(worker.id)}" placeholder="CA" /></div>
+        <div class="field"><label>Número de cuenta</label><input id="g66-account-number-${escapeAttr(company.id)}-${escapeAttr(worker.id)}" autocomplete="off" /></div>
+        <div class="field"><label>Tipo de documento</label><input id="g66-document-type-${escapeAttr(company.id)}-${escapeAttr(worker.id)}" placeholder="RUT" /></div>
+        <div class="field"><label>Número de documento</label><input id="g66-document-number-${escapeAttr(company.id)}-${escapeAttr(worker.id)}" autocomplete="off" /></div>
+        <div class="field"><label>Código de propósito Global66</label><input id="g66-purpose-${escapeAttr(company.id)}-${escapeAttr(worker.id)}" type="number" min="1" value="1" /></div>
+        <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-global66-transfer data-company="${escapeAttr(company.id)}" data-worker="${escapeAttr(worker.id)}">${icon("arrow")} Enviar transferencia</button></div>
+      </div>
+      <input type="hidden" id="g66-idempotency-${escapeAttr(company.id)}-${escapeAttr(worker.id)}" />
+    </div>
+  </details>`;
+}
+
+function global66WalletBox(company) {
+  const connection = company.global66Connection || { configured: false };
+  const wallet = state.global66Wallets[company.id];
+  if (!connection.configured) {
+    return `<section class="card" style="margin-bottom:18px">
+      <div class="card-head"><h3>Conectar wallet Global66</h3><span class="pill">Solo servidor</span></div>
+      <div class="card-body">
+        <p class="hint">Solicita las credenciales en Global66 Empresas &gt; Integraciones API. Registra la IP IPv4 de salida del VPS. El clientSecret se cifra y nunca vuelve a mostrarse.</p>
+        <div class="inline-form">
+          <div class="field"><label>clientId</label><input id="g66-client-${escapeAttr(company.id)}" autocomplete="off" /></div>
+          <div class="field"><label>clientSecret</label><input id="g66-secret-${escapeAttr(company.id)}" type="password" autocomplete="new-password" /></div>
+          <div class="field"><label>accountId</label><input id="g66-account-${escapeAttr(company.id)}" autocomplete="off" /></div>
+          <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-connect-global66="${escapeAttr(company.id)}">${icon("wallet")} Conectar</button></div>
+        </div>
+      </div>
+    </section>`;
+  }
+  const movements = wallet
+    ? wallet.movements.map((movement) => `<li>
+        <div class="fi">${icon("arrow")}</div>
+        <div><div class="ft"><b>${escapeAttr(movement.status)}</b> ${escapeAttr(movement.comment || movement.movementType || "Movimiento")}</div>
+        <div class="fdate">${escapeAttr(String(movement.transactionDate).replace("T", " ").slice(0, 16))} · ${escapeAttr(money(movement.amount, String(movement.currency || "clp").toLowerCase()))}</div></div>
+      </li>`).join("")
+    : "";
+  return `<section class="card" style="margin-bottom:18px">
+    <div class="card-head"><h3>Wallet Global66</h3><span class="pill">${escapeAttr(connection.clientIdHint || "Conectada")}</span></div>
+    <div class="card-body">
+      <p class="hint">Cuenta ${escapeAttr(connection.accountId || "")}. Los saldos se leen de movimientos confirmados por Global66; no del libro local.</p>
+      <div class="inline-form">
+        <div class="field"><label>Saldo confirmado</label><strong>${wallet ? wallet.balance !== null ? escapeAttr(money(wallet.balance, String(wallet.currency || "clp").toLowerCase())) : "No disponible sin movimientos" : "Sin consultar"}</strong></div>
+        <div class="field"><label>Actualizado</label><span>${wallet && wallet.balanceAsOf ? escapeAttr(wallet.balanceAsOf.replace("T", " ").slice(0, 16)) : "—"}</span></div>
+        <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-refresh-global66="${escapeAttr(company.id)}">${icon("wallet")} Consultar saldo y movimientos</button></div>
+      </div>
+      ${wallet && wallet.balance === null ? `<p class="hint">No hay movimientos con saldo; no se inventa un saldo inicial.</p>` : ""}
+      <p class="hint">El 2% del tarifario corresponde a conversión de moneda y no se aplica a transferencias nacionales CLP→CLP. El cargo mensual de 0,07 UF queda desactivado hasta confirmar que el tarifario rige para este convenio B2B.</p>
+      ${wallet ? `<h3 class="section-title">Movimientos Global66</h3>${movements ? `<ul class="feed">${movements}</ul>` : `<div class="empty">${icon("inbox")}<div>Sin movimientos.</div></div>`}` : ""}
+      ${wallet && wallet.transfers && wallet.transfers.length ? `<h3 class="section-title">Transferencias solicitadas</h3><ul class="feed">${wallet.transfers.map((transfer) => `<li><div class="fi">${icon("arrow")}</div><div><div class="ft"><b>${escapeAttr(money(transfer.amount, "clp"))}</b> · ${escapeAttr(transfer.status)} · ${escapeAttr(transfer.workerName)}</div><div class="fdate">Referencia ${escapeAttr(transfer.externalReferenceId)}</div></div></li>`).join("")}</ul>` : ""}
+    </div>
+  </section>`;
+}
+
+function companyPortalUrl(company) {
+  return `${location.origin}${location.pathname}${location.search}#/portal/${encodeURIComponent(company.portal.slug)}`;
+}
+
+function viewPortales() {
+  if (state.activePortalSlug) {
+    const company = (state.companies || []).find(
+      (item) => item.portal && item.portal.slug === state.activePortalSlug && item.canViewWorkers,
+    );
+    if (!company) {
+      return `<div class="card"><div class="card-body"><div class="empty">${icon("shield")}<div>No tienes acceso a este portal.</div></div></div></div>`;
+    }
+    const backRoute = state.user && state.user.role === "operacion" ? "#/portales" : "#/empresas";
+    const brand = company.logo
+      ? `<img class="portal-brand-image" src="${escapeAttr(company.logo)}" alt="" />`
+      : `<span class="portal-brand-mark">${escapeAttr(initials(company.name || "PR"))}</span>`;
+    return `<a class="portal-back" href="${backRoute}">${icon("arrow")} Volver</a>
+      <section class="portal-preview">
+        <header class="portal-preview-head">
+          <div class="portal-card-top">${brand}<span class="portal-state"><i></i> Privado</span></div>
+          <div><span class="portal-eyebrow">PORTAL DE EMPRESA</span><h2>${escapeAttr(company.name)}</h2><p>Acceso a tarjetas virtuales y transferencias bancarias configuradas con Global66.</p></div>
+        </header>
+        ${companyPortalBlock(company)}
+      </section>`;
+  }
+
+  const companies = (state.companies || []).filter((company) => company.portal && company.canViewWorkers);
+  if (!companies.length) {
+    return `<section class="portal-module-hero"><div><span class="portal-eyebrow">PORTALES PRIVADOS</span><h2>Portales de empresa</h2><p>Al crear una empresa se genera su enlace privado.</p></div><div class="portal-hero-count">0<small>portales</small></div></section>
+      <div class="card"><div class="card-body"><div class="empty">${icon("layers")}<div>Todavía no hay empresas con portal.</div></div></div></div>`;
+  }
+  const cards = companies.map((company) => {
+    const brand = company.logo
+      ? `<img class="portal-brand-image" src="${escapeAttr(company.logo)}" alt="" />`
+      : `<span class="portal-brand-mark">${escapeAttr(initials(company.name || "PR"))}</span>`;
+    const slug = encodeURIComponent(company.portal.slug);
+    return `<article class="portal-card">
+      <div class="portal-card-top">${brand}<span class="portal-state"><i></i> ${company.portal.enabled ? "Activo" : "Inactivo"}</span></div>
+      <h3>${escapeAttr(company.name)}</h3>
+      <p class="portal-card-description">Portal privado con acceso a colaboradores y transferencias bancarias Global66.</p>
+      <div class="portal-stats">
+        <div><strong>${(company.workers || []).length}</strong><span>colaboradores</span></div>
+        <div><strong>${company.global66Connection && company.global66Connection.configured ? "Conectada" : "Sin conectar"}</strong><span>wallet Global66</span></div>
+      </div>
+      <label class="portal-link-label" for="portal-link-${escapeAttr(company.id)}">Enlace privado</label>
+      <div class="portal-link-field">
+        <input id="portal-link-${escapeAttr(company.id)}" readonly value="${escapeAttr(companyPortalUrl(company))}" />
+        <button class="btn btn-ghost btn-sm" data-copy-portal="${escapeAttr(company.id)}" aria-label="Copiar enlace de ${escapeAttr(company.name)}">${icon("file")}</button>
+      </div>
+      <div class="portal-actions">
+        <a class="btn btn-primary btn-sm" href="#/portal/${slug}">${icon("arrow")} Abrir portal</a>
+        <a class="btn btn-ghost btn-sm" href="#/empresas">${icon("card")} Administrar empresa</a>
+      </div>
+    </article>`;
+  }).join("");
+  return `<section class="portal-module-hero">
+      <div><span class="portal-eyebrow">PORTALES PRIVADOS</span><h2>Un acceso para cada empresa</h2><p>Comparte solo el enlace de la empresa correspondiente; cada portal requiere iniciar sesión.</p></div>
+      <div class="portal-hero-count">${companies.length}<small>portales</small></div>
+    </section>
+    <div class="portal-grid">${cards}</div>`;
 }
 
 function viewEmpresas() {
@@ -1413,10 +1512,10 @@ function viewEmpresas() {
     ? `<div class="card" style="margin-bottom:20px">
         <div class="card-head"><h3>Nueva empresa</h3></div>
         <div class="card-body">
-          <p class="hint">La tarjeta es virtual y de débito. El color y el logo son de la empresa cliente. El prepago queda en el libro y no sale por Stripe.</p>
+          <p class="hint">Las tarjetas de esta sección son vistas informativas; no son tarjetas emitidas por Global66. Conecta la wallet Global66 para consultar sus movimientos y realizar transferencias bancarias.</p>
           <div class="inline-form">
             <div class="field"><label>Nombre</label><input id="emp-name" placeholder="Taller Sur" /></div>
-            <div class="field"><label>Correo del comercio</label><input id="emp-owner" type="email" placeholder="caja@taller.cl" /></div>
+            <div class="field"><label>Correo del titular (comercio ya creado)</label><input id="emp-owner" type="email" maxlength="254" autocomplete="email" required placeholder="caja@taller.cl" /><small class="hint">Debe corresponder a un usuario con rol Comercio que aún no tenga empresa.</small></div>
             <div class="field"><label>Color de la tarjeta</label><input id="emp-color" type="color" value="#0e3e66" /></div>
             <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-create-company>${icon("plus")} Crear empresa</button></div>
           </div>
@@ -1425,7 +1524,7 @@ function viewEmpresas() {
     : "";
   if (!companies.length) {
     const empty = state.canCreateCompany
-      ? "Todavía no hay empresas con prepago."
+      ? "Todavía no hay empresas."
       : "Operación abre tu cuenta.";
     return `${create}<div class="card"><div class="card-body"><div class="empty">${icon("card")}<div>${empty}</div></div></div></div>`;
   }
@@ -1441,31 +1540,165 @@ function escapeAttr(value) {
 
 function viewClases() {
   const courses = state.courses || [];
+  const role = state.user && state.user.role;
+  const isStudent = role === "alumno";
+  const isEvaluator = role === "evaluador" || role === "operacion";
+  const canUseForum = ["alumno", "evaluador", "operacion"].includes(role);
+  const companyOptions = (selectedId = "") =>
+    (state.companies || []).map((company) =>
+      `<option value="${escapeAttr(company.id)}" ${company.id === selectedId ? "selected" : ""}>${escapeAttr(company.name)}</option>`,
+    ).join("");
+  const companySelector = (id) =>
+    role === "operacion"
+      ? `<div class="field"><label>Empresa</label><select id="${id}">${companyOptions()}</select></div>`
+      : "";
+  const reviewQueue = isEvaluator
+    ? (state.courseSubmissions || []).filter((submission) => submission.status === "pending")
+    : [];
+  const reviewPanel = reviewQueue.length
+    ? `<section class="card lms-review-panel"><div class="card-head"><h2>Entregas por evaluar</h2><span class="badge">${reviewQueue.length}</span></div><div class="card-body lms-review-list">
+        ${reviewQueue.map((submission) => `<article class="lms-review-item">
+          <div><b>${escapeAttr(submission.taskTitle)}</b><span>${escapeAttr(submission.courseTitle)} · ${escapeAttr(submission.studentName)} · ${escapeAttr(submission.studentEmail)}</span></div>
+          <p>${escapeAttr(submission.answer)}</p>
+          <label for="submission-feedback-${escapeAttr(submission.id)}">Comentario de evaluación</label>
+          <textarea id="submission-feedback-${escapeAttr(submission.id)}" rows="3" maxlength="2000"></textarea>
+          <div class="lms-actions"><button class="btn btn-primary" data-review-submission="${escapeAttr(submission.id)}" data-review-status="approved">Aprobar</button><button class="btn btn-ghost" data-review-submission="${escapeAttr(submission.id)}" data-review-status="rejected">Reprobar</button></div>
+        </article>`).join("")}
+      </div></section>`
+    : isEvaluator
+      ? `<div class="card"><div class="card-body"><p class="hint">No hay entregas pendientes de evaluación.</p></div></div>`
+      : "";
+  const userProvisioning = role === "operacion"
+    ? `<section class="card lms-admin-card"><div class="card-head"><h2>Usuarios de Cursos</h2><span class="pill">Solo Operación</span></div><div class="card-body">
+        <p class="hint">Crea accesos separados para alumnos y evaluadores, limitados a una empresa. Tendrán que cambiar la clave inicial al ingresar.</p>
+        <div class="inline-form">
+          <div class="field"><label>Nombre</label><input id="lms-user-name" maxlength="120" /></div>
+          <div class="field"><label>Correo</label><input id="lms-user-email" type="email" maxlength="254" /></div>
+          <div class="field"><label>Rol</label><select id="lms-user-role"><option value="alumno">Alumno</option><option value="evaluador">Evaluador</option></select></div>
+          <div class="field"><label>Empresa</label><select id="lms-user-company">${companyOptions()}</select></div>
+          <div class="field"><label>Clave inicial</label><input id="lms-user-password" type="password" minlength="8" autocomplete="new-password" /></div>
+          <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-create-lms-user ${state.companies.length ? "" : "disabled"}>${icon("plus")} Crear usuario</button></div>
+        </div>
+      </div></section>`
+    : "";
   if (!courses.length) {
-    return `<div class="card"><div class="card-body"><div class="empty">${icon("layers")}<div>No hay cursos cargados.</div></div></div></div>`;
+    return `${userProvisioning}<div class="card"><div class="card-body"><div class="empty">${icon("layers")}<div>No hay cursos cargados.</div></div></div></div>`;
   }
-  return `<div class="course-grid">${courses
+  const courseCards = courses
     .map((course) => {
       const lessons = (course.lessons || []).map((lesson) => `<li>${escapeAttr(lesson.title)}</li>`).join("");
-      const students = (course.students || []).length
+      const students = isStudent
+        ? ""
+        : (course.students || []).length
         ? (course.students || []).map((student) => `<li>${escapeAttr(student.name)} · ${escapeAttr(student.email)}</li>`).join("")
         : `<li>Nadie inscrito todavía.</li>`;
+      const enrolled = (course.students || []).some((student) => student.email.toLowerCase() === (state.user && state.user.email || "").toLowerCase());
+      const ownSubmissions = (state.courseSubmissions || []).filter((submission) => submission.courseId === course.id);
+      const videos = (course.videos || []).length
+        ? `<ul class="lms-resource-list">${course.videos.map((video) => `<li><a href="${escapeAttr(video.url)}" target="_blank" rel="noopener noreferrer">${escapeAttr(video.title)} ${icon("arrow")}</a></li>`).join("")}</ul>`
+        : `<p class="hint">Todavía no hay videos.</p>`;
+      const tasks = (course.tasks || []).length
+        ? course.tasks.map((task) => {
+          const own = ownSubmissions.filter((submission) => submission.taskId === task.id).sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))[0];
+          const due = task.dueAt ? `<span class="lms-due">Entrega: ${escapeAttr(new Date(task.dueAt).toLocaleString("es-CL"))}</span>` : "";
+          const studentForm = isStudent
+            ? own && own.status !== "rejected"
+              ? `<div class="lms-submission-status"><b>${own.status === "approved" ? "Aprobada" : "Entregada; pendiente de revisión"}</b>${own.feedback ? `<p>${escapeAttr(own.feedback)}</p>` : ""}</div>`
+              : enrolled
+                ? `<label for="task-answer-${escapeAttr(task.id)}">Tu respuesta</label><textarea id="task-answer-${escapeAttr(task.id)}" rows="4" maxlength="10000" placeholder="Escribe tu respuesta"></textarea><button class="btn btn-primary" data-submit-task="${escapeAttr(task.id)}">Entregar tarea</button>${own ? `<p class="hint">Evaluación anterior: ${escapeAttr(own.feedback)}</p>` : ""}`
+                : `<p class="hint">Inscríbete en el curso para entregar esta tarea.</p>`
+            : "";
+          return `<article class="lms-task"><div><h4>${escapeAttr(task.title)}</h4><p>${escapeAttr(task.instructions)}</p>${due}</div>${studentForm}</article>`;
+        }).join("")
+        : `<p class="hint">Todavía no hay tareas.</p>`;
+      const videosForm = isEvaluator
+        ? `<form class="lms-create-form" data-course-video="${escapeAttr(course.id)}"><h4>Agregar video</h4><div class="inline-form">${companySelector(`video-company-${course.id}`)}<div class="field"><label>Título</label><input name="title" maxlength="120" required /></div><div class="field"><label>Enlace https</label><input name="url" type="url" placeholder="https://…" required /></div><button class="btn btn-ghost" type="submit">Guardar video</button></div></form>`
+        : "";
+      const taskForm = isEvaluator
+        ? `<form class="lms-create-form" data-course-task="${escapeAttr(course.id)}"><h4>Crear tarea</h4><div class="inline-form">${companySelector(`task-company-${course.id}`)}<div class="field"><label>Título</label><input name="title" maxlength="120" required /></div><div class="field"><label>Instrucciones</label><textarea name="instructions" rows="3" maxlength="5000" required></textarea></div><div class="field"><label>Fecha de entrega (opcional)</label><input name="dueAt" type="datetime-local" /></div><button class="btn btn-ghost" type="submit">Publicar tarea</button></div></form>`
+        : "";
+      const forum = (course.forum || []).length
+        ? course.forum.map((post) => `<article class="lms-forum-post${post.parentId ? " is-reply" : ""}"><div class="lms-forum-author"><b>${escapeAttr(post.authorName)}</b><span>${escapeAttr(post.authorRoleLabel || post.authorRole)} · ${escapeAttr(new Date(post.createdAt).toLocaleString("es-CL"))}</span></div><p>${escapeAttr(post.message)}</p><form class="lms-forum-reply" data-forum-post="${escapeAttr(course.id)}" data-parent-id="${escapeAttr(post.id)}"><input name="message" maxlength="5000" placeholder="Responder…" required /><button class="btn btn-ghost btn-sm" type="submit">Responder</button></form></article>`).join("")
+        : `<p class="hint">Inicia la conversación del curso.</p>`;
+      const forumCompany = companySelector(`forum-company-${course.id}`);
       return `<article class="card course-card">
         <div class="card-head"><h3>${escapeAttr(course.title)}</h3><span class="badge">${(course.students || []).length}</span></div>
         <div class="card-body">
           <h2 class="section-title">Lecciones</h2>
           <ol class="lesson-list">${lessons}</ol>
-          <h2 class="section-title">Alumnos</h2>
-          <ul class="lesson-list">${students}</ul>
-          <div class="inline-form">
-            <div class="field"><label>Nombre</label><input id="alumno-name-${course.id}" value="${escapeAttr(state.user ? state.user.name : "")}" /></div>
-            <div class="field"><label>Correo</label><input id="alumno-email-${course.id}" type="email" value="${escapeAttr(state.user ? state.user.email : "")}" /></div>
-            <div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-enroll="${escapeAttr(course.id)}">${icon("plus")} Inscribir</button></div>
-          </div>
+          ${!isStudent ? `<h2 class="section-title">Alumnos</h2><ul class="lesson-list">${students}</ul>` : ""}
+          ${isStudent && !enrolled ? `<button class="btn btn-primary" data-enroll="${escapeAttr(course.id)}">${icon("plus")} Inscribirme</button>` : ""}
+          ${!isStudent && role !== "evaluador" ? `<div class="inline-form"><div class="field"><label>Nombre</label><input id="alumno-name-${course.id}" value="${escapeAttr(state.user ? state.user.name : "")}" /></div><div class="field"><label>Correo</label><input id="alumno-email-${course.id}" type="email" value="${escapeAttr(state.user ? state.user.email : "")}" /></div><div class="field"><label>&nbsp;</label><button class="btn btn-primary" data-enroll="${escapeAttr(course.id)}">${icon("plus")} Inscribir alumno</button></div></div>` : ""}
+          <section class="lms-section"><h2 class="section-title">Videos</h2>${videos}${videosForm}</section>
+          <section class="lms-section"><h2 class="section-title">Tareas</h2>${tasks}${taskForm}</section>
+          ${canUseForum ? `<section class="lms-section"><h2 class="section-title">Foro del curso</h2><div class="lms-forum">${forum}</div><form class="lms-forum-compose" data-forum-post="${escapeAttr(course.id)}">${forumCompany}<textarea name="message" rows="3" maxlength="5000" placeholder="Escribe una pregunta o comentario…" required></textarea><button class="btn btn-primary" type="submit">Publicar en el foro</button></form></section>` : ""}
         </div>
       </article>`;
     })
-    .join("")}</div>`;
+    .join("");
+  return `${userProvisioning}${reviewPanel}<div class="course-grid">${courseCards}</div>`;
+}
+
+function viewPilotPlanner() {
+  const result = state.pilotPlan
+    ? `<section class="card">
+        <div class="card-head"><h3>Borrador generado</h3><span class="pill">${escapeAttr(state.pilotPlan.model)}</span></div>
+        <div class="card-body"><pre class="pilot-plan">${escapeAttr(state.pilotPlan.plan)}</pre></div>
+      </section>`
+    : "";
+  return `<section class="card">
+    <div class="card-head pilot-card-head">
+      <div class="pilot-brand">
+        <img src="/databricks.png" alt="Databricks" />
+        <div><h3>Preparar piloto</h3><p>IA de Databricks</p></div>
+      </div>
+      <span class="pill">Solo planificación</span>
+    </div>
+    <div class="card-body">
+      <p>La IA propone fases, responsables sugeridos, checklist, criterios de éxito, riesgos y preguntas pendientes. No crea empresas, usuarios, cursos ni transacciones.</p>
+      <p class="hint">Se enviarán estos campos a Databricks para generar el borrador. No incluyas nombres, correos, RUT, credenciales, tokens, números de tarjeta ni datos bancarios.</p>
+      <form class="pilot-form" data-pilot-plan>
+        <div class="inline-form">
+          <div class="field"><label for="pilot-name">Nombre del piloto</label><input id="pilot-name" name="name" maxlength="120" required /></div>
+          <div class="field"><label for="pilot-objective">Objetivo</label><input id="pilot-objective" name="objective" maxlength="1200" required /></div>
+          <div class="field"><label for="pilot-companies">Empresas participantes</label><input id="pilot-companies" name="companyCount" type="number" min="1" max="100" value="1" required /></div>
+          <div class="field"><label for="pilot-workers">Colaboradores estimados</label><input id="pilot-workers" name="workerCount" type="number" min="1" max="1000" value="5" required /></div>
+          <div class="field"><label for="pilot-weeks">Duración (semanas)</label><input id="pilot-weeks" name="durationWeeks" type="number" min="1" max="52" value="4" required /></div>
+          <div class="field"><label for="pilot-constraints">Restricciones o supuestos</label><textarea id="pilot-constraints" name="constraints" maxlength="1200" rows="3"></textarea></div>
+          <div class="field"><label>&nbsp;</label><button class="btn btn-primary" type="submit" data-pilot-submit>${icon("activity")} Generar plan y checklist</button></div>
+        </div>
+        <p class="hint" role="status" data-pilot-status></p>
+      </form>
+    </div>
+  </section>${result}`;
+}
+
+async function generatePilotPlan(form) {
+  const submit = form.querySelector("[data-pilot-submit]");
+  const status = form.querySelector("[data-pilot-status]");
+  const values = new FormData(form);
+  const payload = {
+    name: String(values.get("name") || ""),
+    objective: String(values.get("objective") || ""),
+    companyCount: Number(values.get("companyCount")),
+    workerCount: Number(values.get("workerCount")),
+    durationWeeks: Number(values.get("durationWeeks")),
+    constraints: String(values.get("constraints") || ""),
+  };
+  submit.disabled = true;
+  status.textContent = "Generando un borrador…";
+  try {
+    const result = await api("/api/pilot/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    state.pilotPlan = result;
+    route();
+  } catch (error) {
+    status.textContent = error.message;
+    submit.disabled = false;
+  }
 }
 
 function viewConfiguracion() {
@@ -1567,30 +1800,140 @@ async function reloadEmpresas(message) {
 
 async function createCompany() {
   try {
-    await api("/api/empresas", {
+    const name = document.getElementById("emp-name");
+    const ownerEmail = document.getElementById("emp-owner");
+    if (!name.value.trim() || !ownerEmail.value.trim() || !ownerEmail.checkValidity()) {
+      toast("Ingresa el nombre y el correo válido de un usuario Comercio existente.", "error");
+      return;
+    }
+    const result = await api("/api/empresas", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: document.getElementById("emp-name").value,
+        name: name.value,
         color: document.getElementById("emp-color").value,
-        ownerEmail: document.getElementById("emp-owner").value,
+        ownerEmail: ownerEmail.value,
       }),
     });
-    await reloadEmpresas("Empresa creada");
+    state.activePortalSlug = null;
+    await reloadEmpresas(`Empresa creada; portal ${result.company.portal.slug} generado.`);
   } catch (err) {
     toast(err.message, "error");
   }
 }
 
-async function fundCompany(companyId) {
+async function deleteCompany(companyId) {
+  const company = (state.companies || []).find((item) => item.id === companyId);
+  if (!company) {
+    toast("No se encontró la empresa", "error");
+    return;
+  }
+  const confirmation = window.prompt(
+    `Esta acción es irreversible y borra los datos locales vinculados a "${company.name}". Escribe el nombre exacto para confirmar.`,
+  );
+  if (confirmation === null) return;
   try {
-    await api(`/api/empresas/${encodeURIComponent(companyId)}/abono`, {
+    await api(`/api/empresas/${encodeURIComponent(companyId)}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmation }),
+    });
+    state.activePortalSlug = null;
+    await reloadEmpresas("Empresa y datos locales eliminados.");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function copyCompanyPortal(companyId) {
+  const company = (state.companies || []).find((item) => item.id === companyId);
+  if (!company) {
+    toast("No se encontró el portal de esta empresa", "error");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(companyPortalUrl(company));
+    toast("Enlace del portal copiado");
+  } catch (err) {
+    toast(`No se pudo copiar el enlace: ${err.message}`, "error");
+  }
+}
+
+async function connectGlobal66(companyId) {
+  try {
+    await api(`/api/empresas/${encodeURIComponent(companyId)}/global66`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: document.getElementById(`g66-client-${companyId}`).value,
+        clientSecret: document.getElementById(`g66-secret-${companyId}`).value,
+        accountId: document.getElementById(`g66-account-${companyId}`).value,
+      }),
+    });
+    toast("Wallet Global66 conectada");
+    await refresh();
+    route();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function refreshGlobal66(companyId) {
+  try {
+    const result = await api(`/api/empresas/${encodeURIComponent(companyId)}/global66`);
+    state.global66Wallets[companyId] = result.wallet;
+    route();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function transferGlobal66(button) {
+  const companyId = button.dataset.company;
+  const workerId = button.dataset.worker;
+  const keyId = `g66-idempotency-${companyId}-${workerId}`;
+  const keyField = document.getElementById(keyId);
+  const storageKey = `global66-transfer:${companyId}:${workerId}`;
+  try {
+    let idempotencyKey = keyField.value || sessionStorage.getItem(storageKey);
+    if (!idempotencyKey) {
+      if (!crypto || typeof crypto.randomUUID !== "function") {
+        throw new Error("Este navegador no permite generar una referencia segura de transferencia");
+      }
+      idempotencyKey = crypto.randomUUID();
+    }
+    keyField.value = idempotencyKey;
+    sessionStorage.setItem(storageKey, idempotencyKey);
+    const result = await api(`/api/empresas/${encodeURIComponent(companyId)}/global66/transferencias`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amount: pesos(`fund-${companyId}`) }),
+      body: JSON.stringify({
+        workerId,
+        idempotencyKey,
+        amount: pesos(`g66-amount-${companyId}-${workerId}`),
+        beneficiaryName: document.getElementById(`g66-name-${companyId}-${workerId}`).value,
+        beneficiaryLastName: document.getElementById(`g66-lastname-${companyId}-${workerId}`).value,
+        accountType: document.getElementById(`g66-account-type-${companyId}-${workerId}`).value,
+        accountNumber: document.getElementById(`g66-account-number-${companyId}-${workerId}`).value,
+        documentType: document.getElementById(`g66-document-type-${companyId}-${workerId}`).value,
+        documentNumber: document.getElementById(`g66-document-number-${companyId}-${workerId}`).value,
+        purposeCode: Number(document.getElementById(`g66-purpose-${companyId}-${workerId}`).value),
+      }),
     });
-    await reloadEmpresas("Prepago cargado");
+    sessionStorage.removeItem(storageKey);
+    keyField.value = "";
+    const previous = state.global66Wallets[companyId] || { transfers: [] };
+    state.global66Wallets[companyId] = {
+      ...previous,
+      transfers: [result.transfer, ...(previous.transfers || []).filter((item) => item.id !== result.transfer.id)].slice(0, 20),
+    };
+    toast(`Global66 recibió la transferencia. Estado: ${result.transfer.status}`);
+    route();
   } catch (err) {
+    if (err.status === 400 || err.status === 422 || (err.status === 409 && err.message.includes("clave idempotente"))) {
+      sessionStorage.removeItem(storageKey);
+      keyField.value = "";
+    }
     toast(err.message, "error");
   }
 }
@@ -1644,15 +1987,21 @@ async function createGift(companyId) {
 
 async function addWorker(companyId) {
   try {
+    const name = document.getElementById(`worker-name-${companyId}`);
+    const email = document.getElementById(`worker-email-${companyId}`);
+    if (!name.value.trim() || !email.value.trim() || !email.checkValidity()) {
+      toast("Ingresa el nombre y un correo válido del trabajador.", "error");
+      return;
+    }
     await api(`/api/empresas/${encodeURIComponent(companyId)}/trabajadores`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: document.getElementById(`worker-name-${companyId}`).value,
-        email: document.getElementById(`worker-email-${companyId}`).value,
+        name: name.value,
+        email: email.value,
       }),
     });
-    await reloadEmpresas("Prepago del trabajador listo");
+    await reloadEmpresas("Trabajador agregado. Se creó una ficha informativa y un borrador de contrato; no se emitió una tarjeta.");
   } catch (err) {
     toast(err.message, "error");
   }
@@ -1738,6 +2087,119 @@ async function enrollStudent(courseId) {
   }
 }
 
+async function createLmsUser() {
+  try {
+    const user = await api("/api/clases/usuarios", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: document.getElementById("lms-user-name").value,
+        email: document.getElementById("lms-user-email").value,
+        role: document.getElementById("lms-user-role").value,
+        companyId: document.getElementById("lms-user-company").value,
+        password: document.getElementById("lms-user-password").value,
+      }),
+    });
+    toast(`Usuario ${user.user.roleLabel} creado; deberá cambiar su clave al ingresar`);
+    await refresh();
+    route();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function createCourseVideo(form) {
+  try {
+    const body = {
+      title: form.elements.title.value,
+      url: form.elements.url.value,
+    };
+    if (state.user.role === "operacion") body.companyId = document.getElementById(`video-company-${form.dataset.courseVideo}`).value;
+    await api(`/api/clases/${encodeURIComponent(form.dataset.courseVideo)}/videos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    toast("Video agregado al curso");
+    await refresh();
+    route();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function createCourseTask(form) {
+  try {
+    const body = {
+      title: form.elements.title.value,
+      instructions: form.elements.instructions.value,
+      dueAt: form.elements.dueAt.value ? new Date(form.elements.dueAt.value).toISOString() : undefined,
+    };
+    if (state.user.role === "operacion") body.companyId = document.getElementById(`task-company-${form.dataset.courseTask}`).value;
+    await api(`/api/clases/${encodeURIComponent(form.dataset.courseTask)}/tareas`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    toast("Tarea publicada");
+    await refresh();
+    route();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function submitCourseTask(taskId) {
+  try {
+    await api(`/api/clases/tareas/${encodeURIComponent(taskId)}/entregas`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answer: document.getElementById(`task-answer-${taskId}`).value }),
+    });
+    toast("Tarea entregada para evaluación");
+    await refresh();
+    route();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function reviewCourseSubmission(button) {
+  try {
+    await api(`/api/clases/entregas/${encodeURIComponent(button.dataset.reviewSubmission)}/evaluacion`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: button.dataset.reviewStatus,
+        feedback: document.getElementById(`submission-feedback-${button.dataset.reviewSubmission}`).value,
+      }),
+    });
+    toast(button.dataset.reviewStatus === "approved" ? "Tarea aprobada" : "Tarea reprobada");
+    await refresh();
+    route();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function postCourseForum(form, parentId = "") {
+  try {
+    const body = { message: form.elements.message.value };
+    if (parentId) body.parentId = parentId;
+    if (state.user.role === "operacion") body.companyId = document.getElementById(`forum-company-${form.dataset.forumPost}`).value;
+    await api(`/api/clases/${encodeURIComponent(form.dataset.forumPost)}/foro`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    toast(parentId ? "Respuesta publicada" : "Publicación creada");
+    await refresh();
+    route();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
 async function saveSicr() {
   try {
     const secret = document.getElementById("sicr-secret").value;
@@ -1771,37 +2233,19 @@ async function saveRiskRate(classId) {
   }
 }
 
-async function requestGlobalAccounts(companyId) {
-  try {
-    await api(`/api/empresas/${encodeURIComponent(companyId)}/cuentas-virtuales`, { method: "POST" });
-    await reloadEmpresas("Solicitud pendiente guardada");
-  } catch (err) {
-    toast(err.message, "error");
-  }
-}
-
-async function transferPrepaid(companyId) {
-  try {
-    await api(`/api/empresas/${encodeURIComponent(companyId)}/transferencias`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        workerId: document.getElementById(`who-${companyId}`).value,
-        amount: pesos(`amt-${companyId}`),
-        direction: document.getElementById(`dir-${companyId}`).value,
-      }),
-    });
-    await reloadEmpresas("Transferencia hecha");
-  } catch (err) {
-    toast(err.message, "error");
-  }
-}
-
 /* ---------------- view wiring ---------------- */
 let correoState = { address: "", messages: [], selected: null, letter: null, mode: "empty", query: "" };
+let mailboxesState = { domain: "", mailboxes: [], error: "", loading: true };
 
 function viewCorreo() {
-  return `<section class="mail-shell">
+  return `<section class="card mail-admin" aria-labelledby="mail-admin-title">
+    <div class="card-head">
+      <div><h3 id="mail-admin-title">Administrar buzones</h3><p class="hint">Crear y consultar cuentas de correo en Mailcow.</p></div>
+      <button class="btn btn-ghost btn-sm" id="mailbox-refresh" type="button">Actualizar</button>
+    </div>
+    <div class="card-body" id="mailbox-manager-body">${renderMailboxManager()}</div>
+  </section>
+  <section class="mail-shell">
     <div class="mail-list">
       <div class="mail-toolbar">
         <div>
@@ -1815,6 +2259,34 @@ function viewCorreo() {
     </div>
     <div class="mail-read" id="correo-read"></div>
   </section>`;
+}
+
+function renderMailboxManager() {
+  if (mailboxesState.loading) return `<p class="hint">Conectando con Mailcow…</p>`;
+  if (mailboxesState.error) {
+    return `<div class="mail-admin-setup"><p class="hint">${escapeAttr(mailboxesState.error)}</p>
+      <p class="hint">Para habilitar la administración, configura <code>MAILCOW_API_URL</code>, <code>MAILCOW_API_KEY</code> y <code>MAILCOW_DOMAIN</code> en el servidor y reinicia el servicio. Habilita la API de Mailcow y permite la IP de salida del servidor. La clave API no se ingresa ni se muestra en este panel.</p>
+    </div>`;
+  }
+
+  const rows = mailboxesState.mailboxes.length
+    ? `<div class="mailbox-list">${mailboxesState.mailboxes.map((mailbox) => `<div class="mailbox-row">
+        <div><strong>${escapeAttr(mailbox.email)}</strong><span class="hint">${escapeAttr(mailbox.name || "Sin nombre")}</span></div>
+        <span class="mailbox-meta">${Number(mailbox.quotaMb) || 0} MB · ${mailbox.active ? "Activo" : "Inactivo"}</span>
+      </div>`).join("")}</div>`
+    : `<p class="hint">Todavía no hay buzones en ${escapeAttr(mailboxesState.domain)}.</p>`;
+
+  return `<form class="mailbox-create" id="mailbox-create-form">
+      <div class="inline-form">
+        <div class="field"><label for="mailbox-local-part">Dirección</label><div class="mailbox-address"><input id="mailbox-local-part" name="localPart" maxlength="64" pattern="[a-zA-Z0-9][a-zA-Z0-9._+-]*[a-zA-Z0-9]|[a-zA-Z0-9]" autocomplete="off" required /><span>@${escapeAttr(mailboxesState.domain)}</span></div></div>
+        <div class="field"><label for="mailbox-name">Nombre</label><input id="mailbox-name" name="name" maxlength="100" autocomplete="off" /></div>
+        <div class="field"><label for="mailbox-password">Clave inicial</label><input id="mailbox-password" name="password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required /></div>
+        <div class="field"><label for="mailbox-quota">Cuota (MB)</label><input id="mailbox-quota" name="quotaMb" type="number" min="1" max="10240" value="1024" required /></div>
+        <button class="btn btn-primary" type="submit">Crear buzón</button>
+      </div>
+      <p class="hint">La clave no se guarda en esta aplicación. Compártela de forma segura con el destinatario.</p>
+    </form>
+    <div class="mailbox-list-wrap"><h4>Buzones de ${escapeAttr(mailboxesState.domain)}</h4>${rows}</div>`;
 }
 
 function mailWhen(value) {
@@ -1912,6 +2384,61 @@ function renderCorreoPane() {
   };
 }
 
+function renderMailboxManagerBody() {
+  const body = document.getElementById("mailbox-manager-body");
+  if (!body) return;
+  body.innerHTML = renderMailboxManager();
+  const form = document.getElementById("mailbox-create-form");
+  if (form) {
+    form.onsubmit = (event) => {
+      event.preventDefault();
+      createManagedMailbox(form);
+    };
+  }
+}
+
+async function loadMailboxes() {
+  mailboxesState = { domain: "", mailboxes: [], error: "", loading: true };
+  renderMailboxManagerBody();
+  try {
+    const result = await api("/api/correo/buzones");
+    mailboxesState = {
+      domain: result.domain,
+      mailboxes: result.mailboxes || [],
+      error: "",
+      loading: false,
+    };
+  } catch (error) {
+    mailboxesState = { domain: "", mailboxes: [], error: error.message, loading: false };
+  }
+  renderMailboxManagerBody();
+}
+
+async function createManagedMailbox(form) {
+  const button = form.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    const formData = new FormData(form);
+    const result = await api("/api/correo/buzones", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        localPart: formData.get("localPart"),
+        name: formData.get("name"),
+        password: formData.get("password"),
+        quotaMb: Number(formData.get("quotaMb")),
+      }),
+    });
+    toast(`Buzón ${result.email} creado`);
+    form.reset();
+    document.getElementById("mailbox-quota").value = "1024";
+    await loadMailboxes();
+  } catch (error) {
+    toast(error.message, "error");
+    button.disabled = false;
+  }
+}
+
 async function loadCorreo() {
   const list = document.getElementById("correo-list");
   try {
@@ -1972,6 +2499,8 @@ function wireView(r) {
   if (r === "correo") {
     correoState = { address: "", messages: [], selected: null, letter: null, mode: "empty", query: "" };
     loadCorreo();
+    loadMailboxes();
+    document.getElementById("mailbox-refresh").onclick = loadMailboxes;
     document.getElementById("correo-compose").onclick = () => {
       correoState.mode = "compose";
       correoState.letter = null;
@@ -1983,9 +2512,6 @@ function wireView(r) {
     };
   }
   if (r === "overview") {
-    document.querySelectorAll("[data-global-accounts]").forEach((btn) => {
-      btn.onclick = () => requestGlobalAccounts(btn.dataset.globalAccounts);
-    });
     document.querySelectorAll("[data-confirm-exit]").forEach((btn) => {
       btn.onclick = () => confirmPendingExit(btn.dataset.confirmExit, btn);
     });
@@ -2043,14 +2569,20 @@ function wireView(r) {
   if (r === "empresas") {
     const create = document.querySelector("[data-create-company]");
     if (create) create.onclick = () => createCompany();
-    document.querySelectorAll("[data-fund-company]").forEach((btn) => {
-      btn.onclick = () => fundCompany(btn.dataset.fundCompany);
+    document.querySelectorAll("[data-delete-company]").forEach((btn) => {
+      btn.onclick = () => deleteCompany(btn.dataset.deleteCompany);
+    });
+    document.querySelectorAll("[data-global66-transfer]").forEach((btn) => {
+      btn.onclick = () => transferGlobal66(btn);
+    });
+    document.querySelectorAll("[data-connect-global66]").forEach((btn) => {
+      btn.onclick = () => connectGlobal66(btn.dataset.connectGlobal66);
+    });
+    document.querySelectorAll("[data-refresh-global66]").forEach((btn) => {
+      btn.onclick = () => refreshGlobal66(btn.dataset.refreshGlobal66);
     });
     document.querySelectorAll("[data-add-worker]").forEach((btn) => {
       btn.onclick = () => addWorker(btn.dataset.addWorker);
-    });
-    document.querySelectorAll("[data-transfer]").forEach((btn) => {
-      btn.onclick = () => transferPrepaid(btn.dataset.transfer);
     });
     document.querySelectorAll("[data-save-card]").forEach((btn) => {
       btn.onclick = () => saveCardOptions(btn.dataset.saveCard);
@@ -2071,10 +2603,56 @@ function wireView(r) {
       btn.onclick = () => createCompanyUser(btn.dataset.createUser);
     });
   }
+  if (r === "portales") {
+    document.querySelectorAll("[data-copy-portal]").forEach((btn) => {
+      btn.onclick = () => copyCompanyPortal(btn.dataset.copyPortal);
+    });
+  }
   if (r === "clases") {
     document.querySelectorAll("[data-enroll]").forEach((btn) => {
       btn.onclick = () => enrollStudent(btn.dataset.enroll);
     });
+    const createUser = document.querySelector("[data-create-lms-user]");
+    if (createUser) createUser.onclick = createLmsUser;
+    document.querySelectorAll("[data-course-video]").forEach((form) => {
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        createCourseVideo(form);
+      };
+    });
+    document.querySelectorAll("[data-course-task]").forEach((form) => {
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        createCourseTask(form);
+      };
+    });
+    document.querySelectorAll("[data-submit-task]").forEach((btn) => {
+      btn.onclick = () => submitCourseTask(btn.dataset.submitTask);
+    });
+    document.querySelectorAll("[data-review-submission]").forEach((btn) => {
+      btn.onclick = () => reviewCourseSubmission(btn);
+    });
+    document.querySelectorAll("[data-forum-post]").forEach((form) => {
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        postCourseForum(form);
+      };
+    });
+    document.querySelectorAll(".lms-forum-reply").forEach((form) => {
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        postCourseForum(form, form.dataset.parentId);
+      };
+    });
+  }
+  if (r === "pilot") {
+    const form = document.querySelector("[data-pilot-plan]");
+    if (form) {
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        generatePilotPlan(form);
+      };
+    }
   }
   if (r === "configuracion") {
     const save = document.querySelector("[data-save-sicr]");
@@ -2725,6 +3303,10 @@ async function createApp() {
       toast("El nombre es requerido", "error");
       return;
     }
+    if (!/^\d+\.\d+\.\d+$/.test(version)) {
+      toast("La versión debe estar en formato semver, por ejemplo 0.1.0.", "error");
+      return;
+    }
     
     const result = await api("/api/apps", {
       method: "POST",
@@ -2733,7 +3315,7 @@ async function createApp() {
         name,
         description: description || undefined,
         icon: icon || undefined,
-        version: version || undefined,
+        version,
         distribution_type: distribution || undefined,
         doc_url: docUrl || undefined,
         support_email: supportEmail || undefined

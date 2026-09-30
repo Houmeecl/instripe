@@ -62,7 +62,7 @@ export class Platform {
     this.diseno = new DisenoModule(this.payments, this.connect, this.tarjetas, config, this.store);
     this.apps = new AppsModule(config.appManifestPath);
     this.registro = new RegistroModule(this.cuentas, this.store);
-    this.empresas = new EmpresasModule(this.payments, this.store);
+    this.empresas = new EmpresasModule(this.payments, this.store, config.global66CredentialsEncryptionKey);
     this.laboral = new LaboralModule(this.store, config.publicBaseUrl);
     this.kyc = new KYCModule(config, this.store);
     this.colaboradores = new ColaboradoresModule(this.payments, config, this.store);
@@ -211,12 +211,99 @@ export class Platform {
       if (input.role === "titular" && !this.empresas.hasWorker(companyId, email)) {
         return { user, company: this.empresas.addWorker(actor, companyId, { name, email }) };
       }
+
       return { user, company };
     } catch (error) {
       this.auth.deleteUser(user.id);
       this.empresas.removeMember(companyId, user.id);
       throw error;
     }
+  }
+
+  createLmsUser(
+    actor: { id: string; email: string; role: Role; name: string; companyId?: string },
+    input: { name: string; email: string; role: "alumno" | "evaluador"; companyId: string; password: string },
+  ) {
+    if (actor.role !== "operacion") throw new PlatformError("Solo operación puede crear usuarios de Cursos", 403);
+    const company = this.empresas.list(actor).companies.find((item) => item.id === input.companyId);
+    if (!company) throw new PlatformError("Empresa no encontrada", 404);
+    return this.auth.createLmsUser(input);
+  }
+
+  deleteCompany(
+    actor: { id: string; email: string; role: Role },
+    companyId: string,
+    confirmation: string,
+  ): { deleted: true } {
+    const plan = this.empresas.prepareDeletion(actor, companyId, confirmation);
+    const ledgerAccountIds = [...plan.ledgerAccountIds, ...this.colaboradores.ledgerAccountsForCompany(companyId)];
+    if (ledgerAccountIds.some((id) => (this.payments.ledger.getAccount(id)?.balance ?? 0) !== 0)) {
+      throw new PlatformError("No se puede eliminar: primero deja en cero los saldos locales de los colaboradores", 409);
+    }
+
+    const accountIds = new Set(ledgerAccountIds);
+    const companyCollections = [
+      "company_workers",
+      "company_transfers",
+      "company_global66_transfers",
+      "company_users",
+      "debit_contracts",
+      "virtual_gifts",
+      "colaboradores",
+      "colaborador_transfers",
+      "portal_sessions",
+      "portal_customers",
+      "course_enrollments",
+      "course_videos",
+      "course_tasks",
+      "course_submissions",
+      "course_forum_posts",
+    ];
+    const recordsToDelete: Array<{ collection: string; id: string }> = [
+      { collection: "companies", id: companyId },
+    ];
+    for (const collection of companyCollections) {
+      for (const row of this.store.list<{ id: string; companyId?: string }>(collection)) {
+        if (row.companyId === companyId) recordsToDelete.push({ collection, id: row.id });
+      }
+    }
+
+    const usersToDelete = new Set<string>();
+    const authUsers = this.store.list<{ id: string; email: string; role: Role; companyId?: string }>("auth_users");
+    for (const user of authUsers) {
+      if (user.companyId === companyId) {
+        usersToDelete.add(user.id);
+      }
+    }
+    const owner = authUsers.find((user) => user.id === plan.ownerUserId);
+    if (owner && owner.role !== "operacion" && !owner.companyId) {
+      const hasOtherCompanyLink =
+        this.store.list<{ id: string; ownerUserId?: string }>("companies")
+          .some((company) => company.id !== companyId && company.ownerUserId === owner.id) ||
+        this.store.list<{ companyId: string; userId?: string }>("company_users")
+          .some((member) => member.companyId !== companyId && member.userId === owner.id) ||
+        this.store.list<{ companyId: string; email: string }>("company_workers")
+          .some((worker) => worker.companyId !== companyId && worker.email === owner.email);
+      if (!hasOtherCompanyLink) usersToDelete.add(owner.id);
+    }
+    for (const userId of usersToDelete) recordsToDelete.push({ collection: "auth_users", id: userId });
+    for (const session of this.store.list<{ token: string; userId: string }>("auth_sessions")) {
+      if (usersToDelete.has(session.userId)) recordsToDelete.push({ collection: "auth_sessions", id: session.token });
+    }
+    for (const account of ledgerAccountIds) recordsToDelete.push({ collection: "ledger_accounts", id: account });
+    for (const entry of this.store.list<{ id: string; accountId: string }>("ledger_entries")) {
+      if (accountIds.has(entry.accountId)) recordsToDelete.push({ collection: "ledger_entries", id: entry.id });
+    }
+
+    this.store.transaction(() => {
+      for (const record of recordsToDelete) this.store.delete(record.collection, record.id);
+    });
+    this.empresas.forgetDeletedCompany(companyId);
+    this.colaboradores.forgetDeletedCompany(companyId);
+    this.portal.forgetDeletedCompany(companyId);
+    this.laboral.forgetDeletedCompany(companyId);
+    this.payments.ledger.forgetAccounts(ledgerAccountIds);
+    return { deleted: true };
   }
 
   subscribeFrosting(input: FrostingInput & { actorRole: Role }) {

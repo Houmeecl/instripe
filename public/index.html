@@ -18,54 +18,57 @@
     <link rel="icon" href="/favicon.png" type="image/png" />
   </head>
   <body>
+    <a class="skip-link" href="#contenido">Saltar al contenido</a>
     <header class="site-head">
       <a class="logo" href="/"><img src="/logo-mark.png" alt="" /><span>Proveedor Regional</span></a>
-      <nav>
-        <a href="#institucion">Institución</a>
-        <a href="#territorio">Territorio</a>
+      <nav aria-label="Navegación principal">
+        <a href="#institucion">Programa</a>
         <a href="#ruta">Ruta</a>
-        <a href="#medicion">Medición</a>
+        <a href="#academia">Academia</a>
+        <a href="#territorio">Territorio</a>
+        <a href="#patrocinio">Alianzas</a>
       </nav>
-      <a class="nav-enter" href="#aplicacion">Entrar</a>
+      <a class="nav-enter" href="#aplicacion">Acceso empresas</a>
     </header>
 
-    <main>
+    <main id="contenido">
       <section class="hero">
-        <img src="/fotos/faro.jpg" alt="Faro y costa de Antofagasta, con la ciudad y el mar." />
         <div class="hero-copy">
-          <p class="eyebrow">Región de Antofagasta</p>
-          <h1>Una institución para los proveedores del territorio.</h1>
+          <p class="eyebrow">Tecnología y acompañamiento para tu empresa</p>
+          <h1>Tu experiencia.<br />Tu próximo paso.</h1>
           <p class="lede">
-            Diagnostica, forma, acompaña y mide el valor que las empresas retienen en la región.
-            La opera la Fundación Entretodos.
+            Diagnóstico, formación y acompañamiento para fortalecer tu empresa y hacer visible su aporte al territorio.
           </p>
           <div class="hero-actions">
-            <a class="cta" href="#ruta">Ver la ruta</a>
-            <a class="cta ghost" href="#medicion">Cómo se mide</a>
+            <a class="cta" href="#institucion">Conoce el programa</a>
+            <a class="cta ghost" href="#aplicacion">Acceso empresas</a>
           </div>
         </div>
+        <figure class="hero-visual">
+          <img src="/fotos/antofagasta-aerea.jpg" alt="Vista aérea de la costa y la ciudad de Antofagasta, con el desierto y volcanes al fondo." />
+          <figcaption>Antofagasta: costa, ciudad y desierto.</figcaption>
+        </figure>
       </section>
 
-      <section class="figures" aria-label="Cifras del programa">
-        <div>
-          <strong>183</strong>
-          <span>pymes seleccionadas</span>
-        </div>
-        <div>
-          <strong>9</strong>
-          <span>comunas con presencia</span>
-        </div>
-        <div>
-          <strong>4</strong>
-          <span>perfiles de desarrollo</span>
+      <section class="benefit-strip" aria-labelledby="benefit-title">
+        <h2 id="benefit-title">Todo comienza contigo.</h2>
+        <div class="benefit-list">
+          <article>
+            <h3>Perfil de desarrollo</h3>
+            <p>Conoce tu punto de partida con diagnóstico y evidencia.</p>
+          </article>
+          <article>
+            <h3>Academia</h3>
+            <p>Aprende herramientas prácticas para avanzar.</p>
+          </article>
+          <article>
+            <h3>Acompañamiento</h3>
+            <p>Un ejecutivo y especialistas apoyan tu ruta.</p>
+          </article>
         </div>
       </section>
 
       <section class="gallery" aria-label="Lugares de la región">
-        <figure>
-          <img src="/fotos/puerto.jpg" alt="Costa de Antofagasta." />
-          <figcaption>Antofagasta</figcaption>
-        </figure>
         <figure>
           <img src="/fotos/mejillones.jpg" alt="Puerto Angamos, en Mejillones." />
           <figcaption>Mejillones</figcaption>
@@ -73,6 +76,10 @@
         <figure>
           <img src="/fotos/san-pedro.jpg" alt="Calle Caracoles, en San Pedro de Atacama." />
           <figcaption>San Pedro de Atacama</figcaption>
+        </figure>
+        <figure>
+          <img src="/fotos/miscanti.jpg" alt="Laguna Miscanti, en el altiplano de Antofagasta." />
+          <figcaption>Altiplano de Antofagasta</figcaption>
         </figure>
       </section>
 
@@ -110,12 +117,22 @@
         </ul>
       </section>
 
-      <figure class="band">
-        <img src="/fotos/miscanti.jpg" alt="Laguna Miscanti, en el altiplano de la región." />
-        <figcaption>Laguna Miscanti</figcaption>
-      </figure>
+      <section class="academy" id="academia">
+        <div class="academy-intro">
+          <p class="kicker">Academia</p>
+          <h2>Aprendizaje que se aplica al trabajo diario.</h2>
+          <p>La formación acompaña el desarrollo de cada proveedor con contenidos claros, tareas y conversación entre pares.</p>
+          <a class="cta" href="#aplicacion">Entrar al espacio de empresas</a>
+        </div>
+        <ol class="academy-path">
+          <li><span>01</span><div><h3>Gestión financiera</h3><p>Comprende saldos, pagos y movimientos.</p></div></li>
+          <li><span>02</span><div><h3>Uso de débito</h3><p>Aprende sobre límites, categorías y control.</p></div></li>
+          <li><span>03</span><div><h3>Control de gastos</h3><p>Lee movimientos y configura alertas.</p></div></li>
+          <li><span>04</span><div><h3>Seguros y riesgos</h3><p>Conoce coberturas y clases de riesgo.</p></div></li>
+        </ol>
+      </section>
 
-      <figure class="band band-second">
+      <figure class="band">
         <img src="/fotos/salar.jpg" alt="Ferrocarril en el salar de Carcote." />
         <figcaption>Salar de Carcote</figcaption>
       </figure>
@@ -207,6 +224,61 @@
         </p>
       </section>
 
+      <section class="sponsorship" id="patrocinio" aria-labelledby="sponsorship-title">
+        <div class="sponsorship-intro">
+          <p class="kicker">Alianzas</p>
+          <h2 id="sponsorship-title">¿Quieres impulsar el desarrollo de proveedores regionales?</h2>
+          <p>Conversemos sobre patrocinio, colaboración y alianzas para fortalecer a las empresas del territorio.</p>
+          <div class="sponsorship-direct">
+            <a class="sponsorship-link" id="sponsorship-link" href="#" hidden>
+              O escríbenos directamente a <span id="sponsorship-email"></span>
+            </a>
+            <p id="sponsorship-status" role="status">Cargando correo de contacto…</p>
+          </div>
+        </div>
+        <form class="sponsorship-form" id="sponsorship-form">
+          <div class="sponsorship-fields">
+            <div class="field">
+              <label for="contact-name">Nombre</label>
+              <input id="contact-name" name="name" autocomplete="name" maxlength="120" required />
+            </div>
+            <div class="field">
+              <label for="contact-email">Correo</label>
+              <input id="contact-email" name="email" type="email" autocomplete="email" maxlength="254" required />
+            </div>
+            <div class="field">
+              <label for="contact-organization">Organización <span>(opcional)</span></label>
+              <input id="contact-organization" name="organization" autocomplete="organization" maxlength="160" />
+            </div>
+            <div class="field">
+              <label for="contact-topic">Motivo</label>
+              <select id="contact-topic" name="topic" required>
+                <option value="">Selecciona un motivo</option>
+                <option value="Patrocinio y alianzas">Patrocinio y alianzas</option>
+                <option value="Información del programa">Información del programa</option>
+                <option value="Otra consulta">Otra consulta</option>
+              </select>
+            </div>
+            <div class="field sponsorship-message">
+              <label for="contact-message">Mensaje</label>
+              <textarea id="contact-message" name="message" rows="4" maxlength="4000" required></textarea>
+            </div>
+          </div>
+          <div class="sponsorship-submit">
+            <label class="contact-consent">
+              <input name="consent" type="checkbox" required />
+              <span>Acepto que usen estos datos para responder esta consulta.</span>
+            </label>
+            <div class="contact-trap" aria-hidden="true">
+              <label for="contact-website">Deja este campo vacío</label>
+              <input id="contact-website" name="website" tabindex="-1" autocomplete="off" />
+            </div>
+            <button class="cta" type="submit">Enviar consulta</button>
+          </div>
+          <p class="form-status" id="contact-form-status" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
       <section class="embed" id="aplicacion">
         <div class="embed-copy">
           <p class="kicker">Empresas incorporadas</p>
@@ -222,5 +294,6 @@
       <span class="credits">Fotos: Iván Cortés, Javier Jofre, Victorddt, Gallardoval y Diego Delso, CC BY-SA, Wikimedia Commons.</span>
       <span>Procesador de pagos: Stripe</span>
     </footer>
+    <script src="/landing.js" defer></script>
   </body>
 </html>

@@ -287,6 +287,23 @@ export class ColaboradoresModule {
     return this.transferencias.filter(t => t.companyId === companyId);
   }
 
+  ledgerAccountsForCompany(companyId: string): string[] {
+    return [...this.colaboradores.values()]
+      .filter((colaborador) => colaborador.companyId === companyId)
+      .map((colaborador) => colaborador.ledgerAccountId);
+  }
+
+  forgetDeletedCompany(companyId: string): void {
+    for (const [id, colaborador] of this.colaboradores) {
+      if (colaborador.companyId === companyId) this.colaboradores.delete(id);
+    }
+    this.transferencias.splice(
+      0,
+      this.transferencias.length,
+      ...this.transferencias.filter((transferencia) => transferencia.companyId !== companyId),
+    );
+  }
+
   /**
    * Bloquear o desbloquear un colaborador
    */

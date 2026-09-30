@@ -12,9 +12,10 @@ Sobre ese núcleo corren tres módulos, y los tres liquidan en pagos:
 - **Seguros**: póliza del crédito de una tarjeta. La prima es un cobro y el siniestro es una dispersión.
 - **Connect**: cuentas conectadas. Un pago hacia ellas es una dispersión.
 - **Treasury**: cuentas financieras. El abono es un cobro. Si la cuenta Stripe no tiene Treasury, queda en demo.
-- **Tarjetas**: emisión virtual. El cupo es el crédito que el seguro puede cubrir. El PAN no pasa por este servidor.
+- **Tarjetas**: la emisión de tarjetas reales depende de Stripe Issuing. Las fichas de débito de Empresas son solo vistas informativas y no representan tarjetas emitidas.
+- **Empresas**: registra titulares y trabajadores, genera portales y borradores informativos de contrato; no emite tarjetas ni abre cuentas.
 - **Diseño**: colores y texto de la tarjeta, aplicados al portal y a Checkout.
-- **App**: escribe `stripe-app.json`. Se sube con `stripe apps upload`.
+- **App**: escribe `stripe-app.json` para subirlo con `stripe apps upload`; no genera una app móvil ni una integración NFC. Stripe Terminal Tap to Pay no está disponible para Chile según la [disponibilidad de lectores](https://docs.stripe.com/terminal/tap-to-pay-readers).
 
 Corre completamente en **modo demo** sin credenciales externas. Si defines las
 credenciales, cada pasarela usa su API real automáticamente.
@@ -62,7 +63,60 @@ Copia `.env.example` a `.env` (opcional). El servidor lo carga al arrancar y no 
 | `STRIPE_WEBHOOK_SECRET`       | _(vacío)_               | `whsec_…` de `stripe listen`. Liquida el movimiento al pagar.|
 | `CHILE_GATEWAY_API_KEY`       | _(vacío)_               | Credencial de la pasarela chilena (modo live).          |
 | `CHILE_GATEWAY_COMMERCE_CODE` | _(vacío)_               | Código de comercio de la pasarela chilena.              |
+| `GLOBAL66_CREDENTIALS_ENCRYPTION_KEY` | _(vacío)_        | Clave aleatoria para cifrar en SQLite los clientSecret Global66 por empresa. |
 | `PUBLIC_BASE_URL`             | `http://localhost:3000` | Base para URLs de retorno/redirección.                  |
+| `PUBLIC_CONTACT_EMAIL`        | `patrocinios@proveedorregional.cl` | Destinatario público para patrocinio y alianzas. |
+
+El formulario público de Alianzas envía nombre, correo de respuesta, organización
+opcional, motivo y mensaje a `PUBLIC_CONTACT_EMAIL`. No guarda las consultas en
+la base de datos. Para enviar desde el servidor configura `MAIL_HOST`, `MAIL_USER`
+y `MAIL_PASSWORD` para SMTP (TLS en producción); crea el buzón o alias de
+`PUBLIC_CONTACT_EMAIL` en Mailcow. Si SMTP no está configurado, el formulario
+explica que el envío no está disponible y mantiene el enlace directo al correo.
+Se limita el número de envíos por dirección IP y se valida el consentimiento.
+
+Aceptar los términos en el onboarding registra la aceptación, pero no crea un
+usuario ni inicia una sesión. El dashboard siempre requiere correo y clave.
+El listado de preinscritos (`GET /api/registro`) requiere una sesión con acceso
+de Operación; la página pública de términos no revela sus datos ni saldos.
+
+### Administración de buzones Mailcow
+
+El rol **Operación** puede crear y listar buzones desde el módulo **Correo**.
+Configura `MAILCOW_API_URL` con el origen HTTPS de Mailcow,
+`MAILCOW_API_KEY` con una clave API habilitada para la IP de egreso del VPS, y
+`MAILCOW_DOMAIN` con el dominio que administrará (por defecto
+`proveedorregional.cl`). La clave queda solo en el entorno del servidor y no se
+envía al navegador. Guárdala en el `.env`/gestor de secretos del servidor y
+reinicia la aplicación. En Mailcow, habilita la API y registra la IP pública de
+salida del VPS en la lista permitida. La especificación oficial está en
+[`openapi.yaml`](https://github.com/mailcow/mailcow-dockerized/blob/master/data/web/api/openapi.yaml).
+
+Desde el panel se puede crear un buzón con nombre, clave inicial y cuota de
+hasta 10 GB, y consultar los buzones de ese dominio. La aplicación no guarda
+las claves de los buzones y no ofrece acciones de borrado.
+
+### Portales privados de empresa
+
+Al crear una empresa se genera y persiste su enlace privado. Operación los
+administra desde el módulo **Portales**; el panel **Débito** conserva las
+herramientas operativas de empresas. Los portales requieren iniciar sesión y
+solo muestran los datos de las empresas a las que el usuario tiene acceso.
+
+### Wallets B2B de Global66
+
+Cada empresa puede conectar su credencial de Global66 Empresas desde su portal.
+La credencial identifica una organización de Global66; el `accountId` debe
+pertenecer a esa misma organización. El servidor cifra `clientSecret` usando
+`GLOBAL66_CREDENTIALS_ENCRYPTION_KEY`; este valor es obligatorio para guardar
+credenciales y debe respaldarse junto con la base de datos. No lo cambies después
+de guardar credenciales sin migrarlas, porque no podrán descifrarse.
+
+En Global66 Empresas, crea la credencial desde **Integraciones API** y registra
+la IP IPv4 pública de egreso del VPS. El portal consulta saldo y movimientos
+directamente desde la API B2B y no inventa un saldo si no hay movimientos. La
+carga a tarjetas Global66 y la tarifa mensual de 0,07 UF no se activan hasta que
+Global66 confirme el endpoint doméstico y la aplicación del convenio B2B.
 
 ## Scripts
 
@@ -77,6 +131,15 @@ Copia `.env.example` a `.env` (opcional). El servidor lo carga al arrancar y no 
 
 ## API
 
+- `GET /api/clases` — cursos, videos enlazados, tareas, foro y entregas visibles para el rol y la empresa de la sesión.
+- `POST /api/pilot/plan` — solo Operación; genera un plan y checklist no ejecutables con Databricks y no persiste los datos enviados. Requiere `DATABRICKS_HOST`, `DATABRICKS_CLIENT_ID` y `DATABRICKS_CLIENT_SECRET`.
+- `POST /api/clases/usuarios` — solo Operación; crea usuarios de Cursos (`alumno` o `evaluador`) con empresa asignada y clave inicial que deberán cambiar.
+- `POST /api/clases/:id/alumnos` — matrícula en un curso; los alumnos solo pueden inscribirse a sí mismos.
+- `POST /api/clases/:id/videos` — evaluador agrega un enlace HTTPS de video al curso de su empresa (no se suben archivos).
+- `POST /api/clases/:id/tareas` — evaluador publica instrucciones y fecha opcional de entrega.
+- `POST /api/clases/tareas/:id/entregas` — un alumno inscrito entrega su respuesta.
+- `POST /api/clases/entregas/:id/evaluacion` — evaluador de la misma empresa aprueba o reprueba con comentarios. Operación puede apoyar la evaluación.
+- `POST /api/clases/:id/foro` — alumnos inscritos y evaluadores publican en el foro o responden una publicación con `parentId`.
 - `GET /health` — estado, moneda y pasarelas configuradas.
 - `GET /api/gateways` — pasarelas disponibles y cuál es la predeterminada.
 - `GET /api/plans` — planes de seguro con montos formateados.
@@ -87,6 +150,51 @@ Copia `.env.example` a `.env` (opcional). El servidor lo carga al arrancar y no 
 - `POST /api/claims` — dispersar siniestro: `{ policyId, amount, beneficiary, gateway }`.
 - `POST /webhooks/stripe` — webhook de Stripe con verificación de firma. `checkout.session.completed` acredita el float y avisa al módulo dueño (`cuentas`, `cobros` o `seguros`).
 - `GET /api/stripe/events` — últimos eventos de webhook recibidos.
+- `PUT /api/empresas/:id/global66` — guarda el clientId, clientSecret y accountId de la wallet de esa empresa. El clientSecret se cifra en el servidor y nunca se devuelve.
+- `GET /api/empresas/:id/global66` — consulta en Global66 los movimientos y el último saldo disponible en esos movimientos. Solo operación y el comercio de esa empresa pueden usarlo.
+- `POST /api/empresas/:id/global66/transferencias` — envía una transferencia bancaria nacional CLP→CLP a un beneficiario. Requiere `workerId`, `idempotencyKey`, `amount`, nombre/apellido, tipo/número de cuenta, tipo/número de documento y `purposeCode`.
+- `POST /api/empresas/:id/abono` y `POST /api/empresas/:id/transferencias` — retirados (HTTP 410). Las cuentas y movimientos internos de demo de Empresas ya no se ofrecen; los datos antiguos se eliminan al iniciar la plataforma. Para transferencias bancarias usa la ruta de Global66.
+- `DELETE /api/empresas/:id` — solo Operación; requiere `{ "confirmation": "<nombre exacto de empresa>" }`. Elimina permanentemente los registros locales vinculados a la empresa, sus trabajadores, accesos empresariales y movimientos. También elimina el acceso del titular si solo estaba asociado a esa empresa; conserva cuentas preexistentes que sigan vinculadas a otra empresa. Rechaza la operación si quedan transferencias Global66 sin resolver. No elimina datos que permanezcan en Stripe, Global66 u otros sistemas externos; revisa además las obligaciones legales de conservación aplicables antes de usarlo.
+
+En el LMS de **Cursos**, Operación provisiona cuentas de alumno y evaluador asociadas
+a una empresa. El evaluador de esa empresa publica tareas y enlaces HTTPS de video,
+participa en foros y revisa entregas; el alumno se matricula, conversa en foros y
+entrega respuestas para aprobación o reprobación con comentarios. Cursos, foros,
+recursos y entregas se aíslan por empresa. Los videos se alojan fuera del sistema;
+el LMS solo almacena sus enlaces. La contraseña inicial se guarda con hash y se
+exige cambiarla al primer ingreso.
+
+El portal privado de cada empresa ofrece un acceso externo a Moodle
+(`https://vps-6165621-x.dattaweb.com/login/index.php`). Moodle mantiene su propio
+inicio de sesión; este enlace no sincroniza usuarios ni habilita SSO.
+
+El planificador **Plan piloto IA** usa Databricks Unity Gateway y el Model Service
+`databricks-gpt-6-luna`. Para habilitarlo, crea un service principal OAuth M2M de
+Databricks, concédele acceso de consulta al modelo `system.ai.gpt-6-luna`, y configura
+`DATABRICKS_HOST`, `DATABRICKS_CLIENT_ID` y `DATABRICKS_CLIENT_SECRET` solo en el
+entorno del servidor. El token OAuth solicita únicamente el alcance
+`model-serving-inference`. No uses ni compartas credenciales personales. La función no
+crea empresas, cuentas, cursos ni transacciones; envía únicamente el formulario del
+piloto a Databricks, limita cada usuario de Operación a una generación por minuto y
+no guarda el resultado en la base de datos. Evita ingresar datos personales,
+credenciales, números de tarjeta o datos bancarios. El modelo se cobra según el uso
+y el precio del workspace; verifica las tarifas de Databricks antes de habilitarlo.
+
+La transferencia usa el contrato B2B `REMITTANCE` / `WIRE_TRANSFER` / `BANK_TRANSFER`
+con origen y destino CLP. El API acepta la operación inicialmente como
+`PROCESSING`; el portal marca el pago como final solo
+cuando un movimiento de Global66 coincide con el transactionId. Reutiliza la misma
+clave idempotente si necesitas reconocer un resultado incierto; no generes otra
+referencia sin reconciliarlo con Global66. Los datos bancarios no se persisten.
+Valida con Global66 el código de propósito permitido para tu convenio antes de
+usar fondos reales; la interfaz muestra el código de ejemplo `1`.
+
+Las tarjetas mostradas en el portal son vistas internas con los últimos cuatro
+dígitos; no representan tarjetas emitidas por Global66. La API privada de emisión
+de tarjetas y el cargo de mantenimiento de 0,07 UF quedan deshabilitados hasta
+confirmar su disponibilidad y condiciones para el convenio B2B. El 2% del
+tarifario enviado es por conversión de moneda, no una comisión de transferencia
+nacional CLP→CLP.
 
 ## Stripe (entorno de desarrollo)
 

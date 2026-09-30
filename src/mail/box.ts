@@ -284,12 +284,16 @@ async function smtpReply(socket: net.Socket, lines: LineSocket, command?: string
   }
 }
 
-export async function sendLetter(config: AppConfig, input: { to: string; subject: string; text: string }): Promise<void> {
+export async function sendLetter(
+  config: AppConfig,
+  input: { to: string; subject: string; text: string; replyTo?: string },
+): Promise<void> {
   if (!isMailConfigured(config)) throw new PlatformError("El correo de la empresa no está configurado", 503);
   const to = input.to.trim();
+  const replyTo = input.replyTo?.trim();
   const subject = input.subject.replace(/[\r\n]/g, " ").trim();
   const text = input.text.replace(/\r?\n/g, "\r\n");
-  if (!EMAIL.test(to) || !subject || !text.trim()) {
+  if (!EMAIL.test(to) || (replyTo !== undefined && !EMAIL.test(replyTo)) || !subject || !text.trim()) {
     throw new PlatformError("Destino, asunto y mensaje son requeridos", 400);
   }
   const plain = await new Promise<net.Socket>((resolve, reject) => {
@@ -322,7 +326,7 @@ export async function sendLetter(config: AppConfig, input: { to: string; subject
   await smtpReply(channel, lines, "DATA");
   const dotted = text.split("\r\n").map((line) => (line.startsWith(".") ? `.${line}` : line)).join("\r\n");
   channel.write(
-    `From: ${config.mail.user}\r\nTo: ${to}\r\nSubject: ${encodeSubject(subject)}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${dotted}\r\n.\r\n`,
+    `From: ${config.mail.user}\r\nTo: ${to}\r\n${replyTo ? `Reply-To: ${replyTo}\r\n` : ""}Subject: ${encodeSubject(subject)}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${dotted}\r\n.\r\n`,
   );
   const queued = await lines.readLine();
   channel.end();

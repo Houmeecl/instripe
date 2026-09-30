@@ -9,10 +9,6 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
-function roleLabel(role) {
-  return role === "titular" ? "Titular" : "Comercio";
-}
-
 function setStep(id) {
   const order = ["tos", "space", "dash"];
   const current = order.indexOf(id);
@@ -29,8 +25,8 @@ function showTos() {
   stage.innerHTML = `
     <form id="tos-form" class="tos">
       <h2>Acepta los términos</h2>
-      <p>Este es el onboarding. Al aceptar entras a la aplicación, que ya está ocupada por los preinscritos.</p>
-      <p>Confirmas que el espacio ya tiene preinscritos, que el saldo parte en cero y que el dashboard muestra esas mismas cuentas.</p>
+      <p>Lee y acepta los términos para continuar al inicio de sesión.</p>
+      <p>Aceptar no crea una cuenta ni reemplaza tu clave. El dashboard requiere credenciales habilitadas por el equipo.</p>
       <label>Nombre<input name="name" required autocomplete="name" /></label>
       <label>Email<input name="email" type="email" required autocomplete="email" /></label>
       <label class="check"><input name="accepted" type="checkbox" required /> Acepto los términos de Proveedor Regional.</label>
@@ -66,7 +62,7 @@ function showTos() {
       return;
     }
     try {
-      await showOccupied();
+      showAccepted();
     } catch (err) {
       error.textContent = err.message;
       error.hidden = false;
@@ -76,47 +72,21 @@ function showTos() {
   });
 }
 
-async function showOccupied() {
-  mode.textContent = "Aplicación ocupada";
+function showAccepted() {
+  mode.textContent = "Términos aceptados";
   setStep("space");
-  const res = await fetch("/api/registro");
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "No se pudo cargar la aplicación");
-  const members = data.members || [];
-  if (!members.length) {
-    stage.innerHTML = `
-      <div class="empty-space">
-        <h2>Espacio ocupado</h2>
-        <p>Todavía no hay preinscritos en esta aplicación.</p>
-        <a class="dash-link" href="/operacion" target="_top">Abrir dashboard</a>
-      </div>`;
-    return;
-  }
-  const cards = members
-    .map(
-      (member) => `
-      <article class="member">
-        <div>
-          <h2>${escapeHtml(member.name)}</h2>
-          <p>${escapeHtml(member.email)} · ${escapeHtml(member.city)}</p>
-        </div>
-        <div class="member-meta">
-          <span class="pill">${roleLabel(member.role)}</span>
-          <span class="pill on">Ocupado</span>
-          <b>${escapeHtml(member.displayBalance || "$0")}</b>
-        </div>
-      </article>`,
-    )
-    .join("");
   stage.innerHTML = `
-    <p class="occupied-note">Esta aplicación ya está ocupada.</p>
-    ${cards}
-    <a class="dash-link" href="/operacion" target="_top">Abrir dashboard</a>`;
+    <div class="empty-space">
+      <h2>Términos aceptados</h2>
+      <p>La aceptación quedó registrada, pero no inicia sesión ni crea una cuenta de acceso.</p>
+      <p>Para entrar al dashboard necesitas el correo y la clave que te haya habilitado el equipo. Si todavía no tienes credenciales, solicita acceso a Operación.</p>
+      <a class="dash-link" href="/operacion" target="_top">Ir al inicio de sesión</a>
+    </div>`;
 }
 
 fetch("/api/onboarding")
   .then((res) => res.json())
-  .then((session) => (session.accepted ? showOccupied() : showTos()))
+  .then((session) => (session.accepted ? showAccepted() : showTos()))
   .catch((error) => {
     stage.innerHTML = `<p class="tos-error" role="alert">${escapeHtml(error.message)}</p>`;
   });

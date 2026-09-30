@@ -83,11 +83,56 @@ describe("correo de la empresa", () => {
     const comercio = request.agent(app);
     await comercio.post("/api/session").send({ email: "caja@taller.cl", password: "Antofagasta.183" });
     expect((await comercio.get("/api/correo")).status).toBe(403);
+    expect((await comercio.get("/api/correo/buzones")).status).toBe(403);
     const operacion = request.agent(app);
     const login = await operacion.post("/api/session").send({ email: "operacion@proveedorregional.cl", password: "Antofagasta.183" });
     if (login.body.user.mustChangePassword) {
       await operacion.post("/api/session/password").send({ currentPassword: "Antofagasta.183", newPassword: "Operacion.1831" });
     }
     expect((await operacion.get("/api/correo")).status).toBe(503);
+    expect((await operacion.get("/api/correo/buzones")).status).toBe(503);
+  });
+
+  it("sends public landing inquiries to the configured contact and sets the reply address", async () => {
+    const received: string[] = [];
+    const server = net.createServer((socket) => {
+      socket.write("220 listo\r\n");
+      socket.on("data", (chunk) => {
+        const text = chunk.toString();
+        received.push(text);
+        if (text.startsWith("EHLO")) socket.write("250-hola\r\n250 listo\r\n");
+        else if (text.startsWith("AUTH") || text.startsWith("MAIL") || text.startsWith("RCPT")) socket.write("250 ok\r\n");
+        else if (/^[A-Za-z0-9+/=]+\r\n$/.test(text)) socket.write("235 ok\r\n");
+        else if (text.startsWith("DATA")) socket.write("354 sigue\r\n");
+        else if (text.includes("\r\n.\r\n")) socket.write("250 enviado\r\n");
+      });
+    });
+    const port = await listen(server);
+    const app = createApp(loadConfig({
+      PORT: "3000",
+      DATABASE_PATH: ":memory:",
+      PUBLIC_CONTACT_EMAIL: "alianzas@example.cl",
+      MAIL_HOST: "127.0.0.1",
+      MAIL_SMTP_PORT: String(port),
+      MAIL_USER: "web@proveedorregional.cl",
+      MAIL_PASSWORD: "clave",
+      MAIL_INSECURE: "1",
+    }));
+
+    const response = await request(app).post("/api/public-contact").send({
+      name: "Ana Pérez",
+      email: "ana@example.cl",
+      organization: "Taller Norte",
+      topic: "Patrocinio y alianzas",
+      message: "Conversemos sobre el programa.",
+      consent: true,
+    });
+    server.close();
+
+    expect(response.status).toBe(201);
+    expect(response.body).toEqual({ sent: true });
+    expect(received.join("")).toContain("RCPT TO:<alianzas@example.cl>");
+    expect(received.join("")).toContain("Reply-To: ana@example.cl");
+    expect(received.join("")).toContain("Conversemos sobre el programa.");
   });
 });

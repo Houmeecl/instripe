@@ -11,6 +11,7 @@ export const OPTIONS = [
   "claims",
   "connect",
   "empresas",
+  "portales",
   "treasury",
   "cards",
   "design",
@@ -20,10 +21,11 @@ export const OPTIONS = [
   "configuracion",
   "actuarial",
   "correo",
+  "pilot",
 ] as const;
 
 export type Option = (typeof OPTIONS)[number];
-export type Role = "operacion" | "comercio" | "titular" | "colaborador" | "administrador_empresa";
+export type Role = "operacion" | "comercio" | "titular" | "colaborador" | "administrador_empresa" | "alumno" | "evaluador";
 
 const ROLE_OPTIONS: Record<Role, readonly Option[]> = {
   operacion: OPTIONS,
@@ -31,6 +33,8 @@ const ROLE_OPTIONS: Record<Role, readonly Option[]> = {
   titular: ["overview", "empresas", "clases"],
   colaborador: ["overview", "empresas"],
   administrador_empresa: ["overview", "empresas", "clases", "payments", "connect", "treasury", "cards"],
+  alumno: ["clases"],
+  evaluador: ["clases"],
 };
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -39,6 +43,8 @@ const ROLE_LABEL: Record<Role, string> = {
   titular: "Titular",
   colaborador: "Colaborador",
   administrador_empresa: "Administrador Empresa",
+  alumno: "Alumno",
+  evaluador: "Evaluador",
 };
 
 const KEYLEN = 32;
@@ -86,6 +92,16 @@ export interface CompanyLogin {
   mustChangePassword: boolean;
 }
 
+export interface LmsLogin {
+  id: string;
+  name: string;
+  email: string;
+  role: "alumno" | "evaluador";
+  roleLabel: string;
+  companyId: string;
+  mustChangePassword: boolean;
+}
+
 const SEED: Array<Omit<AuthUserRecord, "salt" | "passwordHash">> = [
   { id: "usr_operacion", email: "operacion@proveedorregional.cl", name: "Fundación Entretodos", role: "operacion" },
   { id: "usr_control", email: "control@proveedorregional.cl", name: "Mesa de control", role: "operacion" },
@@ -109,6 +125,7 @@ export function requiredOption(pathname: string): Option | "any" | "deny" {
     [/^\/api\/policies$/, "policies"],
     [/^\/api\/claims$/, "claims"],
     [/^\/api\/connect(?:\/.*)?$/, "connect"],
+    [/^\/api\/registro$/, "accounts"],
     [/^\/api\/empresas(?:\/.*)?$/, "empresas"],
     [/^\/api\/inicio$/, "overview"],
     [/^\/api\/clases(?:\/.*)?$/, "clases"],
@@ -116,6 +133,7 @@ export function requiredOption(pathname: string): Option | "any" | "deny" {
     [/^\/api\/actuarial$/, "actuarial"],
     [/^\/api\/frosting$/, "actuarial"],
     [/^\/api\/correo(?:\/.*)?$/, "correo"],
+    [/^\/api\/pilot\/plan$/, "pilot"],
     [/^\/api\/treasury(?:\/.*)?$/, "treasury"],
     [/^\/api\/tarjetas$/, "cards"],
     [/^\/api\/diseno$/, "design"],
@@ -200,6 +218,44 @@ export class AuthModule {
     };
     this.store.put("auth_users", record.id, record);
     return toCompanyLogin(record);
+  }
+
+  createLmsUser(input: {
+    name: string;
+    email: string;
+    role: "alumno" | "evaluador";
+    companyId: string;
+    password: string;
+  }): LmsLogin {
+    const email = input.email.trim().toLowerCase();
+    const name = input.name.trim();
+    const password = input.password.trim();
+    if (!name || !email.includes("@")) throw new PlatformError("Nombre y correo son requeridos", 400);
+    if (input.role !== "alumno" && input.role !== "evaluador") throw new PlatformError("El rol del curso no es válido", 400);
+    if (!input.companyId) throw new PlatformError("El usuario tiene que pertenecer a una empresa", 400);
+    if (password.length < 8) throw new PlatformError("La clave inicial necesita al menos 8 caracteres", 400);
+    if (this.emailTaken(email)) throw new PlatformError("Ese correo ya tiene usuario", 409);
+    const salt = randomBytes(16);
+    const record: AuthUserRecord = {
+      id: `usr_${randomUUID().slice(0, 8)}`,
+      email,
+      name,
+      role: input.role,
+      companyId: input.companyId,
+      salt: salt.toString("hex"),
+      passwordHash: scryptSync(password, salt, KEYLEN, SCRYPT).toString("hex"),
+      mustChangePassword: true,
+    };
+    this.store.put("auth_users", record.id, record);
+    return {
+      id: record.id,
+      name: record.name,
+      email: record.email,
+      role: input.role,
+      roleLabel: ROLE_LABEL[record.role],
+      companyId: record.companyId || "",
+      mustChangePassword: true,
+    };
   }
 
   deleteUser(id: string): void {

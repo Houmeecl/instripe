@@ -31,10 +31,13 @@ export interface StripeAppManifest {
 
 export interface CreateAppInput {
   name: string;
+  version?: string;
   icon?: string;
   description?: string;
   distribution_type?: DistributionType;
   permissions?: StripeAppPermission[];
+  doc_url?: string;
+  support_email?: string;
 }
 
 export interface UpdateAppInput {
@@ -135,13 +138,17 @@ export class AppsModule {
     if (/\b(stripe|free|paid)\b/i.test(name)) {
       throw new PlatformError("El nombre de la app no puede incluir Stripe, free ni paid", 400);
     }
+    const version = input.version?.trim() || "0.1.0";
+    if (!/^\d+\.\d+\.\d+$/.test(version)) {
+      throw new PlatformError("La version debe ser en formato semver (ej: 0.1.0)", 400);
+    }
 
     const distribution_type = input.distribution_type || "private";
     const permissions = input.permissions || this.getDefaultPermissions();
 
     this.manifest = {
       id: this.generateId(name),
-      version: "0.1.0",
+      version,
       name,
       icon: input.icon,
       description: input.description,
@@ -149,6 +156,8 @@ export class AppsModule {
       sandbox_install_compatible: true,
       permissions,
       ui_extension: { views: [] },
+      doc_url: input.doc_url,
+      support_email: input.support_email,
     };
 
     this.saveManifest();

@@ -94,6 +94,15 @@ export class PortalModule {
     return session;
   }
 
+  forgetDeletedCompany(companyId: string): void {
+    for (const [id, session] of this.sessions) {
+      if (session.companyId === companyId) this.sessions.delete(id);
+    }
+    for (const [id, customer] of this.customers) {
+      if (customer.companyId === companyId) this.customers.delete(id);
+    }
+  }
+
   /**
    * Iniciar el flujo KYC para una sesión
    */

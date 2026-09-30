@@ -6,6 +6,7 @@ import request from "supertest";
 import { createApp } from "../src/app.js";
 import { DEFAULT_SEED_PASSWORD, loadConfig } from "../src/config.js";
 import { activateVirtualGift, issueVirtualGift } from "../src/modules/regalos/issue.js";
+import { EmpresasModule } from "../src/modules/empresas/module.js";
 import { Platform } from "../src/platform.js";
 
 const TEST_PASSWORD = "Operacion.1831";
@@ -102,15 +103,19 @@ describe("instripe BaaS platform", () => {
     expect(overview.body.policies).toHaveLength(1);
     expect(overview.body.modules.map((m: { id: string }) => m.id).sort()).toEqual([
       "apps",
+      "automation",
       "cobros",
+      "colaboradores",
       "connect",
       "cuentas",
       "diseno",
       "empresas",
       "kyc",
       "laboral",
+      "portal",
       "registro",
       "seguros",
+      "suscripcion",
       "tarjetas",
       "treasury",
     ]);
@@ -422,10 +427,21 @@ describe("instripe BaaS platform", () => {
     const blocked = await client.post("/api/apps").send({ name: "Stripe Gratis" });
     expect(blocked.status).toBe(400);
 
-    const created = await client.post("/api/apps").send({ name: "Instripe" });
+    const created = await client.post("/api/apps").send({
+      name: "Instripe",
+      version: "1.2.3",
+      doc_url: "https://example.com/docs",
+      support_email: "soporte@example.com",
+    });
     expect(created.status).toBe(201);
     expect(created.body.manifest.id).toBe("com.houmeecl.instripe");
+    expect(created.body.manifest).toMatchObject({
+      version: "1.2.3",
+      doc_url: "https://example.com/docs",
+      support_email: "soporte@example.com",
+    });
     expect(created.body.upload).toBe("stripe apps upload");
+    expect((await client.post("/api/apps").send({ name: "Version inválida", version: "v1" })).status).toBe(400);
 
     const overview = await client.get("/api/overview");
     expect(overview.body.policies).toHaveLength(0);
@@ -480,11 +496,25 @@ describe("instripe BaaS platform", () => {
     expect(landing.text).toContain('src="/aplicacion"');
     expect(landing.text).toContain("Procesador de pagos");
     expect(landing.text).toContain("El espacio ya está ocupado.");
+    expect(landing.text).toContain('id="academia"');
+    expect(landing.text).toContain("Aprendizaje que se aplica al trabajo diario.");
+    expect(landing.text).toContain("Acceso empresas");
+    expect(landing.text).toContain('src="/fotos/antofagasta-aerea.jpg"');
+    expect(landing.text).not.toContain("pymes seleccionadas");
+    expect(landing.text).toContain("Tu experiencia.");
+    expect(landing.text).toContain("Todo comienza contigo.");
+    expect(landing.text).toContain("¿Quieres impulsar el desarrollo de proveedores regionales?");
+    expect(landing.text).toContain('src="/landing.js"');
+    expect(landing.text).toContain('id="sponsorship-form"');
+    expect(landing.text).toContain('name="consent"');
 
     const embedded = await request(server).get("/aplicacion");
     expect(embedded.status).toBe(200);
     expect(embedded.text).toContain("Términos");
-    expect(embedded.text).toContain("Espacio ocupado");
+    expect(embedded.text).toContain("Acceso con clave");
+    const onboardingScript = await request(server).get("/aplicacion.js");
+    expect(onboardingScript.text).toContain("no inicia sesión ni crea una cuenta de acceso");
+    expect(onboardingScript.text).not.toContain('fetch("/api/registro")');
 
     const agent = request.agent(server);
     const denied = await agent.post("/api/onboarding").send({ name: "Luis", email: "luis@proveedorregional.cl", accepted: false });
@@ -494,8 +524,12 @@ describe("instripe BaaS platform", () => {
     const session = await agent.get("/api/onboarding");
     expect(session.body).toMatchObject({ kind: "tos", accepted: true, space: "ocupado" });
     expect(session.body.acceptance.email).toBe("luis@proveedorregional.cl");
+    expect((await agent.get("/api/session")).body.user).toBeNull();
+    expect((await agent.get("/api/overview")).status).toBe(401);
 
-    const registro = await request(server).get("/api/registro");
+    expect((await request(server).get("/api/registro")).status).toBe(401);
+    const operator = await signedIn(server);
+    const registro = await operator.get("/api/registro");
     expect(registro.status).toBe(200);
     expect(registro.body.domain).toBe("proveedorregional.cl");
     expect(registro.body.members.map((member: { email: string }) => member.email).sort()).toEqual([
@@ -504,6 +538,55 @@ describe("instripe BaaS platform", () => {
       "pago@norte.cl",
     ]);
     expect(registro.body.members.every((member: { status: string }) => member.status === "preinscrito")).toBe(true);
+  });
+
+  it("does not grant dashboard or pre-registered account access after terms acceptance", async () => {
+    const server = app();
+    const visitor = request.agent(server);
+    const accepted = await visitor.post("/api/onboarding").send({
+      name: "Visita",
+      email: "visita@example.cl",
+      accepted: true,
+    });
+    expect(accepted.status).toBe(201);
+    expect((await visitor.get("/api/onboarding")).body.accepted).toBe(true);
+    expect((await visitor.get("/api/session")).body.user).toBeNull();
+    expect((await visitor.get("/api/overview")).status).toBe(401);
+    expect((await visitor.get("/api/registro")).status).toBe(401);
+
+    const commerce = await signedIn(server, "caja@taller.cl");
+    expect((await commerce.get("/api/registro")).status).toBe(403);
+    const operation = await signedIn(server);
+    expect((await operation.get("/api/registro")).status).toBe(200);
+  });
+
+  it("publishes the sponsorship contact independently from the panel mailbox", async () => {
+    const configured = await request(app({ PUBLIC_CONTACT_EMAIL: "alianzas@example.cl" })).get("/api/public-contact");
+    expect(configured.status).toBe(200);
+    expect(configured.body).toEqual({ email: "alianzas@example.cl" });
+
+    const defaultContact = await request(app()).get("/api/public-contact");
+    expect(defaultContact.status).toBe(200);
+    expect(defaultContact.body).toEqual({ email: "patrocinios@proveedorregional.cl" });
+
+    const invalid = await request(app({ PUBLIC_CONTACT_EMAIL: "not-an-email" })).get("/api/public-contact");
+    expect(invalid.status).toBe(503);
+
+    const missingMailConfig = await request(app())
+      .post("/api/public-contact")
+      .send({
+        name: "Ana Pérez",
+        email: "ana@example.cl",
+        topic: "Patrocinio y alianzas",
+        message: "Quisiera conversar sobre una alianza.",
+        consent: true,
+      });
+    expect(missingMailConfig.status).toBe(503);
+
+    const invalidRequest = await request(app())
+      .post("/api/public-contact")
+      .send({ name: "", email: "no-es-correo", topic: "otro", message: "", consent: false });
+    expect(invalidRequest.status).toBe(400);
   });
 
   it("keeps accounts, balances and terms when a new platform opens the same database", async () => {
@@ -528,6 +611,15 @@ describe("instripe BaaS platform", () => {
     expect(second.cuentas.list().filter((account) => account.email === "caja@taller.cl")).toHaveLength(1);
     expect(second.registro.tosSession(accepted.token)?.email).toBe("luis@proveedorregional.cl");
     expect(second.floatAccount.balance).toBe(first.floatAccount.balance);
+  });
+
+  it("exposes the Portales module to Operación, not company users", async () => {
+    const server = app();
+    const operacion = await signedIn(server);
+    const comercio = await signedIn(server, "caja@taller.cl");
+
+    expect((await operacion.get("/api/session")).body.user.options).toContain("portales");
+    expect((await comercio.get("/api/session")).body.user.options).not.toContain("portales");
   });
 
   it("keeps the dashboard closed until a role signs in", async () => {
@@ -565,6 +657,7 @@ describe("instripe BaaS platform", () => {
       "claims",
       "connect",
       "empresas",
+      "portales",
       "treasury",
       "cards",
       "design",
@@ -574,6 +667,7 @@ describe("instripe BaaS platform", () => {
       "configuracion",
       "actuarial",
       "correo",
+      "pilot",
     ]);
     expect(operacion.body.user.passwordHash).toBeUndefined();
     const cookie = String(operacion.headers["set-cookie"]);
@@ -587,23 +681,30 @@ describe("instripe BaaS platform", () => {
 
     const comercio = await signedIn(server, "caja@taller.cl");
     const comercioSession = await comercio.get("/api/session");
-    expect(comercioSession.body.user.options).toEqual(["overview", "empresas", "clases"]);
+    expect(comercioSession.body.user.options).toEqual([
+      "overview",
+      "empresas",
+      "clases",
+      "payments",
+      "connect",
+      "treasury",
+      "cards",
+    ]);
     const comercioOverview = await comercio.get("/api/overview");
     expect(comercioOverview.status).toBe(200);
     expect(comercioOverview.body.inicio).toBeDefined();
     expect(comercioOverview.body.accounts).toBeUndefined();
     expect(comercioOverview.body.cobros).toBeUndefined();
-    expect(comercioOverview.body.connect).toBeUndefined();
-    expect(comercioOverview.body.payments).toBeUndefined();
-    expect(comercioOverview.body.cards).toBeUndefined();
+    expect(comercioOverview.body.connect).toBeDefined();
+    expect(comercioOverview.body.payments).toBeDefined();
+    expect(comercioOverview.body.cards).toBeDefined();
     expect(comercioOverview.body.policies).toBeUndefined();
     const blocked = await comercio.get("/api/payments");
-    expect(blocked.status).toBe(403);
-    expect(blocked.body.error).toBe("Esta opción no está en tu rol");
-    expect((await comercio.get("/api/tarjetas")).status).toBe(403);
+    expect(blocked.status).toBe(200);
+    expect((await comercio.get("/api/tarjetas")).status).toBe(200);
     expect((await comercio.get("/api/cuentas")).status).toBe(403);
     expect((await comercio.get("/api/cobros")).status).toBe(403);
-    expect((await comercio.get("/api/connect")).status).toBe(403);
+    expect((await comercio.get("/api/connect")).status).toBe(200);
     expect((await comercio.get("/api/frosting")).status).toBe(403);
     expect((await comercio.get("/api/gateways")).status).toBe(200);
 
@@ -623,6 +724,7 @@ describe("instripe BaaS platform", () => {
       currentPassword: TEST_PASSWORD,
       newPassword: "NuevaClave.183",
     });
+
     expect(changed.status).toBe(200);
     const stale = await request(server).post("/api/session").send({
       email: "ana@proveedorregional.cl",
@@ -640,7 +742,8 @@ describe("instripe BaaS platform", () => {
     expect(out.body.user).toBeNull();
     expect((await comercio.get("/api/overview")).status).toBe(401);
     expect((await request(server).get("/api/empresas")).status).toBe(401);
-    expect((await request(server).get("/api/registro")).status).toBe(200);
+    expect((await request(server).get("/api/registro")).status).toBe(401);
+    expect((await comercio.get("/api/registro")).status).toBe(401);
     expect((await request(server).post("/webhooks/stripe").set("Content-Type", "application/json").send({
       id: "evt_public",
       type: "checkout.session.completed",
@@ -648,7 +751,28 @@ describe("instripe BaaS platform", () => {
     })).status).toBe(200);
   });
 
-  it("keeps company prepaid on its own card and lets operación move it", async () => {
+  it("restricts pilot planning to operación and keeps it disabled until Databricks is configured", async () => {
+    const server = app();
+    const payload = {
+      name: "Piloto inicial",
+      objective: "Validar onboarding de empresas",
+      companyCount: 1,
+      workerCount: 5,
+      durationWeeks: 4,
+      constraints: "",
+    };
+    expect((await request(server).post("/api/pilot/plan").send(payload)).status).toBe(401);
+
+    const comercio = await signedIn(server, "caja@taller.cl");
+    expect((await comercio.post("/api/pilot/plan").send(payload)).status).toBe(403);
+
+    const operacion = await signedIn(server);
+    const unavailable = await operacion.post("/api/pilot/plan").send(payload);
+    expect(unavailable.status).toBe(503);
+    expect(unavailable.body.error).toContain("no está configurado");
+  });
+
+  it("removes demo balances, credits and internal company transfers", async () => {
     const server = app();
     const comercio = await signedIn(server, "caja@taller.cl");
     const operacion = await signedIn(server);
@@ -659,7 +783,8 @@ describe("instripe BaaS platform", () => {
       ownerEmail: "caja@taller.cl",
     });
     expect(created.status).toBe(201);
-    expect(created.body.company.balance).toBe(0);
+    expect(created.body.company.balance).toBeUndefined();
+    expect(created.body.company.card.displayBalance).toBeUndefined();
     expect(created.body.company.last4).toMatch(/^\d{4}$/);
     expect(created.body.company.color).toBe("#0e3e66");
     expect(created.body.company.canManage).toBe(true);
@@ -669,13 +794,14 @@ describe("instripe BaaS platform", () => {
     const denied = await titular.post("/api/empresas").send({ name: "Ana", color: "#112233" });
     expect(denied.status).toBe(403);
     expect(denied.body.error).toBe("Solo operación configura la cuenta");
-    expect((await comercio.post(`/api/empresas/${id}/abono`).send({ amount: 50_000 })).status).toBe(403);
     expect((await operacion.post("/api/empresas").send({ name: "Sin color", color: "azul", ownerEmail: "caja@taller.cl" })).status).toBe(400);
-
-    const funded = await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 50_000 });
-    expect(funded.status).toBe(200);
-    expect(funded.body.company.balance).toBe(50_000);
-    expect((await operacion.get("/api/overview")).body.float.balance).toBe(0);
+    expect((await comercio.post(`/api/empresas/${id}/abono`).send({ amount: 50_000 })).status).toBe(410);
+    expect((await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 50_000 })).status).toBe(410);
+    expect((await operacion.post(`/api/empresas/${id}/transferencias`).send({
+      workerId: "wrk_demo",
+      amount: 20_000,
+      direction: "to_worker",
+    })).status).toBe(410);
 
     const other = await signedIn(server, "pago@norte.cl");
     expect((await other.get("/api/empresas")).body.companies).toEqual([]);
@@ -687,65 +813,378 @@ describe("instripe BaaS platform", () => {
       email: "ana@proveedorregional.cl",
     });
     expect(withWorker.status).toBe(201);
-    const workerId = withWorker.body.company.workers[0].id;
-    const moved = await operacion.post(`/api/empresas/${id}/transferencias`).send({
-      workerId,
-      amount: 20_000,
-      direction: "to_worker",
-    });
-    expect(moved.status).toBe(200);
-    expect(moved.body.company.balance).toBe(30_000);
-    expect(moved.body.company.workers[0].balance).toBe(20_000);
-    expect((await comercio.post(`/api/empresas/${id}/transferencias`).send({
-      workerId,
-      amount: 1_000,
-      direction: "to_worker",
-    })).status).toBe(403);
+    expect(withWorker.body.company.workers[0].balance).toBeUndefined();
+    expect(withWorker.body.company.workers[0].displayBalance).toBeUndefined();
 
     const own = await titular.get("/api/empresas");
     expect(own.status).toBe(200);
     expect(own.body.canCreate).toBe(false);
     expect(own.body.companies).toHaveLength(1);
-    expect(own.body.companies[0].displayBalance).toBe("—");
     expect(own.body.companies[0].workers).toHaveLength(1);
-    expect(own.body.companies[0].workers[0].balance).toBe(20_000);
+    expect(own.body.companies[0].workers[0].balance).toBeUndefined();
     expect(own.body.companies[0].workers[0].email).toBe("ana@proveedorregional.cl");
-    expect(own.body.companies[0].transfers).toEqual([]);
+    expect(own.body.companies[0].transfers).toBeUndefined();
     expect(own.body.companies[0].users).toEqual([]);
     expect(JSON.stringify(own.body)).not.toContain("caja@taller.cl");
 
-    expect((await titular.post(`/api/empresas/${id}/transferencias`).send({
-      workerId,
-      amount: 5_000,
-      direction: "to_company",
-    })).status).toBe(403);
-    const tooMuch = await operacion.post(`/api/empresas/${id}/transferencias`).send({
-      workerId,
-      amount: 999_999,
-      direction: "to_company",
-    });
-    expect(tooMuch.status).toBe(422);
-    expect(tooMuch.body.error).toBe("Saldo insuficiente en la tarjeta");
-    const back = await operacion.post(`/api/empresas/${id}/transferencias`).send({
-      workerId,
-      amount: 5_000,
-      direction: "to_company",
-    });
-    expect(back.status).toBe(200);
-    expect(back.body.company.balance).toBe(35_000);
-    expect(back.body.company.workers[0].balance).toBe(15_000);
-    expect((await operacion.get("/api/overview")).body.float.balance).toBe(0);
     const companyView = await comercio.get("/api/empresas");
     expect(companyView.body.canCreate).toBe(false);
     expect(companyView.body.companies).toHaveLength(1);
-    expect(companyView.body.companies[0].balance).toBe(35_000);
     expect(companyView.body.companies[0].canManage).toBe(false);
-    expect(companyView.body.companies[0].workers).toEqual([]);
+    expect(companyView.body.companies[0].canViewWorkers).toBe(true);
+    expect(companyView.body.companies[0].workers).toHaveLength(1);
+    expect(companyView.body.companies[0].workers[0].email).toBe("");
     expect(companyView.body.companies[0].users).toEqual([]);
-    expect(companyView.body.companies[0].transfers).toEqual([]);
     expect(JSON.stringify(companyView.body)).not.toContain("ana@proveedorregional.cl");
-    const workerAfter = await titular.get("/api/inicio");
-    expect(workerAfter.body.card.balance).toBe(15_000);
+    const panelScript = await request(server).get("/app.js");
+    expect(panelScript.text).not.toContain("Registrar abono demo");
+    expect(panelScript.text).not.toContain("Registrar movimiento demo");
+    expect(panelScript.text).not.toContain("Transferir prepago local de demo");
+    expect(panelScript.text).toContain("transferencias bancarias");
+  });
+
+  it("requires operación and exact-name confirmation to delete a company", async () => {
+    const server = app();
+    const operation = await signedIn(server);
+    const owner = await signedIn(server, "caja@taller.cl");
+    const created = await operation.post("/api/empresas").send({
+      name: "Empresa para borrar",
+      color: "#0e3e66",
+      ownerEmail: "caja@taller.cl",
+    });
+    const companyId = created.body.company.id;
+    const added = await operation.post(`/api/empresas/${companyId}/trabajadores`).send({
+      name: "Trabajador de prueba",
+      email: "trabajador@ejemplo.cl",
+    });
+    expect(added.status).toBe(201);
+
+    expect((await owner.delete(`/api/empresas/${companyId}`).send({ confirmation: "Empresa para borrar" })).status).toBe(403);
+    expect((await operation.delete(`/api/empresas/${companyId}`).send({ confirmation: "incorrecto" })).status).toBe(400);
+    expect((await operation.get("/api/empresas")).body.companies).toHaveLength(1);
+
+    const deleted = await operation.delete(`/api/empresas/${companyId}`).send({ confirmation: "Empresa para borrar" });
+    expect(deleted.status).toBe(200);
+    expect(deleted.body).toEqual({ deleted: true });
+    expect((await operation.get("/api/empresas")).body.companies).toEqual([]);
+    expect((await owner.get("/api/empresas")).status).toBe(401);
+    expect((await owner.get("/api/session")).body.user).toBeNull();
+    expect((await request(server).post("/api/session").send({
+      email: "caja@taller.cl",
+      password: TEST_PASSWORD,
+    })).status).toBe(401);
+  });
+
+  it("returns a clear gone response for retired demo balance and transfer APIs", async () => {
+    const server = app();
+    const operation = await signedIn(server);
+    const created = await operation.post("/api/empresas").send({
+      name: "Empresa sin prepago demo",
+      color: "#0e3e66",
+    });
+    const companyId = created.body.company.id;
+    const credit = await operation.post(`/api/empresas/${companyId}/abono`).send({ amount: 5000 });
+    const internalTransfer = await operation.post(`/api/empresas/${companyId}/transferencias`).send({ amount: 5000 });
+    expect(credit.status).toBe(410);
+    expect(credit.body.error).toContain("retirados");
+    expect(internalTransfer.status).toBe(410);
+    expect(internalTransfer.body.error).toContain("Global66");
+    expect((await operation.get("/api/empresas")).body.companies[0].card.balance).toBeUndefined();
+  });
+
+  it("purges legacy company demo balances and transfers on module startup", () => {
+    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:" }));
+    const actor = {
+      id: "usr_operacion",
+      email: "operacion@proveedorregional.cl",
+      name: "Operación",
+      role: "operacion" as const,
+    };
+    const company = platform.empresas.create(actor, { name: "Empresa migrada", color: "#0e3e66" });
+    const worker = platform.empresas.addWorker(actor, company.id, {
+      name: "Colaborador migrado",
+      email: "colaborador.migrado@ejemplo.cl",
+    });
+    const legacyAccount = platform.payments.ledger.createAccount({
+      name: company.name,
+      email: "operacion@proveedorregional.cl",
+      currency: "clp",
+    });
+    const legacyWorkerAccount = platform.payments.ledger.createAccount({
+      name: "Colaborador migrado",
+      email: "colaborador.migrado@ejemplo.cl",
+      currency: "clp",
+    });
+    const storedCompany = platform.store.get<Record<string, unknown>>("companies", company.id);
+    expect(storedCompany).toBeDefined();
+    platform.store.put("companies", company.id, { ...storedCompany, ledgerAccountId: legacyAccount.id });
+    const storedWorker = platform.store.get<Record<string, unknown>>("company_workers", worker.workers[0].id);
+    expect(storedWorker).toBeDefined();
+    platform.store.put("company_workers", worker.workers[0].id, { ...storedWorker, ledgerAccountId: legacyWorkerAccount.id });
+    const entry = platform.payments.ledger.post("credit", legacyAccount.id, 5000, "Legacy demo abono");
+    const workerEntry = platform.payments.ledger.post("credit", legacyWorkerAccount.id, 1000, "Legacy demo abono");
+    platform.store.put("company_transfers", "ptr_legacy", {
+      id: "ptr_legacy",
+      companyId: company.id,
+      amount: 5000,
+    });
+
+    new EmpresasModule(platform.payments, platform.store, undefined);
+
+    expect(platform.payments.ledger.getAccount(legacyAccount.id)).toBeUndefined();
+    expect(platform.payments.ledger.getAccount(legacyWorkerAccount.id)).toBeUndefined();
+    expect(platform.store.get("ledger_accounts", legacyAccount.id)).toBeUndefined();
+    expect(platform.store.get("ledger_accounts", legacyWorkerAccount.id)).toBeUndefined();
+    expect(platform.store.get("ledger_entries", entry.id)).toBeUndefined();
+    expect(platform.store.get("ledger_entries", workerEntry.id)).toBeUndefined();
+    expect(platform.store.get<Record<string, unknown>>("company_workers", worker.workers[0].id)?.ledgerAccountId).toBeUndefined();
+    expect(platform.store.get("company_transfers", "ptr_legacy")).toBeUndefined();
+    expect(platform.store.get<Record<string, unknown>>("companies", company.id)?.ledgerAccountId).toBeUndefined();
+  });
+
+  it("purges company-linked local records and sessions from memory and storage", () => {
+    const platform = new Platform(loadConfig({ PORT: "3000", CURRENCY: "clp", DATABASE_PATH: ":memory:" }));
+    const operation = {
+      id: "usr_operacion",
+      email: "operacion@proveedorregional.cl",
+      name: "Operación",
+      role: "operacion" as const,
+    };
+    const owner = { id: "usr_taller", email: "caja@taller.cl", name: "Taller Sur" };
+    const company = platform.empresas.create(operation, {
+      name: "Empresa privada",
+      color: "#0e3e66",
+      owner: owner ?? undefined,
+    });
+    const otherCompany = platform.empresas.create(operation, {
+      name: "Otra empresa del mismo titular",
+      color: "#0e3e66",
+      owner: owner ?? undefined,
+    });
+    const worker = platform.empresas.addWorker(operation, company.id, {
+      name: "Trabajador privado",
+      email: "trabajador@privado.cl",
+    });
+    const workerId = worker.workers[0].id;
+    const collaborator = platform.colaboradores.create(operation, {
+      companyId: company.id,
+      name: "Colaborador privado",
+      email: "colaborador@privado.cl",
+      role: "colaborador",
+    });
+    const session = platform.portal.createSession("cliente@privado.cl", company.id);
+    platform.portal.startKYC(session.id);
+    const onboarding = platform.portal.completeKYC(session.id, {
+      name: "Cliente privado",
+      phone: "+56912345678",
+      address: "Dirección privada",
+      rut: "12.345.678-9",
+    });
+    const customerId = onboarding.customer?.id;
+    expect(customerId).toBeDefined();
+    platform.laboral.enroll("gestion-financiera", {
+      name: "Alumno privado",
+      email: "alumno@privado.cl",
+    }, { companyId: company.id });
+    const user = platform.auth.createScopedUser({
+      name: "Usuario privado",
+      email: "usuario@privado.cl",
+      role: "titular",
+      companyId: company.id,
+      password: "Password.183",
+    });
+    const login = platform.auth.login(user.email, "Password.183");
+    const ownerLogin = platform.auth.login("caja@taller.cl", DEFAULT_SEED_PASSWORD);
+    const companyAccountId = platform.store.get<{ ledgerAccountId: string }>("companies", company.id)?.ledgerAccountId;
+    const workerAccountId = platform.store.get<{ ledgerAccountId: string }>("company_workers", workerId)?.ledgerAccountId;
+    const collaboratorAccountId = platform.store.get<{ ledgerAccountId: string }>("colaboradores", collaborator.id)?.ledgerAccountId;
+
+    expect(platform.deleteCompany(operation, company.id, company.name)).toEqual({ deleted: true });
+    expect(platform.store.get("companies", company.id)).toBeUndefined();
+    expect(platform.store.get("company_workers", workerId)).toBeUndefined();
+    expect(platform.store.get("company_users", `${company.id}:${user.id}`)).toBeUndefined();
+    expect(platform.store.get("portal_sessions", session.id)).toBeUndefined();
+    expect(platform.store.get("portal_customers", customerId ?? "")).toBeUndefined();
+    expect(platform.store.get("auth_users", user.id)).toBeUndefined();
+    expect(platform.auth.userFromCookie(login.token)).toBeNull();
+    expect(platform.auth.userFromCookie(ownerLogin.token)).not.toBeNull();
+    expect(platform.payments.ledger.getAccount(companyAccountId ?? "")).toBeUndefined();
+    expect(platform.payments.ledger.getAccount(workerAccountId ?? "")).toBeUndefined();
+    expect(platform.payments.ledger.getAccount(collaboratorAccountId ?? "")).toBeUndefined();
+    expect(platform.empresas.list(operation).companies).toHaveLength(1);
+    expect(platform.empresas.list(operation).companies[0].id).toBe(otherCompany.id);
+    expect(platform.store.get("auth_users", "usr_taller")).toBeDefined();
+    expect(platform.deleteCompany(operation, otherCompany.id, otherCompany.name)).toEqual({ deleted: true });
+    expect(platform.auth.userFromCookie(ownerLogin.token)).toBeNull();
+    expect(platform.store.get("auth_users", "usr_taller")).toBeUndefined();
+    expect(platform.empresas.list(operation).companies).toEqual([]);
+    expect(platform.colaboradores.listByCompany(company.id, operation)).toEqual([]);
+    expect(platform.laboral.courses({ companyId: company.id }).courses[0].students).toEqual([]);
+    expect(() => platform.portal.startKYC(session.id)).toThrow("Sesión no encontrada");
+  });
+
+  it("stores each company's Global66 secret encrypted and scopes access to its private portal", async () => {
+    const server = app({ GLOBAL66_CREDENTIALS_ENCRYPTION_KEY: "test-key-with-sufficient-entropy" });
+    const operacion = await signedIn(server);
+    const created = await operacion.post("/api/empresas").send({
+      name: "Taller Sur",
+      color: "#0e3e66",
+      ownerEmail: "caja@taller.cl",
+    });
+    expect(created.status).toBe(201);
+    const companyId = created.body.company.id;
+    const comercio = await signedIn(server, "caja@taller.cl");
+    expect((await comercio.get(`/api/empresas/${companyId}/global66`)).status).toBe(409);
+    const secret = "g66-private-client-secret";
+    const connected = await comercio.put(`/api/empresas/${companyId}/global66`).send({
+      clientId: "client-12345678",
+      clientSecret: secret,
+      accountId: "account-123",
+    });
+    expect(connected.status).toBe(200);
+    expect(connected.body.company.global66Connection).toMatchObject({
+      configured: true,
+      accountId: "account-123",
+      clientIdHint: "clie****5678",
+    });
+    expect(JSON.stringify(connected.body)).not.toContain(secret);
+    expect(JSON.stringify(connected.body)).not.toContain("encryptedClientSecret");
+
+    const otherCompany = await operacion.post("/api/empresas").send({
+      name: "Pago Norte",
+      color: "#0e3e66",
+      ownerEmail: "pago@norte.cl",
+    });
+    expect(otherCompany.status).toBe(201);
+    const otherCommerce = await signedIn(server, "pago@norte.cl");
+    const crossTenant = await otherCommerce.put(`/api/empresas/${companyId}/global66`).send({
+      clientId: "other-client",
+      clientSecret: "other-secret",
+      accountId: "other-account",
+    });
+    expect(crossTenant.status).toBe(403);
+    expect((await otherCommerce.get(`/api/empresas/${companyId}/global66`)).status).toBe(403);
+    const duplicateCredential = await otherCommerce.put(`/api/empresas/${otherCompany.body.company.id}/global66`).send({
+      clientId: "client-12345678",
+      clientSecret: "other-secret",
+      accountId: "other-account",
+    });
+    expect(duplicateCredential.status).toBe(409);
+  });
+
+  it("refuses Global66 credential setup when the server encryption key is missing", async () => {
+    const server = app();
+    const operacion = await signedIn(server);
+    const created = await operacion.post("/api/empresas").send({
+      name: "Taller Sur",
+      color: "#0e3e66",
+      ownerEmail: "caja@taller.cl",
+    });
+    const comercio = await signedIn(server, "caja@taller.cl");
+    const response = await comercio.put(`/api/empresas/${created.body.company.id}/global66`).send({
+      clientId: "client-id",
+      clientSecret: "secret",
+      accountId: "account-id",
+    });
+    expect(response.status).toBe(503);
+    expect(response.body.error).toContain("GLOBAL66_CREDENTIALS_ENCRYPTION_KEY");
+  });
+
+  it("submits domestic bank transfers idempotently and waits for Global66 movement confirmation", async () => {
+    const originalFetch = globalThis.fetch;
+    let paymentRequests = 0;
+    let submittedPayload: Record<string, unknown> | undefined;
+    const respond = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/b2b/auth")) return respond({ token: "access", refreshToken: "refresh" });
+      if (url.includes("/b2b/movements/")) {
+        return respond({
+          totalPages: 1,
+          movements: [{
+            id: paymentRequests ? "tx-domestic-1" : "opening",
+            amount: paymentRequests ? 1_000 : 50_000,
+            status: "PAID",
+            transactionDate: paymentRequests ? "2026-01-02T10:00:00" : "2026-01-01T10:00:00",
+            accountBalance: paymentRequests ? 49_000 : 50_000,
+            amountCurrency: "CLP",
+          }],
+        });
+      }
+      if (url.endsWith("/b2b/transactions/payments")) {
+        paymentRequests += 1;
+        if (!(init?.body instanceof FormData)) throw new Error("Global66 request must be multipart");
+        submittedPayload = JSON.parse(String(init.body.get("request"))) as Record<string, unknown>;
+        return respond({ valid: true, status: "PROCESSING", transactionId: "tx-domestic-1" });
+      }
+      return respond({ error: "Unexpected Global66 route" }, 404);
+    }) as typeof fetch;
+    const server = app({ GLOBAL66_CREDENTIALS_ENCRYPTION_KEY: "test-key-with-sufficient-entropy" });
+    globalThis.fetch = originalFetch;
+
+    const operation = await signedIn(server);
+    const created = await operation.post("/api/empresas").send({
+      name: "Taller Sur",
+      color: "#0e3e66",
+      ownerEmail: "caja@taller.cl",
+    });
+    const companyId = created.body.company.id;
+    const worker = await operation.post(`/api/empresas/${companyId}/trabajadores`).send({
+      name: "Ana Díaz",
+      email: "ana@proveedorregional.cl",
+    });
+    const workerId = worker.body.company.workers[0].id;
+    const comercio = await signedIn(server, "caja@taller.cl");
+    const configured = await comercio.put(`/api/empresas/${companyId}/global66`).send({
+      clientId: "client-123",
+      clientSecret: "secret-123",
+      accountId: "account-123",
+    });
+    expect(configured.status).toBe(200);
+
+    const body = {
+      workerId,
+      idempotencyKey: "request-123",
+      amount: 1_000,
+      beneficiaryName: "Ana",
+      beneficiaryLastName: "Díaz",
+      accountType: "CA",
+      accountNumber: "123456789",
+      documentNumber: "12345678-9",
+      documentType: "RUT",
+      purposeCode: 1,
+    };
+    const submitted = await comercio.post(`/api/empresas/${companyId}/global66/transferencias`).send(body);
+    expect(submitted.status).toBe(202);
+    expect(submitted.body.transfer.status).toBe("PROCESSING");
+    const deletionWhilePending = await operation.delete(`/api/empresas/${companyId}`).send({ confirmation: "Taller Sur" });
+    expect(deletionWhilePending.status).toBe(409);
+    expect(deletionWhilePending.body.error).toContain("transferencias Global66");
+    expect(submittedPayload).toMatchObject({
+      transactionType: "REMITTANCE",
+      originCurrency: "CLP",
+      amount: 1_000,
+      paymentType: "WIRE_TRANSFER",
+      purposeCode: [1],
+      beneficiary: { operationType: "BANK_TRANSFER", destinationCurrency: "CLP", countryCode: "CL" },
+    });
+    expect(JSON.stringify(submitted.body)).not.toContain("123456789");
+    expect(JSON.stringify(submitted.body)).not.toContain("12345678-9");
+
+    const duplicate = await comercio.post(`/api/empresas/${companyId}/global66/transferencias`).send(body);
+    expect(duplicate.status).toBe(202);
+    expect(duplicate.body.transfer.id).toBe(submitted.body.transfer.id);
+    expect(paymentRequests).toBe(1);
+    expect((await comercio.post(`/api/empresas/${companyId}/global66/transferencias`).send({
+      ...body,
+      amount: 2_000,
+    })).status).toBe(409);
+
+    const reconciled = await comercio.get(`/api/empresas/${companyId}/global66`);
+    expect(reconciled.status).toBe(200);
+    expect(reconciled.body.wallet.transfers[0].status).toBe("SUCCESSFUL");
+    expect(reconciled.body.wallet.balance).toBe(49_000);
   });
 
   it("does not let a demo collection fund a Transfer, and reverses a rejected one", async () => {
@@ -839,7 +1278,7 @@ describe("instripe BaaS platform", () => {
     expect((await norte.post("/api/cuentas").send({ name: "Ajena", email: "pago@norte.cl" })).status).toBe(403);
   });
 
-  it("shows each client their own virtual debit card and keeps demo money out of available funds", async () => {
+  it("shows company cards without demo balances or ledger movements", async () => {
     const server = app();
     const comercio = await signedIn(server, "caja@taller.cl");
     const titular = await signedIn(server, "ana@proveedorregional.cl");
@@ -859,14 +1298,12 @@ describe("instripe BaaS platform", () => {
     expect(withLogo.body.company.card.kind).toBe("debito");
     expect(withLogo.body.company.card.plastic).toBe(false);
 
-    await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 50_000 });
     const withWorkers = await operacion.post(`/api/empresas/${id}/trabajadores`).send({
       name: "Ana Díaz",
       email: "ana@proveedorregional.cl",
     });
     const workerId = withWorkers.body.company.workers[0].id;
     await operacion.post(`/api/empresas/${id}/trabajadores`).send({ name: "Luis Soto", email: "luis@proveedorregional.cl" });
-    await operacion.post(`/api/empresas/${id}/transferencias`).send({ workerId, amount: 20_000, direction: "to_worker" });
 
     const companyHome = await comercio.get("/api/inicio");
     expect(companyHome.body).toMatchObject({
@@ -876,9 +1313,8 @@ describe("instripe BaaS platform", () => {
       companyName: "Taller Sur",
       coursesPath: "#/clases",
     });
-    expect(companyHome.body.card.balance).toBe(30_000);
-    expect(companyHome.body.card.available).toBe(0);
-    expect(companyHome.body.card.realFunds).toBe(false);
+    expect(companyHome.body.card.balance).toBeUndefined();
+    expect(companyHome.body.card.displayBalance).toBeUndefined();
     expect(companyHome.body.card.logo).toBe(logo);
     expect(companyHome.body.workers).toBeUndefined();
     expect(JSON.stringify(companyHome.body)).not.toContain("luis@proveedorregional.cl");
@@ -886,19 +1322,21 @@ describe("instripe BaaS platform", () => {
 
     const companyList = await comercio.get("/api/empresas");
     const company = companyList.body.companies[0];
-    expect(company.workers).toEqual([]);
+    expect(company.workers).toHaveLength(2);
+    expect(company.workers.every((worker: { balance?: number; email: string }) =>
+      worker.balance === undefined && worker.email === "",
+    )).toBe(true);
     expect(company.users).toEqual([]);
     expect(company.canManage).toBe(false);
-    expect(company.card.balance).toBe(30_000);
-    expect(company.card.available).toBe(0);
-    expect(company.card.movements.length).toBeGreaterThan(0);
+    expect(company.card.displayBalance).toBeUndefined();
+    expect(company.card.movements).toBeUndefined();
     expect(JSON.stringify(companyList.body)).not.toContain("luis@proveedorregional.cl");
 
     const workerHome = await titular.get("/api/inicio");
     expect(workerHome.body.name).toBe("Ana Díaz");
     expect(workerHome.body.companyName).toBe("Taller Sur");
     expect(workerHome.body.card.id).toBe(workerId);
-    expect(workerHome.body.card.balance).toBe(20_000);
+    expect(workerHome.body.card.balance).toBeUndefined();
     expect(workerHome.body.card.logo).toBe(logo);
     expect(workerHome.body.card.kind).toBe("debito");
     expect(workerHome.body.companyBalance).toBeUndefined();
@@ -907,14 +1345,14 @@ describe("instripe BaaS platform", () => {
     expect(JSON.stringify(workerHome.body)).not.toContain("caja@taller.cl");
 
     const own = await titular.get("/api/empresas");
-    expect(own.body.companies[0].balance).toBe(0);
-    expect(own.body.companies[0].displayBalance).toBe("—");
-    expect(own.body.companies[0].card.movements).toEqual([]);
+    expect(own.body.companies[0].balance).toBeUndefined();
+    expect(own.body.companies[0].displayBalance).toBeUndefined();
+    expect(own.body.companies[0].card.movements).toBeUndefined();
     expect(own.body.companies[0].workers).toHaveLength(1);
-    expect(own.body.companies[0].workers[0].balance).toBe(20_000);
+    expect(own.body.companies[0].workers[0].balance).toBeUndefined();
     expect(own.body.companies[0].workers[0].logo).toBe(logo);
-    expect(own.body.companies[0].workers[0].movements.length).toBeGreaterThan(0);
-    expect(own.body.companies[0].workers[0].receipts.length).toBeGreaterThan(0);
+    expect(own.body.companies[0].workers[0].movements).toBeUndefined();
+    expect(own.body.companies[0].workers[0].receipts).toBeUndefined();
     expect(JSON.stringify(own.body)).not.toContain("luis@proveedorregional.cl");
 
     expect((await comercio.post(`/api/empresas/${id}/tarjetas/${id}`).send({
@@ -941,8 +1379,8 @@ describe("instripe BaaS platform", () => {
       alerts: false,
     });
     expect(workerOptions.status).toBe(200);
-    expect(workerOptions.body.company.workers.find((worker: { id: string }) => worker.id === workerId).balance).toBe(20_000);
-    const saved = await comercio.get("/api/empresas");
+    expect(workerOptions.body.company.workers.find((worker: { id: string }) => worker.id === workerId).balance).toBeUndefined();
+    const saved = await operacion.get("/api/empresas");
     expect(saved.body.companies[0].card.options).toMatchObject({
       spendLimit: 8_000,
       blocked: false,
@@ -950,7 +1388,7 @@ describe("instripe BaaS platform", () => {
       period: "mensual",
       categories: ["transporte"],
     });
-    expect(saved.body.companies[0].workers).toEqual([]);
+    expect(saved.body.companies[0].workers).toHaveLength(2);
     const workerSaved = await titular.get("/api/empresas");
     expect(workerSaved.body.companies[0].workers[0].options).toMatchObject({ spendLimit: 4_000, blocked: true });
     expect(workerSaved.body.companies[0].card.options.spendLimit).toBeNull();
@@ -960,7 +1398,7 @@ describe("instripe BaaS platform", () => {
       amount: 1_000,
       direction: "to_company",
     });
-    expect(blockedBack.status).toBe(422);
+    expect(blockedBack.status).toBe(410);
 
     const opened = await operacion.post("/api/cuentas").send({ name: "Taller Sur", email: "caja@taller.cl" });
     await operacion.post(`/api/cuentas/${opened.body.account.id}/recarga`).send({ amount: 10_000, gateway: "chile" });
@@ -968,9 +1406,8 @@ describe("instripe BaaS platform", () => {
     expect(book.body.wallet.balance).toBe(10_000);
     expect(book.body.transferable.balance).toBe(0);
     const afterDemo = await comercio.get("/api/empresas");
-    expect(afterDemo.body.companies[0].card.balance).toBe(30_000);
-    expect(afterDemo.body.companies[0].card.available).toBe(0);
-    expect(afterDemo.body.companies[0].card.realFunds).toBe(false);
+    expect(afterDemo.body.companies[0].card.displayBalance).toBeUndefined();
+    expect(afterDemo.body.companies[0].card.balance).toBeUndefined();
 
     const panel = await request(server).get("/app.js");
     expect(panel.text).toContain("Entrar a cursos");
@@ -1023,6 +1460,133 @@ describe("instripe BaaS platform", () => {
     expect(enrolled.body.course.students).toEqual([
       expect.objectContaining({ email: "ana@proveedorregional.cl", name: "Ana Díaz" }),
     ]);
+  });
+
+  it("runs scoped LMS courses with student, evaluator, videos, tasks and forum", async () => {
+    const server = app();
+    const operation = await signedIn(server);
+    const companyResponse = await operation.post("/api/empresas").send({
+      name: "Empresa LMS",
+      color: "#0e3e66",
+      ownerEmail: "caja@taller.cl",
+    });
+    expect(companyResponse.status).toBe(201);
+    const companyId = companyResponse.body.company.id;
+
+    const learnerResponse = await operation.post("/api/clases/usuarios").send({
+      name: "Estudiante LMS",
+      email: "estudiante@lms.cl",
+      role: "alumno",
+      companyId,
+      password: "Alumno.Init.123",
+    });
+    expect(learnerResponse.status).toBe(201);
+    expect(learnerResponse.body.user).toMatchObject({
+      role: "alumno",
+      roleLabel: "Alumno",
+      companyId,
+      mustChangePassword: true,
+    });
+    expect(learnerResponse.body.user.passwordHash).toBeUndefined();
+
+    const evaluatorResponse = await operation.post("/api/clases/usuarios").send({
+      name: "Evaluador LMS",
+      email: "evaluador@lms.cl",
+      role: "evaluador",
+      companyId,
+      password: "Evaluador.Init.123",
+    });
+    expect(evaluatorResponse.status).toBe(201);
+    const evaluator = await signedIn(server, "evaluador@lms.cl", "Evaluador.Init.123");
+    const learner = await signedIn(server, "estudiante@lms.cl", "Alumno.Init.123");
+
+    expect((await learner.get("/api/session")).body.user.options).toEqual(["clases"]);
+    expect((await evaluator.get("/api/session")).body.user.options).toEqual(["clases"]);
+    expect((await learner.get("/api/overview")).status).toBe(403);
+    expect((await evaluator.get("/api/overview")).status).toBe(403);
+    expect((await learner.post("/api/clases/gestion-financiera/videos").send({
+      title: "Video no autorizado",
+      url: "https://example.com/video",
+    })).status).toBe(403);
+
+    const enrolled = await learner.post("/api/clases/gestion-financiera/alumnos").send({
+      name: "Impostor",
+      email: "otro@lms.cl",
+    });
+    expect(enrolled.status).toBe(201);
+    expect(enrolled.body.course.students).toEqual([
+      expect.objectContaining({ name: "Estudiante LMS", email: "estudiante@lms.cl" }),
+    ]);
+
+    const video = await evaluator.post("/api/clases/gestion-financiera/videos").send({
+      title: "Introducción",
+      url: "https://video.example.org/intro",
+    });
+    expect(video.status).toBe(201);
+    expect((await evaluator.post("/api/clases/gestion-financiera/videos").send({
+      title: "Inseguro",
+      url: "http://video.example.org/intro",
+    })).status).toBe(400);
+
+    const task = await evaluator.post("/api/clases/gestion-financiera/tareas").send({
+      title: "Presupuesto mensual",
+      instructions: "Explica cómo separar gastos fijos y variables.",
+    });
+    expect(task.status).toBe(201);
+    const submitted = await learner.post(`/api/clases/tareas/${task.body.task.id}/entregas`).send({
+      answer: "Separaría gastos fijos, variables y una reserva.",
+    });
+    expect(submitted.status).toBe(201);
+    expect(submitted.body.submission.status).toBe("pending");
+    expect((await learner.get("/api/clases")).body.submissions).toEqual([
+      expect.objectContaining({ id: submitted.body.submission.id, studentName: "Estudiante LMS" }),
+    ]);
+
+    const post = await learner.post("/api/clases/gestion-financiera/foro").send({
+      message: "¿Cómo se calcula la reserva?",
+    });
+    expect(post.status).toBe(201);
+    const reply = await evaluator.post("/api/clases/gestion-financiera/foro").send({
+      message: "Revisa los gastos promedio de los últimos meses.",
+      parentId: post.body.post.id,
+    });
+    expect(reply.status).toBe(201);
+
+    const review = await evaluator.post(`/api/clases/entregas/${submitted.body.submission.id}/evaluacion`).send({
+      status: "approved",
+      feedback: "Respuesta correcta y clara.",
+    });
+    expect(review.status).toBe(200);
+    expect(review.body.submission.status).toBe("approved");
+    expect((await learner.get("/api/clases")).body.submissions[0].feedback).toBe("Respuesta correcta y clara.");
+    expect((await learner.post(`/api/clases/tareas/${task.body.task.id}/entregas`).send({ answer: "Otra entrega" })).status).toBe(409);
+
+    const otherCompany = await operation.post("/api/empresas").send({
+      name: "Otra Empresa LMS",
+      color: "#112233",
+      ownerEmail: "pago@norte.cl",
+    });
+    expect(otherCompany.status).toBe(201);
+    const otherEvaluatorResponse = await operation.post("/api/clases/usuarios").send({
+      name: "Evaluador ajeno",
+      email: "evaluador.ajeno@lms.cl",
+      role: "evaluador",
+      companyId: otherCompany.body.company.id,
+      password: "Evaluador.Init.123",
+    });
+    expect(otherEvaluatorResponse.status).toBe(201);
+    const otherEvaluator = await signedIn(server, "evaluador.ajeno@lms.cl", "Evaluador.Init.123");
+    expect((await otherEvaluator.get("/api/clases")).body.submissions).toEqual([]);
+    const otherCourses = (await otherEvaluator.get("/api/clases")).body.courses;
+    expect(otherCourses.find((course: { id: string }) => course.id === "gestion-financiera")).toMatchObject({
+      videos: [],
+      tasks: [],
+      forum: [],
+    });
+    expect((await otherEvaluator.post(`/api/clases/entregas/${submitted.body.submission.id}/evaluacion`).send({
+      status: "rejected",
+      feedback: "No",
+    })).status).toBe(404);
   });
 
   it("prices Frosting as workers times the risk-class rate and does not open credit", async () => {
@@ -1112,6 +1676,8 @@ describe("instripe BaaS platform", () => {
     expect(companyContract.text).toContain("Titular: Taller Sur.");
     expect(companyContract.text).toContain("Empresa: Taller Sur.");
     expect(companyContract.text).toContain("Fecha:");
+    expect(companyContract.text).toContain("BORRADOR");
+    expect(companyContract.text).toContain("No acredita firma");
     expect(companyContract.text).toContain("La tarjeta es virtual y muestra el logo de la empresa.");
     expect(companyContract.text).toContain("Proveedor Regional no es un banco y este contrato no invoca una autorización de la CMF.");
     expect(companyContract.text).not.toMatch(/autorizad[oa] por la CMF/i);
@@ -1119,8 +1685,8 @@ describe("instripe BaaS platform", () => {
     expect(created.body.company.card.contract.text).toBe(companyContract.text);
 
     const companyHome = await comercio.get("/api/inicio");
-    expect(companyHome.body.contract.text).toBe(companyContract.text);
-    expect(companyHome.body.card.contract.text).toBe(companyContract.text);
+    expect(companyHome.body.contract).toBeNull();
+    expect(companyHome.body.card.contract).toBeNull();
 
     const withWorker = await operacion.post(`/api/empresas/${created.body.company.id}/trabajadores`).send({
       name: "Ana Díaz",
@@ -1137,15 +1703,18 @@ describe("instripe BaaS platform", () => {
 
     const workerHome = await titular.get("/api/inicio");
     expect(workerHome.body.contract.text).toBe(workerContract.text);
-    expect(workerHome.body.card.balance).toBe(0);
+    expect(workerHome.body.card.balance).toBeUndefined();
     expect(workerHome.body.workers).toBeUndefined();
 
     const panel = await request(server).get("/app.js");
     expect(panel.text).toContain("Ver contrato");
     expect(panel.text).toContain("contractBox");
+    expect(panel.text).toContain("sin firma");
+    expect(panel.text).toContain("no se emite una tarjeta");
+    expect(panel.text).toContain("comercio ya creado");
   });
 
-  it("stores a virtual gift without moving balances or calling Stripe when Stripe is off", async () => {
+  it("stores a virtual gift without changing payments or calling Stripe when Stripe is off", async () => {
     const server = app();
     const comercio = await signedIn(server, "caja@taller.cl");
     const titular = await signedIn(server, "ana@proveedorregional.cl");
@@ -1156,16 +1725,12 @@ describe("instripe BaaS platform", () => {
       ownerEmail: "caja@taller.cl",
     });
     const id = created.body.company.id;
-    await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 50_000 });
     const withWorker = await operacion.post(`/api/empresas/${id}/trabajadores`).send({
       name: "Ana Díaz",
       email: "ana@proveedorregional.cl",
     });
     const workerId = withWorker.body.company.workers[0].id;
-    await operacion.post(`/api/empresas/${id}/transferencias`).send({ workerId, amount: 20_000, direction: "to_worker" });
 
-    const beforeCompany = await comercio.get("/api/empresas");
-    const beforeWorker = await titular.get("/api/inicio");
     const beforeBook = await operacion.get("/api/payments");
     const fetchCalls: string[] = [];
     const originalFetch = globalThis.fetch;
@@ -1202,18 +1767,15 @@ describe("instripe BaaS platform", () => {
     expect(JSON.stringify(gift.body)).not.toMatch(/coupon_|promo_|ch_|pi_|acct_|sk_/);
 
     const afterCompany = await comercio.get("/api/empresas");
-    expect(afterCompany.body.companies[0].card.balance).toBe(beforeCompany.body.companies[0].card.balance);
-    expect(afterCompany.body.companies[0].card.balance).toBe(30_000);
-    expect(afterCompany.body.companies[0].card.available).toBe(0);
-    expect(afterCompany.body.companies[0].card.realFunds).toBe(false);
-    expect(afterCompany.body.companies[0].workers).toEqual([]);
+    expect(afterCompany.body.companies[0].card.balance).toBeUndefined();
+    expect(afterCompany.body.companies[0].card.displayBalance).toBeUndefined();
+    expect(afterCompany.body.companies[0].workers).toHaveLength(1);
     expect(afterCompany.body.companies[0].gifts).toEqual([]);
     const afterBook = await operacion.get("/api/payments");
     expect(afterBook.body.wallet.balance).toBe(beforeBook.body.wallet.balance);
     expect(afterBook.body.transferable.balance).toBe(0);
     const afterWorker = await titular.get("/api/inicio");
-    expect(afterWorker.body.card.balance).toBe(beforeWorker.body.card.balance);
-    expect(afterWorker.body.card.balance).toBe(20_000);
+    expect(afterWorker.body.card.balance).toBeUndefined();
     expect(afterWorker.body.gifts).toEqual([
       expect.objectContaining({ id: gift.body.gift.id, recipientId: workerId }),
     ]);
@@ -1230,8 +1792,8 @@ describe("instripe BaaS platform", () => {
     expect(workerSees.body.gifts.map((item: { recipientId: string }) => item.recipientId)).toEqual([workerId]);
     const workerCompany = await titular.get("/api/empresas");
     expect(workerCompany.body.companies[0].gifts).toHaveLength(1);
-    expect(workerCompany.body.companies[0].balance).toBe(0);
-    expect(workerCompany.body.companies[0].displayBalance).toBe("—");
+    expect(workerCompany.body.companies[0].balance).toBeUndefined();
+    expect(workerCompany.body.companies[0].displayBalance).toBeUndefined();
     expect(JSON.stringify(workerCompany.body)).not.toContain("Para la empresa");
 
     expect((await titular.post(`/api/empresas/${id}/regalos`).send({
@@ -1258,8 +1820,9 @@ describe("instripe BaaS platform", () => {
     });
     expect(priced.status).toBe(400);
     expect(priced.body.error).toBe("Un regalo virtual no lleva monto");
-    expect((await comercio.get("/api/empresas")).body.companies[0].card.balance).toBe(30_000);
-    expect((await titular.get("/api/inicio")).body.card.balance).toBe(20_000);
+    expect((await comercio.get("/api/empresas")).body.companies[0].card.displayBalance).toBeUndefined();
+    expect((await comercio.get("/api/empresas")).body.companies[0].card.balance).toBeUndefined();
+    expect((await titular.get("/api/inicio")).body.card.balance).toBeUndefined();
     expect((await operacion.get("/api/payments")).body.transferable.balance).toBe(0);
 
     const panel = await request(server).get("/app.js");
@@ -1321,7 +1884,7 @@ describe("instripe BaaS platform", () => {
     expect(updates).toEqual([{ id: "promo_stub", active: true }]);
   });
 
-  it("keeps a gift inactive until Activar and does not move balances", async () => {
+  it("keeps a gift inactive until Activar without moving payments", async () => {
     const server = app();
     const comercio = await signedIn(server, "caja@taller.cl");
     const titular = await signedIn(server, "ana@proveedorregional.cl");
@@ -1332,13 +1895,11 @@ describe("instripe BaaS platform", () => {
       ownerEmail: "caja@taller.cl",
     });
     const id = created.body.company.id;
-    await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 40_000 });
     const withWorker = await operacion.post(`/api/empresas/${id}/trabajadores`).send({
       name: "Ana Díaz",
       email: "ana@proveedorregional.cl",
     });
     const workerId = withWorker.body.company.workers[0].id;
-    await operacion.post(`/api/empresas/${id}/transferencias`).send({ workerId, amount: 15_000, direction: "to_worker" });
     const beforeBook = await operacion.get("/api/payments");
 
     const fetchCalls: string[] = [];
@@ -1365,7 +1926,7 @@ describe("instripe BaaS platform", () => {
     expect(gift.body.gift.inactiveMessage).toContain("Inactivo");
     const waiting = await titular.get("/api/inicio");
     expect(waiting.body.gifts[0]).toMatchObject({ id: gift.body.gift.id, active: false, canActivate: false, code: null });
-    expect(waiting.body.card.balance).toBe(15_000);
+    expect(waiting.body.card.balance).toBeUndefined();
 
     expect((await titular.post(`/api/empresas/${id}/regalos/${gift.body.gift.id}/activar`)).status).toBe(403);
     expect((await comercio.post(`/api/empresas/${id}/regalos/${gift.body.gift.id}/activar`)).status).toBe(403);
@@ -1388,17 +1949,16 @@ describe("instripe BaaS platform", () => {
     expect(activated.body.gift.stripePromotionCodeId).toBeNull();
 
     const afterCompany = await comercio.get("/api/empresas");
-    expect(afterCompany.body.companies[0].card.balance).toBe(25_000);
-    expect(afterCompany.body.companies[0].card.available).toBe(0);
-    expect(afterCompany.body.companies[0].card.realFunds).toBe(false);
-    expect(afterCompany.body.companies[0].workers).toEqual([]);
+    expect(afterCompany.body.companies[0].card.displayBalance).toBeUndefined();
+    expect(afterCompany.body.companies[0].card.balance).toBeUndefined();
+    expect(afterCompany.body.companies[0].workers).toHaveLength(1);
     expect(afterCompany.body.companies[0].gifts).toEqual([]);
     expect((await operacion.get("/api/empresas")).body.companies[0].gifts[0].active).toBe(true);
     const afterBook = await operacion.get("/api/payments");
     expect(afterBook.body.wallet.balance).toBe(beforeBook.body.wallet.balance);
     expect(afterBook.body.transferable.balance).toBe(0);
     const afterWorker = await titular.get("/api/inicio");
-    expect(afterWorker.body.card.balance).toBe(15_000);
+    expect(afterWorker.body.card.balance).toBeUndefined();
     expect(afterWorker.body.gifts[0].active).toBe(true);
     const panel = await request(server).get("/app.js");
     expect(panel.text).toContain("Activar");
@@ -1495,13 +2055,14 @@ describe("instripe BaaS platform", () => {
     expect(visible.body.canCreate).toBe(false);
     expect(JSON.stringify(visible.body)).not.toContain("Oficina Norte");
     expect(JSON.stringify(visible.body)).not.toContain("pablo.norte@norte.cl");
-    expect(visible.body.companies[0].workers).toEqual([]);
+    expect(visible.body.companies[0].workers).toHaveLength(1);
+    expect(visible.body.companies[0].workers[0].email).toBe("");
     expect(visible.body.companies[0].users).toEqual([]);
     expect(visible.body.companies[0].canManage).toBe(false);
     expect(JSON.stringify(visible.body)).not.toContain("luz.sur@taller.cl");
     const surHome = await sur.get("/api/inicio");
     expect(surHome.body.companyName).toBe("Taller Sur");
-    expect(surHome.body.contract.companyName).toBe("Taller Sur");
+    expect(surHome.body.contract).toBeNull();
     expect(JSON.stringify(surHome.body)).not.toContain("Oficina Norte");
     expect((await sur.post("/api/empresas").send({ name: "Otra", color: "#112233" })).status).toBe(403);
     expect((await sur.post(`/api/empresas/${idB}/regalos`).send({
@@ -1525,7 +2086,7 @@ describe("instripe BaaS platform", () => {
     expect(luzCompanies.body.companies).toHaveLength(1);
     expect(luzCompanies.body.companies[0].id).toBe(idA);
     expect(luzCompanies.body.companies[0].workers).toHaveLength(1);
-    expect(luzCompanies.body.companies[0].displayBalance).toBe("—");
+    expect(luzCompanies.body.companies[0].displayBalance).toBeUndefined();
     expect(luzCompanies.body.companies[0].users).toEqual([]);
     expect(JSON.stringify(luzCompanies.body)).not.toContain("pablo.norte@norte.cl");
     expect(JSON.stringify(luzCompanies.body)).not.toContain(idB);
@@ -1544,156 +2105,23 @@ describe("instripe BaaS platform", () => {
     expect(panel.text).toContain("Cada empresa y cada cliente tiene su propio usuario");
   });
 
-  it("stores a pending cuenta virtual and cuenta puente without moving debit balances", async () => {
+  it("does not fabricate Global66 deposit accounts", async () => {
     const server = app();
-    const comercio = await signedIn(server, "caja@taller.cl");
     const operacion = await signedIn(server);
-    expect((await comercio.post("/api/empresas").send({ name: "Taller Sur", color: "#0e3e66" })).status).toBe(403);
     const created = await operacion.post("/api/empresas").send({
       name: "Taller Sur",
       color: "#0e3e66",
       ownerEmail: "caja@taller.cl",
     });
     expect(created.status).toBe(201);
-    const id = created.body.company.id;
-    expect(created.body.company.globalAccounts.accounts).toEqual([]);
-    const hidden = await comercio.get("/api/empresas");
-    expect(hidden.body.companies[0].globalAccounts).toBeUndefined();
-    expect(JSON.stringify(hidden.body)).not.toContain("cuenta_puente");
-    expect((await comercio.post(`/api/empresas/${id}/cuentas-virtuales`)).status).toBe(403);
-
-    const funded = await operacion.post(`/api/empresas/${id}/abono`).send({ amount: 40_000 });
-    expect(funded.body.company.balance).toBe(40_000);
-    const withWorker = await operacion.post(`/api/empresas/${id}/trabajadores`).send({
-      name: "Ana Díaz",
-      email: "ana@proveedorregional.cl",
-    });
-    const workerId = withWorker.body.company.workers[0].id;
-    const moved = await operacion.post(`/api/empresas/${id}/transferencias`).send({
-      workerId,
-      amount: 12_000,
-      direction: "to_worker",
-    });
-    expect(moved.body.company.balance).toBe(28_000);
-    const beforeMoves = moved.body.company.card.movements;
-
-    const originalFetch = globalThis.fetch;
-    const calls: string[] = [];
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      calls.push(String(input));
-      throw new Error("no se debe llamar a Global66");
-    }) as typeof fetch;
-    let requested: Awaited<ReturnType<typeof operacion.post>>;
-    try {
-      requested = await operacion.post(`/api/empresas/${id}/cuentas-virtuales`);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-    expect(calls).toEqual([]);
-    expect(requested.status).toBe(201);
-    expect(requested.body.company.balance).toBe(28_000);
-    expect(requested.body.company.card.balance).toBe(28_000);
-    expect(requested.body.company.card.available).toBe(0);
-    expect(requested.body.company.card.movements).toEqual(beforeMoves);
-    expect(requested.body.company.workers[0].balance).toBe(12_000);
-    const accounts = requested.body.company.globalAccounts.accounts;
-    expect(accounts.map((account: { kind: string }) => account.kind)).toEqual(["cuenta_virtual", "cuenta_puente"]);
-    expect(accounts.every((account: { status: string; externalId: null; direction: string }) => account.status === "pending" && account.externalId === null && account.direction === "deposito")).toBe(true);
-    expect(accounts.every((account: { accountNumber?: string }) => account.accountNumber === undefined)).toBe(true);
-    expect(JSON.stringify(accounts)).not.toContain("salida");
-    expect(JSON.stringify(accounts)).not.toContain("solo para transferir");
-    const deposit = accounts.find((account: { kind: string }) => account.kind === "cuenta_puente");
-    expect(deposit.label).toBe("Cuenta para depositar en otro país");
-    expect(deposit.purpose).toBe("El depósito entra a la cuenta del otro país. La cuenta de Stripe permanece en España.");
-    expect(deposit.direction).toBe("deposito");
-    expect(accounts.find((account: { kind: string }) => account.kind === "cuenta_virtual").purpose).toBe("Se deposita en una cuenta de otro país, al estilo Global66.");
-    expect(requested.body.company.globalAccounts.notice).toContain("depositar en otros países");
-    expect(requested.body.company.globalAccounts.notice).toContain("no hay número de cuenta");
-    expect(requested.body.company.globalAccounts.notice).toContain("La cuenta de Stripe permanece en España");
-    expect(requested.body.company.card.kind).toBe("debito");
-    expect(requested.body.company.workers[0].kind).toBe("debito");
-    expect(requested.body.company.card.id).not.toBe(deposit.id);
-    expect(workerId).not.toBe(deposit.id);
-
-    const titular = await signedIn(server, "ana@proveedorregional.cl");
-    const own = await titular.get("/api/empresas");
-    expect(own.body.companies[0].workers[0].balance).toBe(12_000);
-    expect(own.body.companies[0].globalAccounts).toBeUndefined();
-    expect(JSON.stringify(own.body)).not.toContain("cuenta_virtual");
-    expect(JSON.stringify(own.body)).not.toContain("Cuentas para depositar en otros países");
-    expect((await titular.post(`/api/empresas/${id}/cuentas-virtuales`)).status).toBe(403);
-
-    const again = await operacion.post(`/api/empresas/${id}/cuentas-virtuales`);
-    expect(again.status).toBe(200);
-    expect(again.body.company.globalAccounts.accounts.map((account: { id: string }) => account.id)).toEqual(
-      accounts.map((account: { id: string }) => account.id),
-    );
-    expect(again.body.company.balance).toBe(28_000);
-    expect((await comercio.post(`/api/empresas/${id}/cuentas-virtuales`)).status).toBe(403);
-    expect((await operacion.get("/api/overview")).body.float.balance).toBe(0);
-
-    const other = await signedIn(server, "pago@norte.cl");
-    expect((await other.post(`/api/empresas/${id}/cuentas-virtuales`)).status).toBe(403);
-    expect((await other.post("/api/empresas").send({ name: "Oficina Norte", color: "#112233" })).status).toBe(403);
-    const otherCreated = await operacion.post("/api/empresas").send({
-      name: "Oficina Norte",
-      color: "#112233",
-      ownerEmail: "pago@norte.cl",
-    });
-    const otherId = otherCreated.body.company.id;
-    expect(otherCreated.body.company.globalAccounts.accounts).toEqual([]);
-    const otherRequest = await operacion.post(`/api/empresas/${otherId}/cuentas-virtuales`);
-    expect(otherRequest.status).toBe(201);
-    const otherAccounts = otherRequest.body.company.globalAccounts.accounts;
-    expect(otherAccounts).toHaveLength(2);
-    const otherIds = otherAccounts.map((account: { id: string }) => account.id);
-    const tallerIds = accounts.map((account: { id: string }) => account.id);
-    expect(otherIds.some((accountId: string) => tallerIds.includes(accountId))).toBe(false);
-
-    const tallerView = await comercio.get("/api/empresas");
-    expect(tallerView.body.companies).toHaveLength(1);
-    expect(tallerView.body.companies[0].id).toBe(id);
-    expect(tallerView.body.companies[0].globalAccounts).toBeUndefined();
-    expect(tallerView.body.companies[0].balance).toBe(28_000);
-    expect(JSON.stringify(tallerView.body)).not.toContain(otherId);
-    expect(JSON.stringify(tallerView.body)).not.toContain(tallerIds[0]);
-
-    const norteView = await other.get("/api/empresas");
-    expect(norteView.body.companies.map((company: { id: string }) => company.id)).toEqual([otherId]);
-    expect(norteView.body.companies[0].globalAccounts).toBeUndefined();
-    expect(JSON.stringify(norteView.body)).not.toContain(id);
-    expect(JSON.stringify(norteView.body)).not.toContain(otherIds[0]);
-
-    const seen = await operacion.get("/api/empresas");
-    const byId = new Map(seen.body.companies.map((company: { id: string; globalAccounts: { accounts: { id: string }[] } }) => [company.id, company]));
-    expect((byId.get(id) as { globalAccounts: { accounts: { id: string }[] } }).globalAccounts.accounts.map((account) => account.id)).toEqual(tallerIds);
-    expect((byId.get(otherId) as { globalAccounts: { accounts: { id: string }[] } }).globalAccounts.accounts.map((account) => account.id)).toEqual(otherIds);
+    expect(created.body.company).not.toHaveProperty("globalAccounts");
+    expect(created.body.company.global66Connection).toMatchObject({ configured: false });
+    expect((await operacion.post(`/api/empresas/${created.body.company.id}/cuentas-virtuales`)).status).toBe(404);
 
     const panel = await request(server).get("/app.js");
-    const companyBlock = panel.text.slice(panel.text.indexOf("function companyBlock"), panel.text.indexOf("function viewEmpresas"));
-    const personal = panel.text.slice(panel.text.indexOf("function personalAccount"), panel.text.indexOf("function companyBlock"));
-    const clientHome = panel.text.slice(panel.text.indexOf("function viewClientHome"), panel.text.indexOf("function contractBox"));
-    const home = panel.text.slice(panel.text.indexOf("function viewOperacionHome"), panel.text.indexOf("function viewAccounts"));
-    expect(companyBlock).not.toContain("globalAccountsBox");
-    expect(companyBlock).not.toContain("data-global-accounts");
-    expect(personal).not.toContain("data-save-card");
-    expect(personal).not.toContain("data-create-user");
-    expect(personal).not.toContain("data-add-worker");
-    expect(personal).not.toContain("data-frosting");
-    expect(personal).not.toContain("data-activate-gift");
-    expect(personal).not.toContain("data-create-gift");
-    expect(clientHome).not.toContain("usersSection");
-    expect(home).toContain("adminGlobalAccounts()");
-    const depositBox = panel.text.slice(panel.text.indexOf("function adminGlobalAccounts"), panel.text.indexOf("function transferLabel"));
-    expect(companyBlock).not.toContain("Cuentas para depositar en otros países");
-    expect(depositBox).toContain("Cuentas para depositar en otros países");
-    expect(depositBox).toContain("Solicitar cuentas para depositar en otros países");
-    expect(depositBox).toContain("Sin número de cuenta");
-    expect(depositBox).toContain("al estilo Global66");
-    expect(depositBox).not.toContain("Recibe una transferencia destinada a Stripe");
-    expect(depositBox).not.toContain("solo para transferir");
-    expect(depositBox).not.toContain("displayBalance");
-    expect(panel.text).not.toContain("Solicitar cuenta virtual y cuenta puente");
-    expect(panel.text).not.toContain("Pasarela (Prometeo) solo para transferir");
+    expect(panel.text).not.toContain("Cuentas para depositar en otros pa?ses");
+    expect(panel.text).not.toContain("data-global-accounts");
+    expect(panel.text).toContain("Conectar wallet Global66");
   });
+
 });

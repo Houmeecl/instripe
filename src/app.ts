@@ -5,11 +5,13 @@ import { fileURLToPath } from "node:url";
 import { requiredOption, type SessionUser } from "./auth/module.js";
 import { loadConfig, isStripeConfigured, isChileConfigured, isMailConfigured, type AppConfig, type GatewayName } from "./config.js";
 import { listInbox, readLetter, sendLetter } from "./mail/box.js";
+import { createMailbox, listMailboxes } from "./mail/mailcow.js";
 import { createStripe } from "./stripe/client.js";
 import { formatAmount } from "./money.js";
 import type { GiftActivationStripe, GiftStripe } from "./modules/regalos/issue.js";
 import { planDisplayRate } from "./modules/seguros/catalog.js";
 import { Platform, PlatformError } from "./platform.js";
+import { PilotPlanner, PilotPlannerError } from "./modules/pilot/planner.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -19,7 +21,11 @@ function asGateway(value: unknown, fallback: GatewayName): GatewayName {
 
 export function createApp(config: AppConfig = loadConfig()): Express {
   const app = express();
+  app.set("trust proxy", "loopback");
   const platform = new Platform(config);
+  const pilotPlanner = new PilotPlanner(config);
+  const pilotRequestTimes = new Map<string, number>();
+  const publicContactWindows = new Map<string, { count: number; resetAt: number }>();
 
   // Stripe webhooks need the raw body for signature verification, so this
   // route is registered before the JSON body parser.
@@ -110,6 +116,86 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       chileConfigured: isChileConfigured(config),
       time: new Date().toISOString(),
     });
+  });
+
+  app.get("/api/public-contact", (_req: Request, res: Response) => {
+    const email = config.publicContactEmail.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      res.status(503).json({ error: "El correo público de contacto configurado no es válido." });
+      return;
+    }
+    res.json({ email });
+  });
+
+  app.post("/api/public-contact", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    const organization = typeof body.organization === "string" ? body.organization.trim() : "";
+    const topic = typeof body.topic === "string" ? body.topic.trim() : "";
+    const message = typeof body.message === "string" ? body.message.trim() : "";
+    const website = typeof body.website === "string" ? body.website.trim() : "";
+    const topics = new Set(["Patrocinio y alianzas", "Información del programa", "Otra consulta"]);
+
+    if (website) {
+      res.status(200).json({ sent: true });
+      return;
+    }
+    if (
+      !name ||
+      name.length > 120 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+      email.length > 254 ||
+      organization.length > 160 ||
+      !topics.has(topic) ||
+      !message ||
+      message.length > 4000 ||
+      body.consent !== true
+    ) {
+      res.status(400).json({ error: "Completa los campos requeridos con datos válidos y acepta el uso de datos para responder." });
+      return;
+    }
+
+    const destination = config.publicContactEmail.trim();
+    if (!isMailConfigured(config) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(destination)) {
+      res.status(503).json({ error: "El envío de consultas no está configurado todavía. Escríbenos directamente al correo publicado." });
+      return;
+    }
+
+    const now = Date.now();
+    for (const [key, window] of publicContactWindows) {
+      if (window.resetAt <= now) publicContactWindows.delete(key);
+    }
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    const currentWindow = publicContactWindows.get(ip);
+    if (currentWindow && currentWindow.count >= 5) {
+      res.status(429).json({ error: "Has enviado varias consultas. Espera unos minutos antes de intentarlo nuevamente." });
+      return;
+    }
+    if (currentWindow) currentWindow.count += 1;
+    else publicContactWindows.set(ip, { count: 1, resetAt: now + 15 * 60 * 1000 });
+
+    try {
+      await sendLetter(config, {
+        to: destination,
+        replyTo: email,
+        subject: `Consulta web: ${topic}`,
+        text: [
+          "Nueva consulta enviada desde la landing de Proveedor Regional.",
+          "",
+          `Nombre: ${name}`,
+          `Correo para responder: ${email}`,
+          `Organización: ${organization || "No indicada"}`,
+          `Motivo: ${topic}`,
+          "",
+          "Mensaje:",
+          message,
+        ].join("\n"),
+      });
+      res.status(201).json({ sent: true });
+    } catch (error) {
+      handleError(error, res);
+    }
   });
 
   app.use((req: Request, res: Response, next: NextFunction) => {
@@ -407,7 +493,78 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   app.get("/api/clases", (_req: Request, res: Response) => {
-    res.json(platform.laboral.courses({ companyId: companyActor(res).companyId }));
+    const user = res.locals.user as SessionUser;
+    try {
+      const scope = { companyId: user.companyId, allCompanies: user.role === "operacion" };
+      const courses = platform.laboral.courses(scope).courses.map((course) => ({
+        ...course,
+        students: user.role === "alumno"
+          ? course.students.filter((student) => student.email === user.email)
+          : course.students,
+      }));
+      res.json({ courses, submissions: platform.laboral.listSubmissions(companyActor(res)) });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/pilot/plan", async (req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    if (user.role !== "operacion") {
+      res.status(403).json({ error: "Solo Operación puede preparar el plan del piloto." });
+      return;
+    }
+    if (!pilotPlanner.isConfigured()) {
+      res.status(503).json({ error: "El planificador IA no está configurado en el servidor." });
+      return;
+    }
+    const lastRequest = pilotRequestTimes.get(user.id) ?? 0;
+    if (Date.now() - lastRequest < 60_000) {
+      res.status(429).json({ error: "Espera un minuto antes de generar otro plan." });
+      return;
+    }
+
+    const body = req.body ?? {};
+    const input = {
+      name: typeof body.name === "string" ? body.name.trim() : "",
+      objective: typeof body.objective === "string" ? body.objective.trim() : "",
+      companyCount: Number(body.companyCount),
+      workerCount: Number(body.workerCount),
+      durationWeeks: Number(body.durationWeeks),
+      constraints: typeof body.constraints === "string" ? body.constraints.trim() : "",
+    };
+    if (
+      !input.name ||
+      input.name.length > 120 ||
+      !input.objective ||
+      input.objective.length > 1200 ||
+      !Number.isInteger(input.companyCount) ||
+      input.companyCount < 1 ||
+      input.companyCount > 100 ||
+      !Number.isInteger(input.workerCount) ||
+      input.workerCount < 1 ||
+      input.workerCount > 1000 ||
+      !Number.isInteger(input.durationWeeks) ||
+      input.durationWeeks < 1 ||
+      input.durationWeeks > 52 ||
+      input.constraints.length > 1200
+    ) {
+      res.status(400).json({ error: "Revisa los campos: el piloto necesita nombre, objetivo y cantidades válidas." });
+      return;
+    }
+
+    pilotRequestTimes.set(user.id, Date.now());
+    try {
+      const plan = await pilotPlanner.generate(input);
+      res.json({ plan, model: config.databricks.model, executedActions: false });
+    } catch (error) {
+      if (error instanceof PilotPlannerError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      console.error("Unexpected error generating a Databricks pilot plan");
+      res.status(502).json({ error: "No se pudo generar el plan del piloto." });
+    }
   });
 
   app.post("/api/clases/:id/alumnos", (req: Request, res: Response) => {
@@ -415,10 +572,108 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     const user = res.locals.user as SessionUser;
     try {
       const course = platform.laboral.enroll(String(req.params.id), {
-        name: String(body.name || user.name),
-        email: String(body.email || user.email),
+        name: user.role === "alumno" ? user.name : String(body.name || user.name),
+        email: user.role === "alumno" ? user.email : String(body.email || user.email),
       }, { companyId: user.companyId });
       res.status(201).json({ course });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/clases/usuarios", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    if ((body.role !== "alumno" && body.role !== "evaluador") || !body.name || !body.email || !body.password || !body.companyId) {
+      res.status(400).json({ error: "Nombre, correo, rol, empresa y clave inicial son requeridos" });
+      return;
+    }
+    try {
+      const user = platform.createLmsUser(companyActor(res), {
+        name: String(body.name),
+        email: String(body.email),
+        role: body.role,
+        companyId: String(body.companyId),
+        password: String(body.password),
+      });
+      res.status(201).json({ user });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/clases/:id/videos", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const actor = companyActor(res);
+      if (actor.role === "operacion") assertCourseCompany(platform, actor, String(body.companyId ?? ""));
+      const video = platform.laboral.createVideo(companyActor(res), {
+        courseId: String(req.params.id),
+        title: String(body.title ?? ""),
+        url: String(body.url ?? ""),
+        companyId: body.companyId ? String(body.companyId) : undefined,
+      });
+      res.status(201).json({ video });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/clases/:id/tareas", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const actor = companyActor(res);
+      if (actor.role === "operacion") assertCourseCompany(platform, actor, String(body.companyId ?? ""));
+      const task = platform.laboral.createTask(companyActor(res), {
+        courseId: String(req.params.id),
+        title: String(body.title ?? ""),
+        instructions: String(body.instructions ?? ""),
+        dueAt: body.dueAt ? String(body.dueAt) : undefined,
+        companyId: body.companyId ? String(body.companyId) : undefined,
+      });
+      res.status(201).json({ task });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/clases/tareas/:id/entregas", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const submission = platform.laboral.submitTask(companyActor(res), String(req.params.id), String(body.answer ?? ""));
+      res.status(201).json({ submission });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/clases/entregas/:id/evaluacion", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      if (body.status !== "approved" && body.status !== "rejected") {
+        throw new PlatformError("El resultado de evaluación no es válido", 400);
+      }
+      const submission = platform.laboral.reviewSubmission(companyActor(res), String(req.params.id), {
+        status: body.status,
+        feedback: String(body.feedback ?? ""),
+      });
+      res.status(200).json({ submission });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/clases/:id/foro", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const actor = companyActor(res);
+      if (actor.role === "operacion") assertCourseCompany(platform, actor, String(body.companyId ?? ""));
+      const post = platform.laboral.createForumPost(companyActor(res), {
+        courseId: String(req.params.id),
+        message: String(body.message ?? ""),
+        parentId: body.parentId ? String(body.parentId) : undefined,
+        companyId: body.companyId ? String(body.companyId) : undefined,
+      });
+      res.status(201).json({ post });
     } catch (error) {
       handleError(error, res);
     }
@@ -492,6 +747,19 @@ export function createApp(config: AppConfig = loadConfig()): Express {
 
   app.get("/api/empresas", (_req: Request, res: Response) => {
     res.json(platform.empresas.list(companyActor(res)));
+  });
+
+  app.delete("/api/empresas/:id", (req: Request, res: Response) => {
+    try {
+      const result = platform.deleteCompany(
+        companyActor(res),
+        String(req.params.id),
+        String(req.body?.confirmation ?? ""),
+      );
+      res.json(result);
+    } catch (error) {
+      handleError(error, res);
+    }
   });
 
   // Colaboradores - Listar por empresa
@@ -686,6 +954,50 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
   });
 
+  app.put("/api/empresas/:id/global66", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const company = platform.empresas.configureGlobal66(companyActor(res), String(req.params.id), {
+        clientId: String(body.clientId ?? ""),
+        clientSecret: String(body.clientSecret ?? ""),
+        accountId: String(body.accountId ?? ""),
+      });
+      res.status(200).json({ company });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/empresas/:id/global66", async (req: Request, res: Response) => {
+    try {
+      const wallet = await platform.empresas.global66Wallet(companyActor(res), String(req.params.id));
+      res.status(200).json({ wallet });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/empresas/:id/global66/transferencias", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const transfer = await platform.empresas.transferToBank(companyActor(res), String(req.params.id), {
+        workerId: String(body.workerId ?? ""),
+        idempotencyKey: String(body.idempotencyKey ?? ""),
+        amount: Number(body.amount),
+        beneficiaryName: String(body.beneficiaryName ?? ""),
+        beneficiaryLastName: String(body.beneficiaryLastName ?? ""),
+        accountType: String(body.accountType ?? ""),
+        accountNumber: String(body.accountNumber ?? ""),
+        documentNumber: String(body.documentNumber ?? ""),
+        documentType: String(body.documentType ?? ""),
+        purposeCode: Number(body.purposeCode),
+      });
+      res.status(202).json({ transfer });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
   app.post("/api/empresas/:id/tarjetas/:cardId", (req: Request, res: Response) => {
     const body = req.body ?? {};
     try {
@@ -778,50 +1090,12 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
   });
 
-  app.post("/api/empresas/:id/abono", (req: Request, res: Response) => {
-    const body = req.body ?? {};
-    if (body.amount === undefined) {
-      res.status(400).json({ error: "amount es requerido" });
-      return;
-    }
-    try {
-      const company = platform.empresas.fund(companyActor(res), String(req.params.id), Number(body.amount));
-      res.status(200).json({ company });
-    } catch (error) {
-      handleError(error, res);
-    }
+  app.post("/api/empresas/:id/abono", (_req: Request, res: Response) => {
+    res.status(410).json({ error: "Los abonos demo de empresa fueron retirados. Usa la transferencia bancaria Global66 cuando corresponda." });
   });
 
-  app.post("/api/empresas/:id/cuentas-virtuales", (req: Request, res: Response) => {
-    try {
-      const result = platform.empresas.requestGlobalAccounts(companyActor(res), String(req.params.id));
-      res.status(result.created ? 201 : 200).json({ company: result.company });
-    } catch (error) {
-      handleError(error, res);
-    }
-  });
-
-  app.post("/api/empresas/:id/transferencias", (req: Request, res: Response) => {
-    const body = req.body ?? {};
-    if (body.amount === undefined || !body.workerId) {
-      res.status(400).json({ error: "amount y workerId son requeridos" });
-      return;
-    }
-    const direction = body.direction === "to_company" ? "to_company" : body.direction === "to_worker" ? "to_worker" : "";
-    if (!direction) {
-      res.status(400).json({ error: "direction debe ser to_worker o to_company" });
-      return;
-    }
-    try {
-      const company = platform.empresas.transfer(companyActor(res), String(req.params.id), {
-        workerId: String(body.workerId),
-        amount: Number(body.amount),
-        direction,
-      });
-      res.status(200).json({ company });
-    } catch (error) {
-      handleError(error, res);
-    }
+  app.post("/api/empresas/:id/transferencias", (_req: Request, res: Response) => {
+    res.status(410).json({ error: "Las transferencias internas de demo fueron retiradas. Usa el formulario de transferencia bancaria Global66." });
   });
 
   app.get("/api/treasury", (_req: Request, res: Response) => {
@@ -1045,10 +1319,13 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     try {
       const manifest = platform.apps.create({
         name: String(body.name ?? ""),
+        version: body.version === undefined ? undefined : String(body.version),
         icon: body.icon,
         description: body.description,
         distribution_type: body.distribution_type,
         permissions: body.permissions,
+        doc_url: body.doc_url,
+        support_email: body.support_email,
       });
       res.status(201).json({ manifest, upload: platform.apps.getUploadCommand() });
     } catch (error) {
@@ -1198,6 +1475,39 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
     try {
       res.json(await listInbox(config));
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/correo/buzones", async (_req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    if (user.role !== "operacion") {
+      res.status(403).json({ error: "Solo Operación puede administrar los buzones" });
+      return;
+    }
+    try {
+      res.json({ domain: config.mailcow.domain, mailboxes: await listMailboxes(config) });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/correo/buzones", async (req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    if (user.role !== "operacion") {
+      res.status(403).json({ error: "Solo Operación puede administrar los buzones" });
+      return;
+    }
+    const body = req.body ?? {};
+    try {
+      const result = await createMailbox(config, {
+        localPart: String(body.localPart ?? ""),
+        name: String(body.name ?? ""),
+        password: String(body.password ?? ""),
+        quotaMb: Number(body.quotaMb),
+      });
+      res.status(201).json(result);
     } catch (error) {
       handleError(error, res);
     }
@@ -1749,7 +2059,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
 }
 
 function isPublicApi(req: Request): boolean {
-  if (req.path === "/api/onboarding" || req.path === "/api/registro") return true;
+  if (req.path === "/api/onboarding" || req.path === "/api/public-contact") return true;
   return req.path === "/api/session" && (req.method === "GET" || req.method === "POST" || req.method === "DELETE");
 }
 
@@ -1789,6 +2099,16 @@ function withPublishableKey<T extends { charge: { clientSecret?: string } }>(
 function companyActor(res: Response) {
   const user = res.locals.user as SessionUser;
   return { id: user.id, email: user.email, role: user.role, name: user.name, companyId: user.companyId };
+}
+
+function assertCourseCompany(
+  platform: Platform,
+  actor: ReturnType<typeof companyActor>,
+  companyId: string,
+): void {
+  if (!platform.empresas.list(actor).companies.some((company) => company.id === companyId)) {
+    throw new PlatformError("Empresa no encontrada", 404);
+  }
 }
 
 function handleError(error: unknown, res: Response): void {
