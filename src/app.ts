@@ -3,7 +3,7 @@ import type Stripe from "stripe";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { requiredOption, type SessionUser } from "./auth/module.js";
-import { loadConfig, isStripeConfigured, isChileConfigured, isMailConfigured, type AppConfig, type GatewayName } from "./config.js";
+import { loadConfig, isStripeConfigured, isChileConfigured, isGlobal66Configured, isMailConfigured, type AppConfig, type GatewayName } from "./config.js";
 import { listInbox, readLetter, sendLetter } from "./mail/box.js";
 import { createStripe } from "./stripe/client.js";
 import { formatAmount } from "./money.js";
@@ -14,7 +14,7 @@ import { Platform, PlatformError } from "./platform.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function asGateway(value: unknown, fallback: GatewayName): GatewayName {
-  return value === "stripe" || value === "chile" ? value : fallback;
+  return value === "stripe" || value === "chile" || value === "global66" ? value : fallback;
 }
 
 export function createApp(config: AppConfig = loadConfig()): Express {
@@ -108,6 +108,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       stripeWebhookConfigured: Boolean(config.stripeWebhookSecret),
       database: "sqlite",
       chileConfigured: isChileConfigured(config),
+      global66Configured: isGlobal66Configured(config),
       time: new Date().toISOString(),
     });
   });

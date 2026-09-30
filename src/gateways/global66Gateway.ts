@@ -8,110 +8,161 @@ import type {
   PaymentGateway,
 } from "./types.js";
 
-/**
- * Global66 (Payoy) payment gateway adapter.
- * 
- * Global66 API for Chile:
- * - Transfers to bank accounts (RUT)
- * - Payments with credit/debit cards
- * - CLP currency support
- * 
- * API Documentation: https://documents-b2b.global66.com/transactional-api/
- */
+const DEFAULT_API_URL = "https://api.global66.com/business-api";
+
 export interface Global66Config {
-  apiKey: string | undefined;
+  clientId: string | undefined;
+  clientSecret: string | undefined;
   apiUrl: string;
-  merchantId: string | undefined;
-  /** Default: CLP */
-  currency: string;
 }
 
-export interface Global66TransferRequest {
-  amount: number;
-  currency: string;
-  destination: {
-    bank: string;
-    accountType: "checking" | "savings" | "rut";
-    accountNumber: string;
-    rut?: string;
-    name: string;
-    email?: string;
-  };
-  reference: string;
-  description?: string;
-  callbackUrl?: string;
+export interface Global66Beneficiary {
+  operationType: string;
+  destinationCurrency: string;
+  beneficiaryName: string;
+  beneficiaryLastName: string;
+  typeBeneficiary: string;
+  email: string;
+  countryCode: string;
+  accountType: string;
+  bankId: number;
+  accountNumber: string;
+  documentNumber: string;
+  documentType: string;
+  [key: string]: unknown;
 }
 
-export interface Global66TransferResponse {
-  id: string;
-  status: "pending" | "completed" | "failed" | "rejected";
+/** Exact request envelope documented by Global66's B2B transactional API. */
+export interface Global66PaymentRequest {
+  externalReferenceId: string;
+  transactionType: string;
+  originCurrency: string;
   amount: number;
-  currency: string;
-  fee: number;
-  netAmount: number;
-  reference: string;
-  transactionDate: string;
-  destination: {
-    bank: string;
-    accountNumber: string;
-    name: string;
-  };
+  way: string;
+  description: string;
+  paymentType: string;
+  purposeCode: Array<{ purposeCode: number; amount: number }>;
+  beneficiary: Global66Beneficiary;
+  [key: string]: unknown;
 }
 
-export interface Global66CardPaymentRequest {
-  amount: number;
-  currency: string;
-  card: {
-    number: string;
-    expiryMonth: number;
-    expiryYear: number;
-    cvv: string;
-    holderName: string;
-  };
-  reference: string;
-  description?: string;
-  callbackUrl?: string;
+export interface Global66PaymentResponse {
+  valid?: boolean;
+  status?: string;
+  transactionId?: string | number;
+  id?: string | number;
+  violations?: unknown[];
+  [key: string]: unknown;
+}
+
+interface Global66PayoutDestination {
+  transactionType: string;
+  way: string;
+  paymentType: string;
+  purposeCode: Array<{ purposeCode: number; amount: number }>;
+  beneficiary: Global66Beneficiary;
+  [key: string]: unknown;
+}
+
+export interface Global66MovementsResponse {
+  totalElements: number;
+  totalPages: number;
+  page: number;
+  size: number;
+  movements: Array<Record<string, unknown>>;
+}
+
+interface AuthResponse {
+  token: string;
+  refreshToken: string;
 }
 
 /**
- * Global66 (Payoy) Gateway for Chilean payments and transfers.
- * 
- * Features:
- * - Bank transfers (RUT, bank account)
- * - Card payments (Visa, Mastercard, etc.)
- * - CLP and USD support
- * - Webhook support for transaction status
+ * Global66 B2B transactional API adapter.
+ *
+ * Official production contract:
+ * - POST /b2b/auth
+ * - POST /b2b/auth/refresh
+ * - POST /b2b/transactions/payments (multipart field `request`)
+ * - GET /b2b/movements/{accountId}
  */
 export class Global66Gateway implements PaymentGateway {
   readonly name = "global66" as const;
-  readonly label = "Global66 (Payoy)";
-  
+  readonly label = "Global66 B2B";
+
   private readonly config: Global66Config;
+  private token: string | undefined;
+  private refreshToken: string | undefined;
 
   constructor(appConfig: AppConfig) {
     this.config = {
-      apiKey: appConfig.global66?.apiKey,
-      apiUrl: appConfig.global66?.apiUrl || "https://api.global66.com",
-      merchantId: appConfig.global66?.merchantId,
-      currency: appConfig.currency || "clp",
+      clientId: appConfig.global66?.clientId,
+      clientSecret: appConfig.global66?.clientSecret,
+      apiUrl: (appConfig.global66?.apiUrl || DEFAULT_API_URL).replace(/\/$/, ""),
     };
   }
 
   get configured(): boolean {
-    return Boolean(this.config.apiKey && this.config.merchantId);
+    return Boolean(this.config.clientId && this.config.clientSecret);
   }
 
   get isDemoMode(): boolean {
     return !this.configured;
   }
 
-  /**
-   * Create a charge/payment request with card
-   * For Global66, this creates a card payment
-   */
+  async authenticate(): Promise<void> {
+    if (!this.config.clientId || !this.config.clientSecret) {
+      throw new Error("Global66 no está configurado");
+    }
+    const response = await this.fetchJson<AuthResponse>("/b2b/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientId: this.config.clientId,
+        clientSecret: this.config.clientSecret,
+      }),
+    });
+    if (!response.token || !response.refreshToken) {
+      throw new Error("Global66 respondió sin token o refreshToken");
+    }
+    this.token = response.token;
+    this.refreshToken = response.refreshToken;
+  }
+
+  async createPayment(request: Global66PaymentRequest): Promise<Global66PaymentResponse> {
+    this.validatePayment(request);
+    const boundary = `----instripe-${randomUUID()}`;
+    const body = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="request"',
+      "Content-Type: application/json",
+      "",
+      JSON.stringify(request),
+      `--${boundary}--`,
+      "",
+    ].join("\r\n");
+    return this.authorizedJson<Global66PaymentResponse>("/b2b/transactions/payments", {
+      method: "POST",
+      headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+      body,
+    });
+  }
+
+  async listMovements(
+    accountId: number,
+    filters: { dateFrom?: string; dateTo?: string; page?: number } = {},
+  ): Promise<Global66MovementsResponse> {
+    if (!Number.isInteger(accountId) || accountId <= 0) throw new Error("accountId inválido");
+    const query = new URLSearchParams();
+    if (filters.dateFrom) query.set("dateFrom", filters.dateFrom);
+    if (filters.dateTo) query.set("dateTo", filters.dateTo);
+    if (filters.page !== undefined) query.set("page", String(filters.page));
+    const suffix = query.size ? `?${query.toString()}` : "";
+    return this.authorizedJson<Global66MovementsResponse>(`/b2b/movements/${accountId}${suffix}`);
+  }
+
   async charge(req: ChargeRequest): Promise<ChargeResult> {
     if (!this.configured) {
-      // Demo mode
       const id = `g66_demo_${randomUUID().slice(0, 8)}`;
       return {
         gateway: this.name,
@@ -122,26 +173,10 @@ export class Global66Gateway implements PaymentGateway {
         currency: req.currency,
       };
     }
-
-    // Live mode - create card payment
-    // Note: For card payments, Global66 typically uses a redirect flow
-    const transactionId = `g66_${randomUUID().slice(0, 8)}`;
-    const redirectUrl = `${this.config.apiUrl}/payments/create?merchant=${this.config.merchantId}&amount=${req.amount}&currency=${req.currency}&reference=${transactionId}&success_url=${encodeURIComponent(req.successUrl)}&cancel_url=${encodeURIComponent(req.cancelUrl)}`;
-
-    return {
-      gateway: this.name,
-      mode: "live",
-      chargeId: transactionId,
-      redirectUrl,
-      amount: req.amount,
-      currency: req.currency,
-    };
+    throw new Error("La API Transaccional de Global66 no documenta cobros con tarjeta");
   }
 
-  /**
-   * Create a card payment directly (for automation)
-   */
-  async createCardPayment(req: {
+  async createCardPayment(_req: {
     amount: number;
     currency: string;
     card: {
@@ -152,34 +187,19 @@ export class Global66Gateway implements PaymentGateway {
       cardholderName: string;
     };
     description: string;
-  }): Promise<{
-    success: boolean;
-    transactionId?: string;
-    error?: string;
-  }> {
+  }): Promise<{ success: boolean; transactionId?: string; error?: string }> {
+    void _req;
     if (!this.configured) {
-      // Demo mode
-      return {
-        success: true,
-        transactionId: `g66_demo_${randomUUID().slice(0, 8)}`,
-      };
+      return { success: true, transactionId: `g66_demo_${randomUUID().slice(0, 8)}` };
     }
-
-    // Live mode - would call actual Global66 API
-    // For now, simulate success
     return {
-      success: true,
-      transactionId: `g66_${randomUUID().slice(0, 8)}`,
+      success: false,
+      error: "Global66 B2B no admite sincronizar ni duplicar tarjetas desde Stripe",
     };
   }
 
-  /**
-   * Create a bank transfer/payout
-   * This is the main method for disbursing funds to Chilean bank accounts
-   */
   async payout(req: PayoutRequest): Promise<PayoutResult> {
     if (!this.configured) {
-      // Demo mode
       return {
         gateway: this.name,
         mode: "demo",
@@ -191,199 +211,98 @@ export class Global66Gateway implements PaymentGateway {
       };
     }
 
+    let destination: Global66PayoutDestination;
     try {
-      // Parse destination (can be RUT or bank account)
-      const destination = this.parseDestination(req.destination);
-      
-      // Create transfer request
-      const transferReq: Global66TransferRequest = {
-        amount: req.amount,
-        currency: req.currency,
-        destination,
-        reference: req.description || `Transfer to ${destination.name}`,
-        description: req.description,
-      };
-
-      // In live mode, this would call the actual Global66 API
-      // For now, we simulate the response
-      const response: Global66TransferResponse = {
-        id: `g66_${randomUUID().slice(0, 8)}`,
-        status: "pending",
-        amount: req.amount,
-        currency: req.currency,
-        fee: 0,
-        netAmount: req.amount,
-        reference: transferReq.reference,
-        transactionDate: new Date().toISOString(),
-        destination: {
-          bank: destination.bank,
-          accountNumber: destination.accountNumber,
-          name: destination.name,
-        },
-      };
-
-      return {
-        gateway: this.name,
-        mode: "live",
-        payoutId: response.id,
-        amount: response.netAmount,
-        currency: response.currency,
-        destination: req.destination,
-        status: response.status === "completed" ? "paid" : "pending",
-      };
-    } catch (error) {
-      console.error(`Global66 payout error: ${error}`);
-      return {
-        gateway: this.name,
-        mode: "live",
-        payoutId: `g66_error_${randomUUID().slice(0, 8)}`,
-        amount: req.amount,
-        currency: req.currency,
-        destination: req.destination,
-        status: "pending",
-      };
+      destination = JSON.parse(req.destination) as typeof destination;
+    } catch {
+      throw new Error("El destino Global66 debe ser un JSON del contrato B2B oficial");
     }
-  }
-
-  /**
-   * Parse destination string into Global66 format
-   * Supports formats:
-   * - RUT format: "12345678-9" or "12.345.678-9"
-   * - Bank account: "BANK|ACCOUNT_TYPE|ACCOUNT_NUMBER|NAME"
-   */
-  private parseDestination(destination: string): Global66TransferRequest["destination"] {
-    // Clean RUT format
-    const cleanDestination = destination.replace(/[\.\-]/g, "");
-    
-    // If it's a RUT (8 digits + check digit)
-    if (/^\d{8,9}$/.test(cleanDestination)) {
-      return {
-        bank: "00", // RUT
-        accountType: "rut",
-        accountNumber: cleanDestination,
-        rut: cleanDestination,
-        name: "Beneficiario RUT",
-      };
+    if (!req.reference) throw new Error("La salida Global66 requiere una referencia idempotente");
+    const response = await this.createPayment({
+      ...destination,
+      externalReferenceId: req.reference,
+      amount: req.amount,
+      originCurrency: req.currency.toUpperCase(),
+      description: req.description,
+    });
+    if (response.valid === false || response.status === "FAILED") {
+      throw new Error(`Global66 rechazó la operación: ${JSON.stringify(response.violations ?? [])}`);
     }
-
-    // If it's in format: bank|type|account|name
-    const parts = destination.split("|");
-    if (parts.length >= 4) {
-      return {
-        bank: parts[0],
-        accountType: (parts[1] as "checking" | "savings" | "rut") || "checking",
-        accountNumber: parts[2],
-        rut: parts.length > 4 ? parts[4] : undefined,
-        name: parts[3],
-        email: parts.length > 5 ? parts[5] : undefined,
-      };
-    }
-
-    // Default: assume it's a bank account number
+    const externalId = response.transactionId ?? response.id ?? req.reference;
     return {
-      bank: "01", // Banco de Chile
-      accountType: "checking",
-      accountNumber: destination,
-      name: "Beneficiario",
+      gateway: this.name,
+      mode: "live",
+      payoutId: String(externalId),
+      amount: req.amount,
+      currency: req.currency,
+      destination: req.destination,
+      status: "pending",
     };
   }
 
-  /**
-   * Get available balance (not applicable for Global66 as it's a payment processor)
-   */
-  async available(currency: string): Promise<number> {
-    // Global66 doesn't have a balance concept - it's a payment processor
+  async available(_currency: string): Promise<number> {
+    void _currency;
     return 0;
   }
 
-  /**
-   * Create a bank transfer directly (alternative to payout)
-   */
-  async transfer(req: Global66TransferRequest): Promise<Global66TransferResponse> {
-    if (!this.configured) {
-      return {
-        id: `g66_demo_${randomUUID().slice(0, 8)}`,
-        status: "pending",
-        amount: req.amount,
-        currency: req.currency,
-        fee: 0,
-        netAmount: req.amount,
-        reference: req.reference,
-        transactionDate: new Date().toISOString(),
-        destination: {
-          bank: req.destination.bank,
-          accountNumber: req.destination.accountNumber,
-          name: req.destination.name,
-        },
-      };
+  private validatePayment(request: Global66PaymentRequest): void {
+    if (!request.externalReferenceId?.trim()) throw new Error("externalReferenceId es requerido");
+    if (!Number.isFinite(request.amount) || request.amount <= 0) throw new Error("amount inválido");
+    if (!request.originCurrency?.trim()) throw new Error("originCurrency es requerido");
+    if (!request.beneficiary || !request.beneficiary.accountNumber) {
+      throw new Error("beneficiary.accountNumber es requerido");
     }
-
-    // In production, this would call:
-    // POST https://api.global66.com/v2/transfers
-    // With proper authentication and request body
-    
-    const response: Global66TransferResponse = {
-      id: `g66_${randomUUID().slice(0, 8)}`,
-      status: "pending",
-      amount: req.amount,
-      currency: req.currency,
-      fee: this.calculateFee(req.amount, req.currency),
-      netAmount: req.amount - this.calculateFee(req.amount, req.currency),
-      reference: req.reference,
-      transactionDate: new Date().toISOString(),
-      destination: {
-        bank: req.destination.bank,
-        accountNumber: req.destination.accountNumber,
-        name: req.destination.name,
-      },
-    };
-
-    return response;
   }
 
-  /**
-   * Calculate Global66 fee based on amount and currency
-   */
-  private calculateFee(amount: number, currency: string): number {
-    const clpFeeRate = 0.015; // 1.5% for CLP
-    const usdFeeRate = 0.025; // 2.5% for USD
-    
-    if (currency.toLowerCase() === "clp") {
-      return Math.round(amount * clpFeeRate);
+  private async authorizedJson<T>(path: string, init: RequestInit = {}): Promise<T> {
+    if (!this.token) await this.authenticate();
+    let response = await this.fetchWithToken(path, init);
+    if (response.status === 401 && this.refreshToken) {
+      await this.refreshAuthentication();
+      response = await this.fetchWithToken(path, init);
     }
-    return Math.round(amount * usdFeeRate);
+    return this.parseResponse<T>(response);
   }
 
-  /**
-   * Get supported Chilean banks
-   */
-  getSupportedBanks(): Array<{ code: string; name: string }> {
-    return [
-      { code: "01", name: "Banco de Chile" },
-      { code: "02", name: "Banco Internacional" },
-      { code: "03", name: "Banco de Crédito e Inversiones" },
-      { code: "04", name: "Banco de A. Edwards" },
-      { code: "05", name: "Banco Santiago" },
-      { code: "06", name: "Banco Cencosud" },
-      { code: "07", name: "Banco BBVA" },
-      { code: "09", name: "Banco BICE" },
-      { code: "12", name: "Banco Estado" },
-      { code: "14", name: "Banco Santander Chile" },
-      { code: "16", name: "Banco Itaú" },
-      { code: "28", name: "Banco Security" },
-      { code: "31", name: "Banco Falabella" },
-      { code: "37", name: "Banco Paris" },
-      { code: "51", name: "Banco Ripley" },
-      { code: "53", name: "Banco Consorcio" },
-      { code: "55", name: "Banco Scotiabank Chile" },
-      { code: "59", name: "Banco BTG Pactual Chile" },
-      { code: "61", name: "Banco BCI" },
-      { code: "71", name: "Banco Copec" },
-      { code: "72", name: "Banco Rabobank Chile" },
-      { code: "77", name: "Banco del Desarrollo" },
-      { code: "97", name: "Banco MUFG" },
-      { code: "99", name: "Banco Penta" },
-      { code: "00", name: "RUT (Cuenta RUT)" },
-    ];
+  private fetchWithToken(path: string, init: RequestInit): Promise<Response> {
+    const headers = new Headers(init.headers);
+    headers.set("Authorization", this.token ?? "");
+    return fetch(`${this.config.apiUrl}${path}`, { ...init, headers });
+  }
+
+  private async refreshAuthentication(): Promise<void> {
+    if (!this.refreshToken) {
+      await this.authenticate();
+      return;
+    }
+    const response = await this.fetchJson<AuthResponse>("/b2b/auth/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken: this.refreshToken }),
+    });
+    if (!response.token) throw new Error("Global66 respondió sin token renovado");
+    this.token = response.token;
+    this.refreshToken = response.refreshToken || this.refreshToken;
+  }
+
+  private async fetchJson<T>(path: string, init: RequestInit): Promise<T> {
+    const response = await fetch(`${this.config.apiUrl}${path}`, init);
+    return this.parseResponse<T>(response);
+  }
+
+  private async parseResponse<T>(response: Response): Promise<T> {
+    const text = await response.text();
+    let payload: unknown;
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch {
+      payload = { message: text };
+    }
+    if (!response.ok) {
+      const retryAfter = response.headers.get("retry-after");
+      const suffix = retryAfter ? `; retry-after=${retryAfter}` : "";
+      throw new Error(`Global66 HTTP ${response.status}${suffix}: ${JSON.stringify(payload)}`);
+    }
+    return payload as T;
   }
 }

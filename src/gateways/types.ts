@@ -36,6 +36,8 @@ export interface PayoutRequest {
   description: string;
   /** Beneficiary account/handle (bank account, RUT, connected acct, etc.). */
   destination: string;
+  /** Stable product reference used as an idempotency key by payout providers. */
+  reference?: string;
 }
 
 export interface PayoutResult {

@@ -56,12 +56,16 @@ Copia `.env.example` a `.env` (opcional). El servidor lo carga al arrancar y no 
 | ----------------------------- | ----------------------- | ------------------------------------------------------- |
 | `PORT`                        | `3000`                  | Puerto del servidor HTTP.                               |
 | `CURRENCY`                    | `clp`                   | Moneda base (Chile). Soporta monedas sin decimales.     |
-| `DEFAULT_GATEWAY`             | `chile`                 | Pasarela por defecto (`chile` o `stripe`).              |
+| `DEFAULT_GATEWAY`             | `chile`                 | Pasarela por defecto (`chile`, `stripe` o `global66`).   |
 | `STRIPE_SECRET_KEY`           | _(vacío)_               | Si está presente, Stripe usa su API real.               |
 | `STRIPE_PUBLISHABLE_KEY`      | _(vacío)_               | `pk_test_…`. Monta Checkout embebido en el portal.      |
 | `STRIPE_WEBHOOK_SECRET`       | _(vacío)_               | `whsec_…` de `stripe listen`. Liquida el movimiento al pagar.|
 | `CHILE_GATEWAY_API_KEY`       | _(vacío)_               | Credencial de la pasarela chilena (modo live).          |
 | `CHILE_GATEWAY_COMMERCE_CODE` | _(vacío)_               | Código de comercio de la pasarela chilena.              |
+| `GLOBAL66_CLIENT_ID`          | _(vacío)_               | Identificador de la credencial B2B de Global66.          |
+| `GLOBAL66_CLIENT_SECRET`      | _(vacío)_               | Secreto B2B; debe guardarse en el `.env` del VPS, nunca en Git. |
+| `GLOBAL66_API_URL`            | URL de producción       | `https://api.global66.com/business-api`.                 |
+| `GLOBAL66_WEBHOOK_API_KEY`    | _(vacío)_               | Clave para validar webhooks de Global66.                 |
 | `PUBLIC_BASE_URL`             | `http://localhost:3000` | Base para URLs de retorno/redirección.                  |
 
 ## Scripts

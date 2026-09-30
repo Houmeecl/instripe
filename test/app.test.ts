@@ -102,15 +102,19 @@ describe("instripe BaaS platform", () => {
     expect(overview.body.policies).toHaveLength(1);
     expect(overview.body.modules.map((m: { id: string }) => m.id).sort()).toEqual([
       "apps",
+      "automation",
       "cobros",
+      "colaboradores",
       "connect",
       "cuentas",
       "diseno",
       "empresas",
       "kyc",
       "laboral",
+      "portal",
       "registro",
       "seguros",
+      "suscripcion",
       "tarjetas",
       "treasury",
     ]);
@@ -530,7 +534,7 @@ describe("instripe BaaS platform", () => {
     expect(second.floatAccount.balance).toBe(first.floatAccount.balance);
   });
 
-  it("keeps the dashboard closed until a role signs in", async () => {
+  it("keeps the dashboard closed until a role signs in and scopes it to that role", async () => {
     const server = app();
     const anonymous = await request(server).get("/api/overview");
     expect(anonymous.status).toBe(401);
@@ -587,23 +591,30 @@ describe("instripe BaaS platform", () => {
 
     const comercio = await signedIn(server, "caja@taller.cl");
     const comercioSession = await comercio.get("/api/session");
-    expect(comercioSession.body.user.options).toEqual(["overview", "empresas", "clases"]);
+    expect(comercioSession.body.user.options).toEqual([
+      "overview",
+      "empresas",
+      "clases",
+      "payments",
+      "connect",
+      "treasury",
+      "cards",
+    ]);
     const comercioOverview = await comercio.get("/api/overview");
     expect(comercioOverview.status).toBe(200);
     expect(comercioOverview.body.inicio).toBeDefined();
     expect(comercioOverview.body.accounts).toBeUndefined();
     expect(comercioOverview.body.cobros).toBeUndefined();
-    expect(comercioOverview.body.connect).toBeUndefined();
-    expect(comercioOverview.body.payments).toBeUndefined();
-    expect(comercioOverview.body.cards).toBeUndefined();
+    expect(comercioOverview.body.connect).toBeDefined();
+    expect(comercioOverview.body.payments).toBeDefined();
+    expect(comercioOverview.body.cards).toBeDefined();
     expect(comercioOverview.body.policies).toBeUndefined();
-    const blocked = await comercio.get("/api/payments");
-    expect(blocked.status).toBe(403);
-    expect(blocked.body.error).toBe("Esta opción no está en tu rol");
-    expect((await comercio.get("/api/tarjetas")).status).toBe(403);
+    const payments = await comercio.get("/api/payments");
+    expect(payments.status).toBe(200);
+    expect((await comercio.get("/api/tarjetas")).status).toBe(200);
     expect((await comercio.get("/api/cuentas")).status).toBe(403);
     expect((await comercio.get("/api/cobros")).status).toBe(403);
-    expect((await comercio.get("/api/connect")).status).toBe(403);
+    expect((await comercio.get("/api/connect")).status).toBe(200);
     expect((await comercio.get("/api/frosting")).status).toBe(403);
     expect((await comercio.get("/api/gateways")).status).toBe(200);
 

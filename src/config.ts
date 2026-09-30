@@ -17,11 +17,12 @@ export interface AppConfig {
     apiKey: string | undefined;
     commerceCode: string | undefined;
   };
-  /** Credentials for Global66 (Payoy) gateway. Demo when unset. */
+  /** Global66 B2B transactional API credentials. Demo when unset. */
   global66?: {
-    apiKey: string | undefined;
-    merchantId: string | undefined;
+    clientId: string | undefined;
+    clientSecret: string | undefined;
     apiUrl: string | undefined;
+    webhookApiKey: string | undefined;
   };
   /** Where `Crear app` writes the Stripe App manifest. */
   appManifestPath: string;
@@ -46,7 +47,10 @@ export const DEFAULT_SEED_PASSWORD = "Antofagasta.183";
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsedPort = Number.parseInt(env.PORT ?? "3000", 10);
   const port = Number.isNaN(parsedPort) ? 3000 : parsedPort;
-  const defaultGateway: GatewayName = env.DEFAULT_GATEWAY === "stripe" ? "stripe" : "chile";
+  const defaultGateway: GatewayName =
+    env.DEFAULT_GATEWAY === "stripe" || env.DEFAULT_GATEWAY === "global66"
+      ? env.DEFAULT_GATEWAY
+      : "chile";
   return {
     port,
     bindHost: env.BIND_HOST?.trim() || "0.0.0.0",
@@ -61,9 +65,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       commerceCode: env.CHILE_GATEWAY_COMMERCE_CODE?.trim() || undefined,
     },
     global66: {
-      apiKey: env.GLOBAL66_API_KEY?.trim() || undefined,
-      merchantId: env.GLOBAL66_MERCHANT_ID?.trim() || undefined,
+      clientId: env.GLOBAL66_CLIENT_ID?.trim() || undefined,
+      clientSecret: env.GLOBAL66_CLIENT_SECRET?.trim() || undefined,
       apiUrl: env.GLOBAL66_API_URL?.trim() || undefined,
+      webhookApiKey: env.GLOBAL66_WEBHOOK_API_KEY?.trim() || undefined,
     },
     appManifestPath: env.APP_MANIFEST_PATH?.trim() || "stripe-app.json",
     databasePath: env.DATABASE_PATH?.trim() || "data/platform.db",
@@ -92,5 +97,5 @@ export function isChileConfigured(config: AppConfig): boolean {
 }
 
 export function isGlobal66Configured(config: AppConfig): boolean {
-  return Boolean(config.global66?.apiKey && config.global66?.merchantId);
+  return Boolean(config.global66?.clientId && config.global66?.clientSecret);
 }

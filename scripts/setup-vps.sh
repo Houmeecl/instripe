@@ -75,20 +75,22 @@ STRIPE_SECRET_KEY=
 STRIPE_PUBLISHABLE_KEY=
 STRIPE_WEBHOOK_SECRET=
 
-# Global66 Configuration
-GLOBAL66_API_KEY=
-GLOBAL66_MERCHANT_ID=
+# Global66 B2B Transactional API
+GLOBAL66_CLIENT_ID=
+GLOBAL66_CLIENT_SECRET=
+GLOBAL66_API_URL=https://api.global66.com/business-api
+GLOBAL66_WEBHOOK_API_KEY=
 
 # Application Configuration
 NODE_ENV=production
 PORT=3000
 PUBLIC_BASE_URL=http://localhost:3000
-SEED_PASSWORD=Antofagasta.183
+AUTH_SEED_PASSWORD=
 CURRENCY=CLP
 DATABASE_PATH=/var/www/instripe/data/instripe.db
 
 # Default Gateway
-defaultGateway=chile
+DEFAULT_GATEWAY=chile
 EOF
     echo "  -> Created .env file. Please edit with your credentials."
 fi

@@ -373,6 +373,7 @@ export class Payments {
         currency: this.config.currency,
         description: input.description,
         destination: input.destination,
+        reference: input.reference,
       });
       const movement: MoneyMovement = {
         id: `pay_${randomUUID().slice(0, 8)}`,
