@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Remesas</title>
+  <style>
+    :root {
+      --bg: #f4f6fb; --card: #ffffff; --ink: #0f1b3d; --muted: #5d6785; --line: #e3e7f1;
+      --brand: #1f5eff; --brand-ink: #ffffff; --ok: #12a150; --warn: #c27c00; --bad: #c62828; --soft: #eef3ff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    header { display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
+    header h1 { font-size: 17px; margin: 0; flex: 1; }
+    header button { border: 0; background: none; font-size: 20px; color: var(--ink); padding: 4px 8px; cursor: pointer; }
+    main { max-width: 520px; margin: 0 auto; padding: 16px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+    .muted { color: var(--muted); font-size: 13px; }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+    input, select { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 10px; font: inherit; background: #fff; color: var(--ink); }
+    .btn { display: block; width: 100%; padding: 14px; border: 0; border-radius: 12px; background: var(--brand); color: var(--brand-ink); font: 600 16px system-ui, sans-serif; margin-top: 16px; cursor: pointer; }
+    .btn.secondary { background: var(--soft); color: var(--brand); }
+    .btn:disabled { opacity: .55; cursor: default; }
+    .list button { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: 14px 4px; border: 0; border-bottom: 1px solid var(--line); background: none; font: inherit; color: var(--ink); cursor: pointer; text-align: left; }
+    .list button:last-child { border-bottom: 0; }
+    .tag { font-size: 12px; color: var(--muted); }
+    .big { font-size: 30px; font-weight: 700; margin: 4px 0; }
+    .receive { background: var(--soft); border-radius: 12px; padding: 12px; margin-top: 12px; }
+    .receive .big { color: var(--brand); }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    td { padding: 6px 0; border-bottom: 1px dashed var(--line); }
+    td:last-child { text-align: right; }
+    tr.total td { font-weight: 700; border-bottom: 0; padding-top: 10px; }
+    .status { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--soft); color: var(--brand); }
+    .status.ok { background: #e7f6ee; color: var(--ok); } .status.warn { background: #fff4df; color: var(--warn); } .status.bad { background: #fdecec; color: var(--bad); }
+    .error { color: var(--bad); font-size: 14px; margin-top: 10px; min-height: 1em; }
+    .center { text-align: center; }
+    .check { width: 64px; height: 64px; border-radius: 50%; background: var(--ok); color: #fff; font-size: 36px; display: grid; place-items: center; margin: 8px auto; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 8px; }
+    .tabs button { flex: 1; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; font: inherit; cursor: pointer; }
+    .tabs button.on { border-color: var(--brand); color: var(--brand); font-weight: 600; }
+    #qr { display: flex; justify-content: center; margin: 10px 0; }
+    .voucher { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+    .hidden { display: none !important; }
+    @media print {
+      header, .btn, .noprint { display: none !important; }
+      body { background: #fff; } main { padding: 0; } .card { border: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <button id="back" class="hidden" aria-label="Volver">←</button>
+    <h1 id="title">Remesas</h1>
+    <button id="menu" aria-label="Historial">☰</button>
+  </header>
+  <main id="app"><div class="card">Cargando…</div></main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script>
+    const app = document.getElementById("app");
+    const titleEl = document.getElementById("title");
+    const backBtn = document.getElementById("back");
+    const state = { step: "country", config: null, corridor: null, quote: null, beneficiary: {}, remitter: {}, sendAmount: 0, remesa: null, tuuPayment: null, trackingUrl: "" };
+    const history = [];
+
+    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+    const clp = (n) => "$" + Number(n || 0).toLocaleString("es-CL");
+    const dest = (n, cur) => Number(n || 0).toLocaleString("es-CL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " " + esc(cur);
+    const flag = (cc) => String(cc).toUpperCase().replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0)));
+    const STATUS_CLASS = { successful: "ok", sent: "ok", processing: "", paid: "", awaiting_payment: "", payment_unverified: "warn", pending_review: "warn", payment_failed: "bad", rejected: "bad", transfer_failed: "bad" };
+    const STATUS_LABEL = { awaiting_payment: "Esperando pago", payment_failed: "Pago no aprobado", payment_unverified: "Pago en verificación", pending_review: "En revisión", paid: "Pago aprobado", processing: "Conversión en proceso", sent: "Enviado al banco", successful: "Recibido", rejected: "Rechazado", transfer_failed: "Envío no aceptado" };
+
+    async function api(path, options = {}) {
+      const res = await fetch(path, { credentials: "same-origin", headers: { "Content-Type": "application/json" }, ...options, body: options.body ? JSON.stringify(options.body) : undefined });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { const err = new Error(data.error || "Error " + res.status); err.status = res.status; throw err; }
+      return data;
+    }
+
+    function go(step, push = true) {
+      if (push && state.step !== step) history.push(state.step);
+      state.step = step;
+      render();
+    }
+    backBtn.onclick = () => { if (history.length) { state.step = history.pop(); render(); } };
+    document.getElementById("menu").onclick = () => go("history");
+
+    function render() {
+      backBtn.classList.toggle("hidden", !history.length || ["done", "login"].includes(state.step));
+      const views = { login, country, beneficiary, amount, confirm, pay, done, history: historyView, settings };
+      (views[state.step] || country)();
+    }
+
+    function login(message) {
+      titleEl.textContent = "Iniciar sesión";
+      app.innerHTML = `<div class="card"><p class="muted">Ingresa con el usuario del comercio.</p>
+        <label>Correo</label><input id="email" type="email" autocomplete="username" />
+        <label>Clave</label><input id="password" type="password" autocomplete="current-password" />
+        <button class="btn" id="go">Entrar</button><div class="error" id="err">${esc(message || "")}</div></div>`;
+      document.getElementById("go").onclick = async () => {
+        try {
+          const r = await api("/api/session", { method: "POST", body: { email: document.getElementById("email").value, password: document.getElementById("password").value } });
+          if (r.user.mustChangePassword) { document.getElementById("err").textContent = "Cambia la clave inicial desde el panel antes de operar."; return; }
+          await boot();
+        } catch (e) { document.getElementById("err").textContent = e.message; }
+      };
+    }
+
+    function country() {
+      titleEl.textContent = "Enviar dinero";
+      const corridors = state.config.corridors.filter((c) => c.enabled && c.rate > 0);
+      app.innerHTML = `<div class="card"><input id="q" placeholder="Buscar país…" />
+        <div class="list" id="list"></div>
+        ${corridors.length ? "" : `<p class="muted">No hay países habilitados. Operación tiene que definir las tasas.</p>`}</div>
+        ${state.config.canConfigure ? `<button class="btn secondary" id="cfg">Tasas y comisiones</button>` : ""}`;
+      const list = document.getElementById("list");
+      const draw = (filter) => {
+        list.innerHTML = corridors.filter((c) => c.countryName.toLowerCase().includes(filter.toLowerCase()))
+          .map((c) => `<button data-cc="${esc(c.country)}"><span>${flag(c.country)} ${esc(c.countryName)}</span><span class="tag">${esc(c.currency)} ›</span></button>`).join("");
+        list.querySelectorAll("button").forEach((b) => b.onclick = () => {
+          state.corridor = corridors.find((c) => c.country === b.dataset.cc);
+          state.beneficiary = { accountType: state.corridor.accountTypes[0], documentType: state.corridor.documentTypes[0] };
+          go("beneficiary");
+        });
+      };
+      draw("");
+      document.getElementById("q").oninput = (e) => draw(e.target.value);
+      const cfg = document.getElementById("cfg"); if (cfg) cfg.onclick = () => go("settings");
+    }
+
+    function beneficiary() {
+      titleEl.textContent = "Beneficiario";
+      const c = state.corridor, b = state.beneficiary, r = state.remitter;
+      const opt = (list, value) => list.map((v) => `<option ${v === value ? "selected" : ""}>${esc(v)}</option>`).join("");
+      app.innerHTML = `<div class="card"><div class="tag">${flag(c.country)} ${esc(c.countryName)} · ${esc(c.currency)}</div>
+        <label>Nombre</label><input id="firstName" value="${esc(b.firstName)}" />
+        <label>Apellido</label><input id="lastName" value="${esc(b.lastName)}" />
+        <label>Tipo de documento</label><select id="documentType">${opt(c.documentTypes, b.documentType)}</select>
+        <label>Número de documento</label><input id="documentNumber" value="${esc(b.documentNumber)}" />
+        <label>Banco</label><input id="bankName" value="${esc(b.bankName)}" placeholder="Ej: BCP - Banco de Crédito del Perú" />
+        <label>Código de banco Global66 (opcional)</label><input id="bankId" inputmode="numeric" value="${esc(b.bankId)}" />
+        <label>Tipo de cuenta</label><select id="accountType">${opt(c.accountTypes, b.accountType)}</select>
+        <label>Número de cuenta</label><input id="accountNumber" inputmode="numeric" value="${esc(b.accountNumber)}" /></div>
+        <div class="card"><b>Quien envía</b>
+        <label>Nombre completo</label><input id="rname" value="${esc(r.name)}" />
+        <label>RUT</label><input id="rrut" value="${esc(r.rut)}" placeholder="12.345.678-9" />
+        <label>Teléfono (opcional)</label><input id="rphone" value="${esc(r.phone)}" placeholder="+569…" /></div>
+        <button class="btn" id="next">Continuar</button><div class="error" id="err"></div>`;
+      document.getElementById("next").onclick = () => {
+        const v = (id) => document.getElementById(id).value.trim();
+        state.beneficiary = { firstName: v("firstName"), lastName: v("lastName"), documentType: v("documentType"), documentNumber: v("documentNumber"), bankName: v("bankName"), bankId: v("bankId"), accountType: v("accountType"), accountNumber: v("accountNumber") };
+        state.remitter = { name: v("rname"), rut: v("rrut"), phone: v("rphone") };
+        const missing = ["firstName", "lastName", "documentNumber", "bankName", "accountNumber"].some((k) => !state.beneficiary[k]) || !state.remitter.name || !state.remitter.rut;
+        if (missing) { document.getElementById("err").textContent = "Completa los datos del beneficiario y de quien envía."; return; }
+        go("amount");
+      };
+    }
+
+    function quoteTable(q, c) {
+      return `<table>
+        <tr><td>Tipo de cambio</td><td>${esc(q.rateText)}</td></tr>
+        <tr><td>Monto a convertir</td><td>${clp(q.amountToConvert)}</td></tr>
+        <tr><td>Costo de conversión</td><td>${clp(q.conversionCost)}</td></tr>
+        <tr><td>Cargo de servicio</td><td>${clp(q.serviceFee)}</td></tr>
+        <tr><td>Comisión remesa</td><td>${clp(q.commission)}</td></tr>
+        <tr><td class="muted">Comisión POS TUU (estimada, la paga el comercio)</td><td class="muted">${clp(q.posFeeEstimated)}</td></tr>
+        <tr class="total"><td>Total a pagar</td><td>${clp(q.total)}</td></tr></table>`;
+    }
+
+    function amount() {
+      titleEl.textContent = "Monto a enviar";
+      const c = state.corridor;
+      app.innerHTML = `<div class="card"><div class="tag">${flag(c.country)} ${esc(c.countryName)} (${esc(c.currency)})</div>
+        <label>Tú envías (CLP)</label><input id="amt" inputmode="numeric" value="${state.sendAmount || ""}" placeholder="500.000" />
+        <div class="muted">Mínimo ${clp(c.minAmount)} · máximo ${clp(c.maxAmount)}</div>
+        <div id="q"></div></div><button class="btn" id="next" disabled>Continuar</button><div class="error" id="err"></div>`;
+      const input = document.getElementById("amt"), box = document.getElementById("q"), next = document.getElementById("next"), err = document.getElementById("err");
+      let timer;
+      const refresh = async () => {
+        const value = Number(input.value.replace(/\D/g, ""));
+        state.sendAmount = value; next.disabled = true; err.textContent = "";
+        if (!value) { box.innerHTML = ""; return; }
+        try {
+          const { quote } = await api("/api/remesas/cotizar", { method: "POST", body: { country: c.country, sendAmount: value } });
+          state.quote = quote;
+          box.innerHTML = `<div class="receive"><div class="tag">Tu contacto recibe (estimado)</div><div class="big">${dest(quote.receiveAmount, quote.currency)}</div></div>${quoteTable(quote, c)}`;
+          next.disabled = false;
+        } catch (e) { box.innerHTML = ""; err.textContent = e.message; }
+      };
+      input.oninput = () => { clearTimeout(timer); timer = setTimeout(refresh, 350); };
+      if (state.sendAmount) refresh();
+      next.onclick = () => go("confirm");
+    }
+
+    function confirm() {
+      titleEl.textContent = "Confirmar envío";
+      const q = state.quote, b = state.beneficiary, c = state.corridor;
+      app.innerHTML = `<div class="card"><b>Origen</b><table><tr><td>Tú envías</td><td>${clp(q.sendAmount)}</td></tr><tr class="total"><td>Total a pagar</td><td>${clp(q.total)}</td></tr></table></div>
+        <div class="card"><b>Destino</b><p>${flag(c.country)} ${esc(b.firstName)} ${esc(b.lastName)}<br><span class="muted">${esc(b.bankName)} · ${esc(b.accountType)} · Nº ${esc(b.accountNumber)}</span></p>
+        <div class="receive"><div class="tag">Tu contacto recibe (estimado)</div><div class="big">${dest(q.receiveAmount, q.currency)}</div></div>${quoteTable(q, c)}</div>
+        <p class="muted">Remitente: ${esc(state.remitter.name)} · RUT ${esc(state.remitter.rut)}. El monto final lo fija Global66 al convertir.</p>
+        <button class="btn" id="pay">Pagar con tarjeta</button><div class="error" id="err"></div>`;
+      document.getElementById("pay").onclick = async (e) => {
+        e.target.disabled = true;
+        try {
+          const r = await api("/api/remesas", { method: "POST", body: { country: c.country, sendAmount: q.sendAmount, remitter: state.remitter, beneficiary: state.beneficiary } });
+          state.remesa = r.remesa; state.tuuPayment = r.tuuPayment; state.trackingUrl = r.trackingUrl;
+          history.length = 0; go("pay", false);
+        } catch (err) { e.target.disabled = false; document.getElementById("err").textContent = err.message; }
+      };
+    }
+
+    // The Android wrapper exposes TuuBridge.pay(json) and answers through window.onTuuResult.
+    function pay() {
+      titleEl.textContent = "Pagar";
+      const r = state.remesa, bridge = window.TuuBridge && typeof window.TuuBridge.pay === "function";
+      const demo = state.config.settings.tuuVerification === "demo";
+      app.innerHTML = `<div class="card center"><div class="tag">Remesa ${esc(r.code)}</div><div class="big">${clp(r.quote.total)}</div>
+        <p class="muted">${bridge ? "Acerca, inserta o desliza la tarjeta en el POS." : demo ? "Modo demo: no hay POS conectado." : "Abre esta pantalla desde la app Remesas del POS TUU para cobrar."}</p>
+        ${bridge ? `<button class="btn" id="charge">Cobrar en POS</button>` : demo ? `<button class="btn" id="sim">Simular pago aprobado</button>` : ""}
+        <div class="error" id="err"></div></div>`;
+      const err = document.getElementById("err");
+      const report = async (body) => {
+        try {
+          const res = await api(`/api/remesas/${encodeURIComponent(r.id)}/pago`, { method: "POST", body });
+          state.remesa = res.remesa; go("done", false);
+        } catch (e) { err.textContent = e.message; }
+      };
+      window.onTuuResult = (ok, resultJson, serialNumber) => {
+        let result = {};
+        try { result = JSON.parse(resultJson || "{}"); } catch { /* keep empty */ }
+        if (ok && result.transactionStatus === true) {
+          report({ approved: true, sequenceNumber: String(result.sequenceNumber || ""), serialNumber: String(serialNumber || ""), method: result.method || "" });
+        } else {
+          report({ approved: false, errorMessage: result.errorMessageOnApp || result.errorMessage || "Pago cancelado" });
+        }
+      };
+      const charge = document.getElementById("charge");
+      if (charge) charge.onclick = () => window.TuuBridge.pay(JSON.stringify(state.tuuPayment));
+      const sim = document.getElementById("sim");
+      if (sim) sim.onclick = () => report({ approved: true, sequenceNumber: String(Date.now()).slice(-12), serialNumber: "DEMO-POS", method: "DEBIT" });
+    }
+
+    function done() {
+      const r = state.remesa, failed = ["payment_failed", "transfer_failed", "rejected"].includes(r.status);
+      titleEl.textContent = failed ? "Remesa no completada" : "Envío registrado";
+      const g = r.global66 || {};
+      const last = r.timeline[r.timeline.length - 1] || {};
+      app.innerHTML = `<div class="card center noprint">${failed ? "" : `<div class="check">✓</div>`}
+        <span class="status ${STATUS_CLASS[r.status] || ""}">${esc(STATUS_LABEL[r.status] || r.status)}</span>
+        ${last.detail ? `<p class="muted">${esc(last.detail)}</p>` : ""}
+        <div class="receive"><div class="tag">Tu contacto recibe${g.destinationAmount ? "" : " (estimado)"}</div><div class="big">${dest(g.destinationAmount || r.quote.receiveAmount, r.quote.currency)}</div></div>
+        <p class="muted">Número de operación <b>${esc(r.code)}</b></p></div>
+        <div class="card voucher" id="voucher">
+          <div class="center"><b>COMPROBANTE DE ENVÍO</b><br>${esc(r.code)}<br>${esc(new Date(r.createdAt).toLocaleString("es-CL"))}</div><br>
+          <b>ORIGEN</b><table><tr><td>Monto enviado</td><td>${clp(r.quote.sendAmount)}</td></tr><tr><td>Total pagado (tarjeta)</td><td>${clp(r.quote.total)}</td></tr></table><br>
+          <b>CONVERSIÓN / COSTOS</b><table><tr><td>Tipo de cambio</td><td>${esc(r.quote.rateText)}</td></tr><tr><td>Monto a convertir</td><td>${clp(r.quote.amountToConvert)}</td></tr><tr><td>Costo de conversión</td><td>${clp(r.quote.conversionCost)}</td></tr><tr><td>Comisión remesa</td><td>${clp(r.quote.commission)}</td></tr></table><br>
+          <b>DESTINO</b><table><tr><td>Beneficiario</td><td>${esc(r.beneficiary.firstName)} ${esc(r.beneficiary.lastName)}</td></tr><tr><td>Banco</td><td>${esc(r.beneficiary.bankName)}</td></tr><tr><td>Cuenta</td><td>••••${esc(String(r.beneficiary.accountNumber).slice(-4))}</td></tr><tr><td>Recibe</td><td>${dest(g.destinationAmount || r.quote.receiveAmount, r.quote.currency)}</td></tr></table><br>
+          <b>PAGO</b><table><tr><td>Secuencia TUU</td><td>${esc(r.payment ? r.payment.sequenceNumber : "—")}</td></tr><tr><td>Referencia Global66</td><td>${esc(g.transactionId || "—")}</td></tr><tr><td>Estado</td><td>${esc(STATUS_LABEL[r.status] || r.status)}</td></tr></table>
+          <div id="qr"></div><div class="center muted">Escanea para ver el estado de tu envío</div></div>
+        <button class="btn secondary" id="refresh">Actualizar estado</button>
+        <button class="btn secondary" id="print">Imprimir comprobante</button>
+        <button class="btn" id="new">Nuevo envío</button>`;
+      if (window.QRCode && state.trackingUrl) new QRCode(document.getElementById("qr"), { text: state.trackingUrl, width: 128, height: 128 });
+      document.getElementById("print").onclick = () => (window.TuuBridge && window.TuuBridge.print ? window.TuuBridge.print(document.getElementById("voucher").innerText) : window.print());
+      document.getElementById("refresh").onclick = async () => {
+        try { const res = await api(`/api/remesas/${encodeURIComponent(r.id)}/actualizar`, { method: "POST" }); state.remesa = res.remesa; state.trackingUrl = res.trackingUrl; done(); } catch (e) { alert(e.message); }
+      };
+      document.getElementById("new").onclick = () => { Object.assign(state, { corridor: null, quote: null, beneficiary: {}, remitter: {}, sendAmount: 0, remesa: null }); history.length = 0; go("country", false); };
+    }
+
+    async function historyView() {
+      titleEl.textContent = "Envíos";
+      app.innerHTML = `<div class="card">Cargando…</div>`;
+      try {
+        const { remesas } = await api("/api/remesas");
+        app.innerHTML = `<div class="card list">${remesas.length ? remesas.map((r) => `<button data-id="${esc(r.id)}"><span><b>${esc(r.code)}</b><br><span class="tag">${esc(r.beneficiary.firstName)} ${esc(r.beneficiary.lastName)} · ${clp(r.quote.total)}</span></span><span class="status ${STATUS_CLASS[r.status] || ""}">${esc(STATUS_LABEL[r.status] || r.status)}</span></button>`).join("") : `<p class="muted">Todavía no hay envíos.</p>`}</div>
+          <a class="btn secondary center" href="/api/remesas/export" style="text-decoration:none">Descargar CSV para contabilidad</a>`;
+        app.querySelectorAll("[data-id]").forEach((b) => b.onclick = async () => {
+          const res = await api(`/api/remesas/${encodeURIComponent(b.dataset.id)}`);
+          state.remesa = res.remesa; state.tuuPayment = res.tuuPayment; state.trackingUrl = res.trackingUrl;
+          if (res.remesa.status === "awaiting_payment") go("pay");
+          else if (["pending_review", "payment_unverified"].includes(res.remesa.status) && state.config.canConfigure) review();
+          else go("done");
+        });
+      } catch (e) { app.innerHTML = `<div class="card error">${esc(e.message)}</div>`; }
+    }
+
+    function review() {
+      done();
+      const r = state.remesa;
+      const box = document.createElement("div");
+      box.innerHTML = `<button class="btn" id="approve">Aprobar y enviar por Global66</button><div class="error" id="aerr"></div>`;
+      app.prepend(box);
+      document.getElementById("approve").onclick = async () => {
+        try { const res = await api(`/api/remesas/${encodeURIComponent(r.id)}/aprobar`, { method: "POST" }); state.remesa = res.remesa; done(); }
+        catch (e) { document.getElementById("aerr").textContent = e.message; }
+      };
+    }
+
+    function settings() {
+      titleEl.textContent = "Tasas y comisiones";
+      const s = state.config.settings;
+      app.innerHTML = `<div class="card"><p class="muted">Verificación TUU: <b>${esc(s.tuuVerification)}</b> · Global66: <b>${esc(s.global66)}</b> · Remitente (RaaS): <b>${s.raas ? "sí" : "no"}</b></p>
+        <p class="muted">Tasa = CLP por 1 unidad de la moneda de destino. Porcentajes en decimal (0.03 = 3 %).</p></div>` +
+        state.config.corridors.map((c) => `<div class="card" data-cc="${esc(c.country)}"><b>${flag(c.country)} ${esc(c.countryName)} · ${esc(c.currency)}</b>
+          <label>Tasa (CLP)</label><input name="rate" value="${esc(c.rate)}" />
+          <label>Costo de conversión</label><input name="conversionPct" value="${esc(c.conversionPct)}" />
+          <label>Comisión remesa</label><input name="commissionPct" value="${esc(c.commissionPct)}" />
+          <label>Comisión fija (CLP)</label><input name="commissionFixed" value="${esc(c.commissionFixed)}" />
+          <label><input type="checkbox" name="enabled" ${c.enabled ? "checked" : ""} style="width:auto"> Habilitado</label>
+          <button class="btn secondary">Guardar</button><div class="error"></div><div class="muted">${c.rateUpdatedAt ? "Tasa actualizada " + esc(new Date(c.rateUpdatedAt).toLocaleString("es-CL")) : "Sin tasa"}</div></div>`).join("");
+      app.querySelectorAll("[data-cc]").forEach((card) => {
+        card.querySelector("button").onclick = async () => {
+          const f = (n) => card.querySelector(`[name=${n}]`);
+          try {
+            await api(`/api/remesas/corredores/${encodeURIComponent(card.dataset.cc)}`, { method: "PUT", body: { rate: f("rate").value, conversionPct: f("conversionPct").value, commissionPct: f("commissionPct").value, commissionFixed: f("commissionFixed").value, enabled: f("enabled").checked } });
+            state.config = await api("/api/remesas/config"); settings();
+          } catch (e) { card.querySelector(".error").textContent = e.message; }
+        };
+      });
+    }
+
+    async function boot() {
+      try {
+        state.config = await api("/api/remesas/config");
+        history.length = 0; go("country", false);
+      } catch (e) {
+        state.step = "login";
+        backBtn.classList.add("hidden");
+        login(e.status === 401 ? "" : e.message);
+      }
+    }
+    boot();
+  </script>
+</body>
+</html>

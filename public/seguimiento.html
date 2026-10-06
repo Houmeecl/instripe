@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Seguimiento de envío</title>
+  <style>
+    :root { --bg: #f4f6fb; --card: #fff; --ink: #0f1b3d; --muted: #5d6785; --line: #e3e7f1; --brand: #1f5eff; --ok: #12a150; --bad: #c62828; --soft: #eef3ff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 480px; margin: 0 auto; padding: 20px 16px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 14px; }
+    h1 { font-size: 20px; margin: 0 0 2px; } .code { color: var(--brand); font-weight: 600; }
+    .muted { color: var(--muted); font-size: 13px; }
+    ol { list-style: none; margin: 0; padding: 0; }
+    li { display: grid; grid-template-columns: 28px 1fr; gap: 10px; padding: 10px 0; border-bottom: 1px dashed var(--line); }
+    li:last-child { border-bottom: 0; }
+    .dot { width: 24px; height: 24px; border-radius: 50%; background: var(--ok); color: #fff; display: grid; place-items: center; font-size: 14px; }
+    .dot.bad { background: var(--bad); }
+    .receive { background: var(--soft); border-radius: 12px; padding: 14px; }
+    .big { font-size: 26px; font-weight: 700; color: var(--brand); }
+  </style>
+</head>
+<body>
+  <main id="app"><div class="card">Cargando…</div></main>
+  <script>
+    const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+    const token = location.pathname.split("/").pop();
+    const app = document.getElementById("app");
+    const BAD = ["payment_failed", "rejected", "transfer_failed"];
+    async function load() {
+      try {
+        const res = await fetch(`/api/seguimiento/${encodeURIComponent(token)}`);
+        const t = await res.json();
+        if (!res.ok) throw new Error(t.error || "No encontrado");
+        const amount = Number(t.receiveAmount).toLocaleString("es-CL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        app.innerHTML = `<div class="card"><h1>Seguimiento de envío</h1><div class="code">${esc(t.code)}</div>
+          <p class="muted">Estado actual: <b>${esc(t.statusLabel)}</b></p>
+          <ol>${t.timeline.map((e) => `<li><span class="dot ${BAD.includes(e.status) ? "bad" : ""}">${BAD.includes(e.status) ? "!" : "✓"}</span>
+            <span><b>${esc(e.label)}</b><br><span class="muted">${esc(new Date(e.at).toLocaleString("es-CL"))}</span></span></li>`).join("")}</ol></div>
+          <div class="card receive"><div class="muted">${esc(t.beneficiary)} recibe${t.receiveEstimated ? " (estimado)" : ""}</div>
+          <div class="big">${esc(amount)} ${esc(t.currency)}</div><div class="muted">${esc(t.bank)} · ${esc(t.account)}</div></div>`;
+        if (!["successful", ...BAD].includes(t.status)) setTimeout(load, 30000);
+      } catch (e) {
+        app.innerHTML = `<div class="card">${esc(e.message)}</div>`;
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

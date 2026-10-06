@@ -114,6 +114,7 @@ describe("instripe BaaS platform", () => {
       "laboral",
       "portal",
       "registro",
+      "remesas",
       "seguros",
       "suscripcion",
       "tarjetas",
@@ -668,6 +669,7 @@ describe("instripe BaaS platform", () => {
       "actuarial",
       "correo",
       "pilot",
+      "remesas",
     ]);
     expect(operacion.body.user.passwordHash).toBeUndefined();
     const cookie = String(operacion.headers["set-cookie"]);
@@ -689,6 +691,7 @@ describe("instripe BaaS platform", () => {
       "connect",
       "treasury",
       "cards",
+      "remesas",
     ]);
     const comercioOverview = await comercio.get("/api/overview");
     expect(comercioOverview.status).toBe(200);
@@ -1166,7 +1169,7 @@ describe("instripe BaaS platform", () => {
       originCurrency: "CLP",
       amount: 1_000,
       paymentType: "WIRE_TRANSFER",
-      purposeCode: [1],
+      purposeCode: [{ purposeCode: 1 }],
       beneficiary: { operationType: "BANK_TRANSFER", destinationCurrency: "CLP", countryCode: "CL" },
     });
     expect(JSON.stringify(submitted.body)).not.toContain("123456789");

@@ -14,6 +14,7 @@ import { LaboralModule } from "./modules/laboral/module.js";
 import { PortalModule } from "./modules/portal/module.js";
 import { SegurosModule, type ClaimInput, type FrostingInput, type SubscribeInput } from "./modules/seguros/module.js";
 import { RegistroModule } from "./modules/registro/module.js";
+import { RemesasModule } from "./modules/remesas/module.js";
 import { SuscripcionModule } from "./modules/suscripcion/module.js";
 import { TarjetasModule } from "./modules/tarjetas/module.js";
 import { TreasuryModule } from "./modules/treasury/module.js";
@@ -46,6 +47,7 @@ export class Platform {
   readonly portal: PortalModule;
   readonly automation: AutomationModule;
   readonly suscripcion: SuscripcionModule;
+  readonly remesas: RemesasModule;
   readonly auth: AuthModule;
 
   readonly store: PlatformStore;
@@ -69,11 +71,12 @@ export class Platform {
     this.portal = new PortalModule(this.payments, config, this.store);
     this.automation = new AutomationModule(this.payments, config, this.store);
     this.suscripcion = new SuscripcionModule(this.payments, config, this.store);
+    this.remesas = new RemesasModule(config, this.store);
     this.auth = new AuthModule(this.store, config.seedPassword, config.production);
   }
 
   listModules() {
-    return [this.cuentas, this.cobros, this.seguros, this.connect, this.treasury, this.tarjetas, this.diseno, this.apps, this.registro, this.empresas, this.laboral, this.kyc, this.colaboradores, this.portal, this.automation, this.suscripcion].map((mod) => ({
+    return [this.cuentas, this.cobros, this.seguros, this.connect, this.treasury, this.tarjetas, this.diseno, this.apps, this.registro, this.empresas, this.laboral, this.kyc, this.colaboradores, this.portal, this.automation, this.suscripcion, this.remesas].map((mod) => ({
       id: mod.id,
       label: mod.label,
       connected: true as const,

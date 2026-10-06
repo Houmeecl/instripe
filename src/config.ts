@@ -52,6 +52,27 @@ export interface AppConfig {
     /** Test-only plain sockets. Production stays on TLS. */
     insecure: boolean;
   };
+  /** Remesas: cobro con tarjeta en el POS TUU (inter-app) y envío por la API transaccional de Global66. */
+  remesas: {
+    /** TUU API key. Used to confirm each POS payment in TUU reports before sending money. */
+    tuuApiKey: string | undefined;
+    /** dteType sent to the TUU payment app. 0 = sin documento. */
+    tuuDteType: number;
+    /** Platform Global66 B2B credential that sends the remittances. Demo when unset. */
+    global66ClientId: string | undefined;
+    global66ClientSecret: string | undefined;
+    /** x-api-key that Global66 sends to /webhooks/global66. */
+    global66WebhookApiKey: string | undefined;
+    /** Sending purpose enabled for the company in Global66. */
+    global66PurposeCode: number;
+    /** Send the customer as remitter (RaaS endpoint, enabled by Global66 per company). */
+    raas: boolean;
+    /**
+     * Highest total (CLP) sent automatically once the POS payment is confirmed.
+     * Larger remittances wait for Operación. Undefined means no limit.
+     */
+    autoSendMax: number | undefined;
+  };
   /** Optional Mailcow administrator API connection used only for mailbox management. */
   mailcow: {
     apiUrl: string | undefined;
@@ -103,6 +124,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       imapPort: Number.parseInt(env.MAIL_IMAP_PORT ?? "993", 10) || 993,
       smtpPort: Number.parseInt(env.MAIL_SMTP_PORT ?? "587", 10) || 587,
       insecure: env.MAIL_INSECURE === "1",
+    },
+    remesas: {
+      tuuApiKey: env.TUU_API_KEY?.trim() || undefined,
+      tuuDteType: Number.parseInt(env.TUU_DTE_TYPE ?? "0", 10) || 0,
+      global66ClientId: env.GLOBAL66_B2B_CLIENT_ID?.trim() || undefined,
+      global66ClientSecret: env.GLOBAL66_B2B_CLIENT_SECRET?.trim() || undefined,
+      global66WebhookApiKey: env.GLOBAL66_WEBHOOK_API_KEY?.trim() || undefined,
+      global66PurposeCode: Number.parseInt(env.GLOBAL66_REMITTANCE_PURPOSE_CODE ?? "1", 10) || 1,
+      raas: env.GLOBAL66_RAAS !== "0",
+      autoSendMax: env.REMESAS_AUTO_SEND_MAX?.trim()
+        ? Math.max(0, Number.parseInt(env.REMESAS_AUTO_SEND_MAX, 10) || 0)
+        : undefined,
     },
     mailcow: {
       apiUrl: env.MAILCOW_API_URL?.trim() || undefined,

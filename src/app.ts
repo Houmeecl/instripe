@@ -1600,6 +1600,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   const publicDir = path.join(__dirname, "..", "public");
+  const trackingUrl = (token: string) => `${config.publicBaseUrl.replace(/\/+$/, "")}/seguimiento/${token}`;
   app.get("/aplicacion", (_req: Request, res: Response) => {
     res.sendFile(path.join(publicDir, "aplicacion.html"));
   });
@@ -1915,6 +1916,141 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   // Portal UI
+  // Remesas: the POS TUU app (inter-app) charges the card and Global66 sends the money.
+  app.post("/webhooks/global66", (req: Request, res: Response) => {
+    const key = req.headers["x-api-key"];
+    const accepted = platform.remesas.handleWebhook(typeof key === "string" ? key : undefined, req.body);
+    res.status(accepted ? 200 : 401).json({ received: accepted });
+  });
+
+  app.get("/api/seguimiento/:token", (req: Request, res: Response) => {
+    try {
+      res.json(platform.remesas.tracking(String(req.params.token)));
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/remesas/config", (_req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    res.json({
+      settings: platform.remesas.settings(),
+      corridors: platform.remesas.listCorridors(user.role === "operacion"),
+      canConfigure: user.role === "operacion",
+    });
+  });
+
+  app.put("/api/remesas/corredores/:country", (req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    if (user.role !== "operacion") {
+      res.status(403).json({ error: "Solo Operación puede cambiar tasas y comisiones" });
+      return;
+    }
+    const body = req.body ?? {};
+    const num = (value: unknown) => (value === undefined || value === "" ? undefined : Number(value));
+    try {
+      const corridor = platform.remesas.updateCorridor(String(req.params.country), {
+        rate: num(body.rate),
+        conversionPct: num(body.conversionPct),
+        commissionPct: num(body.commissionPct),
+        commissionFixed: num(body.commissionFixed),
+        posPct: num(body.posPct),
+        minAmount: num(body.minAmount),
+        maxAmount: num(body.maxAmount),
+        enabled: body.enabled === undefined ? undefined : body.enabled === true,
+      });
+      res.json({ corridor });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/remesas/cotizar", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      res.json({ quote: platform.remesas.quote({ country: String(body.country ?? ""), sendAmount: Number(body.sendAmount) }) });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/remesas", (_req: Request, res: Response) => {
+    res.json({ remesas: platform.remesas.list(companyActor(res)) });
+  });
+
+  app.get("/api/remesas/export", (_req: Request, res: Response) => {
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="remesas.csv"');
+    res.send(platform.remesas.exportCsv(companyActor(res)));
+  });
+
+  app.post("/api/remesas", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const result = platform.remesas.create({
+        country: String(body.country ?? ""),
+        sendAmount: Number(body.sendAmount),
+        remitter: body.remitter ?? {},
+        beneficiary: body.beneficiary ?? {},
+        actor: companyActor(res),
+      });
+      res.status(201).json({ ...result, trackingUrl: trackingUrl(result.remesa.trackingToken) });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/remesas/:id", (req: Request, res: Response) => {
+    try {
+      const remesa = platform.remesas.get(String(req.params.id), companyActor(res));
+      res.json({ remesa, tuuPayment: platform.remesas.tuuPayment(remesa), trackingUrl: trackingUrl(remesa.trackingToken) });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/remesas/:id/pago", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const remesa = await platform.remesas.reportPayment(String(req.params.id), companyActor(res), {
+        approved: body.approved === true,
+        sequenceNumber: body.sequenceNumber === undefined ? undefined : String(body.sequenceNumber),
+        serialNumber: body.serialNumber === undefined ? undefined : String(body.serialNumber),
+        method: body.method === undefined ? undefined : String(body.method),
+        errorMessage: body.errorMessage === undefined ? undefined : String(body.errorMessage),
+      });
+      res.json({ remesa, trackingUrl: trackingUrl(remesa.trackingToken) });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/remesas/:id/actualizar", async (req: Request, res: Response) => {
+    try {
+      const remesa = await platform.remesas.refresh(String(req.params.id), companyActor(res));
+      res.json({ remesa, trackingUrl: trackingUrl(remesa.trackingToken) });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/remesas/:id/aprobar", async (req: Request, res: Response) => {
+    try {
+      const remesa = await platform.remesas.approve(String(req.params.id), companyActor(res));
+      res.json({ remesa });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/remesas", (_req: Request, res: Response) => {
+    res.sendFile(path.join(publicDir, "remesas.html"));
+  });
+
+  app.get("/seguimiento/:token", (_req: Request, res: Response) => {
+    res.sendFile(path.join(publicDir, "seguimiento.html"));
+  });
+
   app.get("/portal", (_req: Request, res: Response) => {
     res.sendFile(path.join(publicDir, "portal.html"));
   });
@@ -2103,6 +2239,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
 
 function isPublicApi(req: Request): boolean {
   if (req.path === "/api/onboarding" || req.path === "/api/public-contact") return true;
+  if (req.method === "GET" && /^\/api\/seguimiento\/[0-9a-f]{32}$/.test(req.path)) return true;
   return req.path === "/api/session" && (req.method === "GET" || req.method === "POST" || req.method === "DELETE");
 }
 

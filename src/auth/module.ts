@@ -23,6 +23,7 @@ export const OPTIONS = [
   "actuarial",
   "correo",
   "pilot",
+  "remesas",
 ] as const;
 
 export type Option = (typeof OPTIONS)[number];
@@ -30,10 +31,10 @@ export type Role = "operacion" | "comercio" | "titular" | "colaborador" | "admin
 
 const ROLE_OPTIONS: Record<Role, readonly Option[]> = {
   operacion: OPTIONS,
-  comercio: ["overview", "empresas", "clases", "payments", "connect", "treasury", "cards"],
+  comercio: ["overview", "empresas", "clases", "payments", "connect", "treasury", "cards", "remesas"],
   titular: ["overview", "empresas", "clases"],
   colaborador: ["overview", "empresas"],
-  administrador_empresa: ["overview", "empresas", "clases", "payments", "connect", "treasury", "cards"],
+  administrador_empresa: ["overview", "empresas", "clases", "payments", "connect", "treasury", "cards", "remesas"],
   alumno: ["clases"],
   evaluador: ["clases"],
 };
@@ -142,6 +143,7 @@ export function requiredOption(pathname: string): Option | "any" | "deny" {
     [/^\/api\/payments$/, "payments"],
     [/^\/api\/salidas(?:\/.*)?$/, "payments"],
     [/^\/api\/stripe\/events$/, "payments"],
+    [/^\/api\/remesas(?:\/.*)?$/, "remesas"],
   ];
   for (const [pattern, option] of rules) {
     if (pattern.test(pathname)) return option;
