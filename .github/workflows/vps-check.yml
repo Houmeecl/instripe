@@ -1,0 +1,76 @@
+name: VPS check
+
+# Read-only status of the VPS. Changes nothing on the server.
+# Logs are public in this repository: never print .env values or secrets here.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/vps-check.yml
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            APP_DIR=/var/www/instripe
+            section() { echo; echo "===== $1 ====="; }
+
+            section "System"
+            . /etc/os-release 2>/dev/null && echo "$PRETTY_NAME"
+            uname -r
+            uptime
+            df -h / | tail -1
+            free -m | sed -n 1,2p
+
+            section "Tools"
+            echo "node: $(node -v 2>/dev/null || echo missing)"
+            echo "npm:  $(npm -v 2>/dev/null || echo missing)"
+            echo "pm2:  $(pm2 -v 2>/dev/null || echo missing)"
+            echo "git:  $(git --version 2>/dev/null || echo missing)"
+            echo "nginx: $(nginx -v 2>&1 || echo missing)"
+            echo "docker: $(docker --version 2>/dev/null || echo missing)"
+
+            section "App directory"
+            if [ -d "$APP_DIR" ]; then
+              cd "$APP_DIR"
+              ls -la
+              git log -1 --format='%h %ad %s' --date=iso 2>/dev/null || echo "not a git checkout"
+              git status --short 2>/dev/null | head -20
+              echo "origin/main: $(git ls-remote origin main 2>/dev/null | cut -c1-7)"
+              if [ -f .env ]; then
+                echo ".env keys (values hidden):"
+                grep -E '^[A-Za-z_][A-Za-z0-9_]*=' .env | sed -E 's/=.*/=<hidden>/' | sed -E 's/^/  /'
+              else
+                echo ".env missing"
+              fi
+              ls -la data 2>/dev/null || echo "data/ missing"
+              ls dist/index.js 2>/dev/null || echo "dist/index.js missing"
+            else
+              echo "$APP_DIR does not exist"
+              ls /var/www 2>/dev/null
+            fi
+
+            section "PM2"
+            pm2 list 2>/dev/null || echo "pm2 not available"
+            pm2 describe instripe 2>/dev/null | grep -E 'status|script path|exec cwd|exec mode|interpreter|node.js version|restarts|uptime' || echo "no instripe process"
+
+            section "Listening ports"
+            ss -tlnp 2>/dev/null | awk 'NR==1 || /:(80|443|3000|5595)\b/'
+
+            section "Health"
+            curl -sS -m 5 -w '\nHTTP %{http_code}\n' http://127.0.0.1:3000/health || echo "no response on 127.0.0.1:3000"
+
+            section "Nginx sites"
+            ls -la /etc/nginx/sites-enabled 2>/dev/null || echo "no nginx sites-enabled"
+            systemctl is-active nginx 2>/dev/null
+
+            section "Recent app errors"
+            pm2 logs instripe --err --lines 20 --nostream 2>/dev/null | grep -viE 'password|secret|key|token' || true
