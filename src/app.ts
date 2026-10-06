@@ -1931,16 +1931,34 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
   });
 
-  app.get("/api/remesas/config", (_req: Request, res: Response) => {
+  app.get("/api/remesas/config", async (_req: Request, res: Response) => {
     const user = res.locals.user as SessionUser;
-    res.json({
-      settings: platform.remesas.settings(),
-      corridors: platform.remesas.listCorridors(user.role === "operacion"),
-      canConfigure: user.role === "operacion",
-    });
+    try {
+      res.json({
+        settings: platform.remesas.settings(),
+        corridors: await platform.remesas.listCorridors(user.role === "operacion"),
+        canConfigure: user.role === "operacion",
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
   });
 
-  app.put("/api/remesas/corredores/:country", (req: Request, res: Response) => {
+  app.get("/api/remesas/formulario/:country", async (req: Request, res: Response) => {
+    try {
+      res.json({ form: await platform.remesas.form(String(req.params.country)) });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/remesas/beneficiarios", (req: Request, res: Response) => {
+    const rut = typeof req.query.rut === "string" ? req.query.rut : "";
+    const country = typeof req.query.country === "string" ? req.query.country : undefined;
+    res.json({ beneficiaries: platform.remesas.savedBeneficiaries(companyActor(res), rut, country) });
+  });
+
+  app.put("/api/remesas/corredores/:country", async (req: Request, res: Response) => {
     const user = res.locals.user as SessionUser;
     if (user.role !== "operacion") {
       res.status(403).json({ error: "Solo Operación puede cambiar tasas y comisiones" });
@@ -1949,7 +1967,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     const body = req.body ?? {};
     const num = (value: unknown) => (value === undefined || value === "" ? undefined : Number(value));
     try {
-      const corridor = platform.remesas.updateCorridor(String(req.params.country), {
+      const corridor = await platform.remesas.updateCorridor(String(req.params.country), {
         rate: num(body.rate),
         conversionPct: num(body.conversionPct),
         commissionPct: num(body.commissionPct),
@@ -1965,10 +1983,10 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
   });
 
-  app.post("/api/remesas/cotizar", (req: Request, res: Response) => {
+  app.post("/api/remesas/cotizar", async (req: Request, res: Response) => {
     const body = req.body ?? {};
     try {
-      res.json({ quote: platform.remesas.quote({ country: String(body.country ?? ""), sendAmount: Number(body.sendAmount) }) });
+      res.json({ quote: await platform.remesas.quote({ country: String(body.country ?? ""), sendAmount: Number(body.sendAmount) }) });
     } catch (error) {
       handleError(error, res);
     }
@@ -1984,10 +2002,10 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     res.send(platform.remesas.exportCsv(companyActor(res)));
   });
 
-  app.post("/api/remesas", (req: Request, res: Response) => {
+  app.post("/api/remesas", async (req: Request, res: Response) => {
     const body = req.body ?? {};
     try {
-      const result = platform.remesas.create({
+      const result = await platform.remesas.create({
         country: String(body.country ?? ""),
         sendAmount: Number(body.sendAmount),
         remitter: body.remitter ?? {},

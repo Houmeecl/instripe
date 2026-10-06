@@ -58,6 +58,8 @@ export interface AppConfig {
     tuuApiKey: string | undefined;
     /** dteType sent to the TUU payment app. 0 = sin documento. */
     tuuDteType: number;
+    /** Global66 public route catalog (destinations, banks, fields). Empty = built-in snapshot. */
+    global66CatalogUrl: string | undefined;
     /** Platform Global66 B2B credential that sends the remittances. Demo when unset. */
     global66ClientId: string | undefined;
     global66ClientSecret: string | undefined;
@@ -128,6 +130,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     remesas: {
       tuuApiKey: env.TUU_API_KEY?.trim() || undefined,
       tuuDteType: Number.parseInt(env.TUU_DTE_TYPE ?? "0", 10) || 0,
+      global66CatalogUrl:
+        env.GLOBAL66_CATALOG_URL === undefined ? "https://api.global66.com" : env.GLOBAL66_CATALOG_URL.trim() || undefined,
       global66ClientId: env.GLOBAL66_B2B_CLIENT_ID?.trim() || undefined,
       global66ClientSecret: env.GLOBAL66_B2B_CLIENT_SECRET?.trim() || undefined,
       global66WebhookApiKey: env.GLOBAL66_WEBHOOK_API_KEY?.trim() || undefined,

@@ -3,6 +3,7 @@ import request from "supertest";
 import { createApp } from "../src/app.js";
 import { DEFAULT_SEED_PASSWORD, loadConfig } from "../src/config.js";
 import { Global66BusinessApi } from "../src/gateways/global66BusinessApi.js";
+import { Global66Catalog } from "../src/gateways/global66Catalog.js";
 import { TuuReports } from "../src/gateways/tuuReports.js";
 import { RemesasModule, normalizeRut } from "../src/modules/remesas/module.js";
 import { PlatformStore } from "../src/store/db.js";
@@ -12,7 +13,8 @@ const BENEFICIARY = {
   lastName: "Pérez García",
   documentType: "DNI",
   documentNumber: "45678912",
-  bankName: "BCP - Banco de Crédito del Perú",
+  bankId: 3,
+  bankName: "BCP",
   accountType: "SAVING",
   accountNumber: "1234567890",
 };
@@ -21,7 +23,7 @@ const OPERACION = { id: "usr_operacion", role: "operacion" };
 const CONTROL = { id: "usr_control", role: "operacion" };
 
 function app(env: NodeJS.ProcessEnv = {}) {
-  return createApp(loadConfig({ DATABASE_PATH: ":memory:", ...env }));
+  return createApp(loadConfig({ DATABASE_PATH: ":memory:", GLOBAL66_CATALOG_URL: "", ...env }));
 }
 
 async function signedIn(server: ReturnType<typeof app>, email = "operacion@proveedorregional.cl") {
@@ -37,9 +39,9 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("remesas TUU + Global66", () => {
-  it("quotes the sent amount, conversion cost, commission and the estimated amount received", () => {
-    const remesas = new RemesasModule(loadConfig({}), new PlatformStore(":memory:"));
-    const quote = remesas.quote({ country: "PE", sendAmount: 500_000 });
+  it("quotes the sent amount, conversion cost, commission and the estimated amount received", async () => {
+    const remesas = new RemesasModule(loadConfig({ GLOBAL66_CATALOG_URL: "" }), new PlatformStore(":memory:"));
+    const quote = await remesas.quote({ country: "PE", sendAmount: 500_000 });
     expect(quote).toMatchObject({
       currency: "PEN",
       sendAmount: 500_000,
@@ -49,8 +51,8 @@ describe("remesas TUU + Global66", () => {
       total: 515_000,
       receiveAmount: 1800.88,
     });
-    expect(() => remesas.quote({ country: "PE", sendAmount: Number.NaN })).toThrow(/entero positivo/);
-    expect(() => remesas.quote({ country: "MX", sendAmount: 500_000 })).toThrow(/no está disponible/);
+    await expect(remesas.quote({ country: "PE", sendAmount: Number.NaN })).rejects.toThrow(/entero positivo/);
+    await expect(remesas.quote({ country: "MX", sendAmount: 500_000 })).rejects.toThrow(/no está disponible/);
   });
 
   it("validates the Chilean RUT check digit", () => {
@@ -122,12 +124,12 @@ describe("remesas TUU + Global66", () => {
 
   it("in production without TUU verification holds the remittance for a second Operación user", async () => {
     const remesas = new RemesasModule(
-      loadConfig({ NODE_ENV: "production", AUTH_SEED_PASSWORD: "x" }),
+      loadConfig({ NODE_ENV: "production", AUTH_SEED_PASSWORD: "x", GLOBAL66_CATALOG_URL: "" }),
       new PlatformStore(":memory:"),
     );
-    expect(remesas.listCorridors()).toEqual([]);
-    remesas.updateCorridor("PE", { rate: 274.31, enabled: true });
-    const { remesa } = remesas.create({ country: "PE", sendAmount: 200_000, remitter: REMITTER, beneficiary: BENEFICIARY, actor: OPERACION });
+    expect(await remesas.listCorridors()).toEqual([]);
+    await remesas.updateCorridor("PE", { rate: 274.31, enabled: true });
+    const { remesa } = (await remesas.create({ country: "PE", sendAmount: 200_000, remitter: REMITTER, beneficiary: BENEFICIARY, actor: OPERACION }));
     const held = await remesas.reportPayment(remesa.id, OPERACION, { approved: true, sequenceNumber: "1", serialNumber: "POS-1" });
     expect(held.status).toBe("pending_review");
     await expect(remesas.approve(remesa.id, OPERACION)).rejects.toThrow(/Otro usuario/);
@@ -156,24 +158,25 @@ describe("remesas TUU + Global66", () => {
       GLOBAL66_B2B_CLIENT_SECRET: "secret",
       GLOBAL66_WEBHOOK_API_KEY: "hook-key",
       GLOBAL66_REMITTANCE_PURPOSE_CODE: "64",
+      GLOBAL66_CATALOG_URL: "",
     });
     const remesas = new RemesasModule(config, new PlatformStore(":memory:"), { tuu, global66 });
 
-    const first = remesas.create({ country: "PE", sendAmount: 500_000, remitter: REMITTER, beneficiary: BENEFICIARY, actor: OPERACION }).remesa;
+    const first = (await remesas.create({ country: "PE", sendAmount: 500_000, remitter: REMITTER, beneficiary: BENEFICIARY, actor: OPERACION })).remesa;
     const mismatch = await remesas.reportPayment(first.id, OPERACION, { approved: true, sequenceNumber: "000000004321", serialNumber: "POS-9" });
     expect(mismatch.status).toBe("pending_review");
     expect(g66Calls).toHaveLength(0);
     expect(tuuCalls[0]).toMatchObject({ SerialNumber: "POS-9", pageSize: 20 });
 
     saleAmount = 515_000;
-    const second = remesas.create({ country: "PE", sendAmount: 500_000, remitter: REMITTER, beneficiary: BENEFICIARY, actor: OPERACION }).remesa;
+    const second = (await remesas.create({ country: "PE", sendAmount: 500_000, remitter: REMITTER, beneficiary: BENEFICIARY, actor: OPERACION })).remesa;
     const sent = await remesas.reportPayment(second.id, OPERACION, { approved: true, sequenceNumber: "000000004321", serialNumber: "POS-9" }).catch((e) => e);
     // The first remittance already claimed that sale.
     expect(String(sent)).toMatch(/otra remesa/);
 
-    const third = remesas.create({ country: "PE", sendAmount: 500_000, remitter: REMITTER, beneficiary: BENEFICIARY, actor: CONTROL }).remesa;
+    const third = (await remesas.create({ country: "PE", sendAmount: 500_000, remitter: REMITTER, beneficiary: BENEFICIARY, actor: CONTROL })).remesa;
     const fresh = new RemesasModule(config, new PlatformStore(":memory:"), { tuu, global66 });
-    const own = fresh.create({ country: "PE", sendAmount: 500_000, remitter: REMITTER, beneficiary: BENEFICIARY, actor: OPERACION }).remesa;
+    const own = (await fresh.create({ country: "PE", sendAmount: 500_000, remitter: REMITTER, beneficiary: BENEFICIARY, actor: OPERACION })).remesa;
     const ok = await fresh.reportPayment(own.id, OPERACION, { approved: true, sequenceNumber: "000000004321", serialNumber: "POS-9" });
     expect(third.status).toBe("awaiting_payment");
     expect(ok.status).toBe("processing");
@@ -188,6 +191,7 @@ describe("remesas TUU + Global66", () => {
       beneficiary: { destinationCurrency: "PEN", countryCode: "PE", accountType: "SAVING", accountNumber: "1234567890" },
       remitter: { name: "María Soto", identificationType: "RUT", identificationNumber: "12345678-5", countryCode: "CL" },
     });
+    expect((g66Calls[0].body as { beneficiary: { bankId: number; documentType: string } }).beneficiary).toMatchObject({ bankId: 3, documentType: "DNI" });
 
     expect(fresh.handleWebhook("wrong", {})).toBe(false);
     expect(fresh.handleWebhook("hook-key", { event: "RMT - Transaction", payload: { transactionId: 777, status: "successful", destinyAmount: 1801.5 } })).toBe(true);
@@ -200,5 +204,97 @@ describe("remesas TUU + Global66", () => {
     const server = app({ GLOBAL66_WEBHOOK_API_KEY: "hook-key" });
     expect((await request(server).post("/webhooks/global66").set("x-api-key", "nope").send({})).status).toBe(401);
     expect((await request(server).post("/webhooks/global66").set("x-api-key", "hook-key").send({ payload: {} })).status).toBe(200);
+  });
+
+  it("builds destinations, banks and the beneficiary form from the Global66 catalog", async () => {
+    const calls: string[] = [];
+    const catalog = new Global66Catalog("https://g66.test", undefined, async (url) => {
+      const path = String(url);
+      calls.push(path);
+      if (path.includes("/route/ext?")) {
+        return jsonResponse({
+          groups: [
+            {
+              destinationCountry: "PE",
+              destinationCountryNames: { nameES: "Perú" },
+              routes: [
+                {
+                  routeId: 227, originCurrency: "PEN", destinationCountry: "PE", destinationCurrency: "PEN",
+                  originMinUsd: 20, originMaxUsd: 100000, slaHours: 8,
+                  paymentTypes: [{ id: 1, paymentType: "WIRE_TRANSFER" }],
+                  bankingCodes: [{ id: 11, bankName: "INTERBANK" }, { id: 3, bankName: "Banco de Crédito del Peru (BCP)" }],
+                },
+              ],
+            },
+            {
+              destinationCountry: "MX",
+              destinationCountryNames: { nameES: "México" },
+              routes: [{ routeId: 210, originCurrency: "MXN", destinationCountry: "MX", destinationCurrency: "MXN", paymentTypes: [{ paymentType: "WIRE_TRANSFER" }], bankingCodes: [] }],
+            },
+          ],
+        });
+      }
+      if (path.includes("destination-fields")) {
+        return jsonResponse({
+          routeId: 227,
+          fields: [
+            { field: "accountType", label: "Tipo de cuenta", required: true, type: "list", options: [{ value: "Saving", label: "Cuenta de ahorro" }, { value: "Checking", label: "Corriente" }] },
+            { field: "accountNumber", label: "Número de cuenta", required: true, type: "text" },
+            { field: "state", label: "Departamento", required: true, type: "text", maxLength: 100 },
+          ],
+        });
+      }
+      if (path.includes("/documents/PE")) {
+        return jsonResponse({ individual: [{ nameDisplay: "DNI", value: "DNI", minSize: 8, maxSize: 9, characterType: "^\\d+$" }, { nameDisplay: "Pasaporte", value: "PASS", minSize: 1, maxSize: 50, characterType: "^\\w+$" }] });
+      }
+      if (path.includes("/sla?")) return jsonResponse({ slaHours: 2 });
+      return jsonResponse({}, 404);
+    });
+    const remesas = new RemesasModule(loadConfig({}), new PlatformStore(":memory:"), { catalog });
+
+    // RaaS does not accept a remitter to Mexico, so it is not offered.
+    expect((await remesas.listCorridors(true)).map((corridor) => corridor.country)).toEqual(["PE"]);
+    const form = await remesas.form("PE");
+    expect(form.banks.map((bank) => bank.id)).toEqual([3, 11]);
+    expect(form.accountTypes.map((type) => type.value)).toEqual(["SAVING", "CHECKING"]);
+    expect(form.documents.map((document) => document.value)).toEqual(["DNI", "PASS"]);
+    expect(form.extraFields).toEqual([{ field: "state", label: "Departamento", required: true, maxLength: 100 }]);
+
+    const quote = await remesas.quote({ country: "PE", sendAmount: 500_000 });
+    expect(quote.slaHours).toBe(2);
+
+    const base = { country: "PE", sendAmount: 100_000, remitter: REMITTER, actor: OPERACION };
+    await expect(remesas.create({ ...base, beneficiary: { ...BENEFICIARY, extra: { state: "Lima" }, documentNumber: "12AB" } })).rejects.toThrow(/DNI/);
+    await expect(remesas.create({ ...base, beneficiary: { ...BENEFICIARY, extra: { state: "Lima" }, bankId: 999 } })).rejects.toThrow(/Elige un banco/);
+    await expect(remesas.create({ ...base, beneficiary: BENEFICIARY })).rejects.toThrow(/Departamento/);
+    const { remesa } = await remesas.create({ ...base, beneficiary: { ...BENEFICIARY, extra: { state: "Lima" }, documentType: "PASS", documentNumber: "AB12345" } });
+    expect(remesa.beneficiary).toMatchObject({ bankId: 3, bankName: "Banco de Crédito del Peru (BCP)", accountType: "SAVING", documentType: "PASS", extra: { state: "Lima" } });
+
+    // Cached for 12 hours: one route request for everything above.
+    expect(calls.filter((call) => call.includes("/route/ext?")).length).toBe(1);
+  });
+
+  it("falls back to the built-in Global66 snapshot when the catalog is unreachable", async () => {
+    const catalog = new Global66Catalog("https://g66.test", undefined, async () => {
+      throw new Error("offline");
+    });
+    const remesas = new RemesasModule(loadConfig({}), new PlatformStore(":memory:"), { catalog });
+    const countries = (await remesas.listCorridors(true)).map((corridor) => corridor.country);
+    expect(countries).toContain("PE");
+    expect((await remesas.form("PE")).banks.some((bank) => bank.id === 3)).toBe(true);
+  });
+
+  it("remembers beneficiaries per company and remitter for the next remittance", async () => {
+    const server = app();
+    const taller = await signedIn(server, "caja@taller.cl");
+    const norte = await signedIn(server, "pago@norte.cl");
+    const form = await taller.get("/api/remesas/formulario/PE");
+    expect(form.status).toBe(200);
+    expect(form.body.form.banks.length).toBeGreaterThan(0);
+    await taller.post("/api/remesas").send({ country: "PE", sendAmount: 50_000, remitter: REMITTER, beneficiary: BENEFICIARY });
+    const saved = await taller.get("/api/remesas/beneficiarios").query({ rut: "12345678-5", country: "PE" });
+    expect(saved.body.beneficiaries).toHaveLength(1);
+    expect(saved.body.beneficiaries[0]).toMatchObject({ firstName: "Juan", accountNumber: "1234567890", bankId: 3 });
+    expect((await norte.get("/api/remesas/beneficiarios").query({ rut: "12345678-5" })).body.beneficiaries).toEqual([]);
   });
 });

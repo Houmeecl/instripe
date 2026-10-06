@@ -60,6 +60,8 @@ export interface Global66Remitter {
 export interface Global66RemittanceInput extends Global66BankTransferInput {
   description?: string;
   bankId?: number;
+  /** BANK_TRANSFER fields some destinations require: state, postalCode, residenceCity, address, branchCode. */
+  beneficiaryExtra?: Record<string, string>;
   remitter?: Global66Remitter;
 }
 
@@ -237,6 +239,7 @@ export class Global66BusinessApi {
         documentNumber: input.documentNumber,
         documentType: input.documentType,
         ...(input.bankId !== undefined ? { bankId: input.bankId } : {}),
+        ...(input.beneficiaryExtra ?? {}),
       },
       ...(input.remitter ? { remitter: input.remitter } : {}),
     };

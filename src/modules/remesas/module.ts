@@ -7,6 +7,7 @@ import {
   type Global66RemittanceInput,
   type Global66TransferResult,
 } from "../../gateways/global66BusinessApi.js";
+import { Global66Catalog, type CatalogBank, type CatalogDocument, type CatalogField } from "../../gateways/global66Catalog.js";
 import { TuuReports, tuuSaleApproved } from "../../gateways/tuuReports.js";
 import { isValidAmount } from "../../money.js";
 import type { PlatformStore } from "../../store/db.js";
@@ -41,12 +42,30 @@ export interface Corridor {
   commissionFixed: number;
   /** Estimated TUU card fee, shown for the merchant's information. */
   posPct: number;
+  /** Own limits in CLP, on top of Global66's limits in USD. */
   minAmount: number;
   maxAmount: number;
-  accountTypes: string[];
-  documentTypes: string[];
+  /** Global66 payout route for the destination. */
+  routeId: number;
+  minUsd: number;
+  maxUsd: number;
+  /** False when the destination left the Global66 catalog. */
+  available: boolean;
   enabled: boolean;
   rateUpdatedAt: string | null;
+}
+
+/** What the beneficiary screen needs, taken from the Global66 catalog. */
+export interface BeneficiaryForm {
+  country: string;
+  countryName: string;
+  currency: string;
+  banks: CatalogBank[];
+  accountTypes: Array<{ value: string; label: string }>;
+  documents: CatalogDocument[];
+  /** Extra address fields the route requires (BANK_TRANSFER schema names). */
+  extraFields: Array<{ field: string; label: string; required: boolean; maxLength: number | null }>;
+  slaHours: number | null;
 }
 
 export interface RemesaQuote {
@@ -66,6 +85,8 @@ export interface RemesaQuote {
   /** CLP charged on the card. */
   total: number;
   posFeeEstimated: number;
+  /** Global66 delivery estimate in hours, when known. */
+  slaHours: number | null;
   expiresAt: string;
 }
 
@@ -88,6 +109,21 @@ export interface Beneficiary {
   accountType: string;
   accountNumber: string;
   email?: string;
+  /** state, postalCode, residenceCity, address, branchCode when the route asks for them. */
+  extra?: Record<string, string>;
+}
+
+export interface SavedBeneficiary extends Beneficiary {
+  id: string;
+  country: string;
+  remitterRut: string;
+  ownerKey: string;
+  lastUsedAt: string;
+}
+
+export interface RateSource {
+  readonly name: string;
+  rate(corridor: Corridor): Promise<number>;
 }
 
 export interface RemesaEvent {
@@ -134,18 +170,29 @@ export interface RemesaActor {
   companyId?: string;
 }
 
-/** Corridors where Global66 accepts a remitter with BANK_TRANSFER (RaaS docs). */
-const DEFAULT_CORRIDORS: Array<Pick<Corridor, "country" | "countryName" | "currency" | "documentTypes"> & { demoRate: number }> = [
-  { country: "PE", countryName: "Perú", currency: "PEN", documentTypes: ["DNI", "CE", "PASSPORT"], demoRate: 274.31 },
-  { country: "CO", countryName: "Colombia", currency: "COP", documentTypes: ["CC", "CE", "PASSPORT"], demoRate: 0.24 },
-  { country: "BO", countryName: "Bolivia", currency: "BOB", documentTypes: ["CI", "PASSPORT"], demoRate: 136.5 },
-  { country: "VE", countryName: "Venezuela", currency: "VES", documentTypes: ["CI", "PASSPORT"], demoRate: 25.4 },
-  { country: "PY", countryName: "Paraguay", currency: "PYG", documentTypes: ["CI", "PASSPORT"], demoRate: 0.125 },
-  { country: "UY", countryName: "Uruguay", currency: "UYU", documentTypes: ["CI", "PASSPORT"], demoRate: 23.6 },
-  { country: "DO", countryName: "República Dominicana", currency: "DOP", documentTypes: ["CEDULA", "PASSPORT"], demoRate: 15.7 },
-  { country: "US", countryName: "Estados Unidos", currency: "USD", documentTypes: ["PASSPORT", "SSN"], demoRate: 950 },
-  { country: "ES", countryName: "España", currency: "EUR", documentTypes: ["DNI", "NIE", "PASSPORT"], demoRate: 1030 },
-];
+/**
+ * Destinations where Global66 accepts a remitter with BANK_TRANSFER (RaaS docs, "Corredores disponibles").
+ * Without RaaS every destination of the catalog is offered.
+ */
+const RAAS_BANK_TRANSFER = new Set([
+  "CO", "BO", "PH", "GT", "MA", "PY", "PE", "DO", "TH", "UY", "VE", "DE", "AU", "AT", "BE", "BG", "CN", "CY",
+  "VA", "HR", "DK", "SK", "SI", "ES", "US", "FI", "FR", "GR", "HU", "IN", "IE", "IS", "IT", "LV", "LI", "LT",
+  "LU", "MY", "MT", "MC", "ME", "NP", "NO", "NL", "PL", "PT", "PR", "GB", "CZ", "RO", "SM", "SG", "LK", "SE", "VN",
+]);
+
+/** Reference rates (CLP per unit) only used in demo mode. Operación sets the real ones. */
+const DEMO_RATES: Record<string, number> = { PEN: 274.31, COP: 0.24, VES: 25.4, PYG: 0.125, USD: 950, EUR: 1030 };
+
+/** Catalog field → BANK_TRANSFER beneficiary field. Routing fields belong to other operation types. */
+const EXTRA_FIELDS: Record<string, string> = {
+  state: "state",
+  postCode: "postalCode",
+  postalCode: "postalCode",
+  residenceCity: "residenceCity",
+  city: "residenceCity",
+  address: "address",
+  branchCode: "branchCode",
+};
 
 const STATUS_LABEL: Record<RemesaStatus, string> = {
   awaiting_payment: "Esperando pago en el POS",
@@ -172,40 +219,96 @@ export class RemesasModule {
   private readonly remesas = new Map<string, Remesa>();
   private readonly tuu: TuuReports;
   private readonly global66: Global66BusinessApi;
+  private readonly catalog: Global66Catalog;
   /** Demo progress of a Global66 transfer: processing → sent → successful. */
   private readonly demoSteps = new Map<string, number>();
+  private syncedAt = 0;
+  /** Where the customer rate comes from. Manual today; a Global66 quote endpoint can replace it. */
+  private readonly rates: RateSource = { name: "manual", rate: async (corridor) => corridor.rate };
 
   constructor(
     private readonly config: AppConfig,
     private readonly store: PlatformStore,
-    deps: { tuu?: TuuReports; global66?: Global66BusinessApi } = {},
+    deps: { tuu?: TuuReports; global66?: Global66BusinessApi; catalog?: Global66Catalog } = {},
   ) {
     this.tuu = deps.tuu ?? new TuuReports(config.remesas.tuuApiKey);
     this.global66 = deps.global66 ?? new Global66BusinessApi();
+    this.catalog = deps.catalog ?? new Global66Catalog(config.remesas.global66CatalogUrl, store);
     for (const corridor of store.list<Corridor>("remesas_corridors")) this.corridors.set(corridor.country, corridor);
-    for (const seed of DEFAULT_CORRIDORS) {
-      if (this.corridors.has(seed.country)) continue;
-      const demo = !config.production;
-      const corridor: Corridor = {
-        country: seed.country,
-        countryName: seed.countryName,
-        currency: seed.currency,
-        rate: demo ? seed.demoRate : 0,
-        conversionPct: 0.012,
-        commissionPct: 0.03,
-        commissionFixed: 0,
-        posPct: 0.0076,
-        minAmount: 10_000,
-        maxAmount: 5_000_000,
-        accountTypes: seed.country === "CO" ? ["SAVING", "CHECKING", "ELECTRONIC"] : ["SAVING", "CHECKING", "ELECTRONIC", "NOT_APPLY"],
-        documentTypes: seed.documentTypes,
-        enabled: demo,
-        rateUpdatedAt: demo ? new Date().toISOString() : null,
-      };
-      this.corridors.set(corridor.country, corridor);
-      store.put("remesas_corridors", corridor.country, corridor);
-    }
     for (const remesa of store.list<Remesa>("remesas")) this.remesas.set(remesa.id, remesa);
+  }
+
+  /**
+   * Brings destinations from the Global66 catalog. New ones start disabled without a rate
+   * (demo mode uses reference rates). Operación's rates and fees are kept.
+   */
+  async syncCatalog(force = false): Promise<void> {
+    if (!force && Date.now() - this.syncedAt < 10 * 60 * 1000 && this.corridors.size) return;
+    const routes = await this.catalog.routes();
+    if (!routes.length) return;
+    const seen = new Set<string>();
+    const demo = !this.config.production;
+    for (const route of routes) {
+      if (this.config.remesas.raas && !RAAS_BANK_TRANSFER.has(route.country)) continue;
+      if (seen.has(route.country)) continue;
+      seen.add(route.country);
+      const current = this.corridors.get(route.country);
+      const demoRate = demo ? DEMO_RATES[route.currency] ?? 0 : 0;
+      const corridor: Corridor = current
+        ? { ...current, routeId: route.routeId, currency: route.currency, countryName: route.countryName, minUsd: route.minUsd, maxUsd: route.maxUsd, available: true }
+        : {
+            country: route.country,
+            countryName: route.countryName,
+            currency: route.currency,
+            rate: demoRate,
+            conversionPct: 0.012,
+            commissionPct: 0.03,
+            commissionFixed: 0,
+            posPct: 0.0076,
+            minAmount: 10_000,
+            maxAmount: 5_000_000,
+            routeId: route.routeId,
+            minUsd: route.minUsd,
+            maxUsd: route.maxUsd,
+            available: true,
+            enabled: demoRate > 0,
+            rateUpdatedAt: demoRate > 0 ? new Date().toISOString() : null,
+          };
+      this.corridors.set(corridor.country, corridor);
+      this.store.put("remesas_corridors", corridor.country, corridor);
+    }
+    for (const corridor of this.corridors.values()) {
+      if (seen.has(corridor.country) || !corridor.available) continue;
+      corridor.available = false;
+      this.store.put("remesas_corridors", corridor.country, corridor);
+    }
+    this.syncedAt = Date.now();
+  }
+
+  /** Beneficiary fields, banks and document types for a destination, from Global66. */
+  async form(country: string): Promise<BeneficiaryForm> {
+    await this.syncCatalog();
+    const corridor = this.usable(country);
+    const [fields, documents] = await Promise.all([this.catalog.fields(corridor.routeId), this.catalog.documents(corridor.country)]);
+    const routes = await this.catalog.routes();
+    const banks = routes.find((route) => route.routeId === corridor.routeId)?.banks ?? [];
+    const accountField = fields.find((field) => field.field === "accountType");
+    const accountTypes = accountField?.options.length
+      ? accountField.options.map((option) => ({ value: option.value.toUpperCase(), label: option.label }))
+      : [
+          { value: "SAVING", label: "Cuenta de ahorro" },
+          { value: "CHECKING", label: "Cuenta corriente" },
+        ];
+    return {
+      country: corridor.country,
+      countryName: corridor.countryName,
+      currency: corridor.currency,
+      banks: [...banks].sort((a, b) => a.name.localeCompare(b.name, "es")),
+      accountTypes,
+      documents,
+      extraFields: extraFields(fields),
+      slaHours: null,
+    };
   }
 
   /** Modes the POS app and the panel need to know about. */
@@ -219,11 +322,15 @@ export class RemesasModule {
     };
   }
 
-  listCorridors(includeDisabled = false): Corridor[] {
-    return [...this.corridors.values()].filter((corridor) => includeDisabled || (corridor.enabled && corridor.rate > 0));
+  async listCorridors(includeDisabled = false): Promise<Corridor[]> {
+    await this.syncCatalog();
+    return [...this.corridors.values()]
+      .filter((corridor) => includeDisabled || (corridor.available && corridor.enabled && corridor.rate > 0))
+      .sort((a, b) => a.countryName.localeCompare(b.countryName, "es"));
   }
 
-  updateCorridor(country: string, input: Partial<Corridor>): Corridor {
+  async updateCorridor(country: string, input: Partial<Corridor>): Promise<Corridor> {
+    await this.syncCatalog();
     const current = this.corridors.get(country.toUpperCase());
     if (!current) throw new PlatformError(`Corredor desconocido: ${country}`, 404);
     const next: Corridor = { ...current };
@@ -252,11 +359,11 @@ export class RemesasModule {
     return next;
   }
 
-  quote(input: { country: string; sendAmount: number }): RemesaQuote {
-    const corridor = this.corridors.get(String(input.country).toUpperCase());
-    if (!corridor || !corridor.enabled || corridor.rate <= 0) {
-      throw new PlatformError("Ese país no está disponible para remesas", 400);
-    }
+  async quote(input: { country: string; sendAmount: number }): Promise<RemesaQuote> {
+    await this.syncCatalog();
+    const corridor = this.usable(input.country);
+    const rate = await this.rates.rate(corridor);
+    if (!(rate > 0)) throw new PlatformError("Ese país no tiene tasa vigente", 400);
     const sendAmount = input.sendAmount;
     if (!isValidAmount(sendAmount)) throw new PlatformError("El monto a enviar debe ser un entero positivo", 400);
     if (sendAmount < corridor.minAmount || sendAmount > corridor.maxAmount) {
@@ -271,35 +378,47 @@ export class RemesasModule {
     const serviceFee = 0;
     const total = sendAmount + commission + serviceFee;
     if (total < MIN_TOTAL || total > 999_999_999_999) throw new PlatformError("El total queda fuera del rango del POS", 400);
-    const receiveAmount = Math.floor((amountToConvert / corridor.rate) * 100) / 100;
+    // Global66 limits are in USD. They apply when Operación has a USD rate.
+    const usdRate = this.corridors.get("US")?.rate ?? 0;
+    if (usdRate > 0) {
+      const usd = amountToConvert / usdRate;
+      if (corridor.minUsd && usd < corridor.minUsd) {
+        throw new PlatformError(`Global66 pide al menos USD ${corridor.minUsd} para ${corridor.countryName}`, 400);
+      }
+      if (corridor.maxUsd && usd > corridor.maxUsd) {
+        throw new PlatformError(`Global66 acepta hasta USD ${corridor.maxUsd.toLocaleString("es-CL")} para ${corridor.countryName}`, 400);
+      }
+    }
+    const receiveAmount = Math.floor((amountToConvert / rate) * 100) / 100;
+    const slaHours = await this.catalog.slaHours(corridor.country, corridor.currency, receiveAmount);
     return {
       country: corridor.country,
       currency: corridor.currency,
       sendAmount,
       conversionCost,
       amountToConvert,
-      rate: corridor.rate,
-      rateText: `1 ${corridor.currency} = ${corridor.rate.toLocaleString("es-CL", { maximumFractionDigits: 4 })} CLP`,
+      rate,
+      rateText: `1 ${corridor.currency} = ${rate.toLocaleString("es-CL", { maximumFractionDigits: 4 })} CLP`,
       receiveAmount,
       commission,
       serviceFee,
       total,
       posFeeEstimated: Math.round(total * corridor.posPct),
+      slaHours,
       expiresAt: new Date(Date.now() + QUOTE_MINUTES * 60_000).toISOString(),
     };
   }
 
-  create(input: {
+  async create(input: {
     country: string;
     sendAmount: number;
     remitter: Remitter;
     beneficiary: Beneficiary;
     actor: RemesaActor;
-  }): { remesa: Remesa; tuuPayment: Record<string, unknown> } {
-    const quote = this.quote(input);
-    const corridor = this.corridors.get(quote.country) as Corridor;
+  }): Promise<{ remesa: Remesa; tuuPayment: Record<string, unknown> }> {
+    const quote = await this.quote(input);
     const remitter = cleanRemitter(input.remitter);
-    const beneficiary = cleanBeneficiary(input.beneficiary, corridor);
+    const beneficiary = cleanBeneficiary(input.beneficiary, await this.form(quote.country));
     const now = new Date().toISOString();
     const remesa: Remesa = {
       id: `rem_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
@@ -316,7 +435,44 @@ export class RemesasModule {
       updatedAt: now,
     };
     this.save(remesa);
+    this.rememberBeneficiary(remesa, input.actor);
     return { remesa, tuuPayment: this.tuuPayment(remesa) };
+  }
+
+  /** Beneficiaries this company already sent to for a remitter ("Mis beneficiarios"). */
+  savedBeneficiaries(actor: RemesaActor, remitterRut: string, country?: string): SavedBeneficiary[] {
+    const rut = normalizeRut(remitterRut);
+    if (!rut) return [];
+    const owner = ownerKey(actor);
+    return this.store
+      .list<SavedBeneficiary>("remesas_beneficiaries")
+      .filter((item) => item.ownerKey === owner && item.remitterRut === rut && (!country || item.country === country.toUpperCase()))
+      .sort((a, b) => b.lastUsedAt.localeCompare(a.lastUsedAt));
+  }
+
+  private rememberBeneficiary(remesa: Remesa, actor: RemesaActor): void {
+    const owner = ownerKey(actor);
+    const id = createHash("sha256")
+      .update([owner, remesa.remitter.rut, remesa.quote.country, remesa.beneficiary.accountNumber].join("\0"))
+      .digest("hex")
+      .slice(0, 24);
+    const saved: SavedBeneficiary = {
+      ...remesa.beneficiary,
+      id,
+      country: remesa.quote.country,
+      remitterRut: remesa.remitter.rut,
+      ownerKey: owner,
+      lastUsedAt: remesa.createdAt,
+    };
+    this.store.put("remesas_beneficiaries", id, saved);
+  }
+
+  private usable(country: string): Corridor {
+    const corridor = this.corridors.get(String(country).toUpperCase());
+    if (!corridor || !corridor.available || !corridor.enabled || corridor.rate <= 0) {
+      throw new PlatformError("Ese país no está disponible para remesas", 400);
+    }
+    return corridor;
   }
 
   /** The JSON the POS app passes to the TUU payment app (Intent.EXTRA_TEXT). */
@@ -547,6 +703,7 @@ export class RemesasModule {
       documentNumber: remesa.beneficiary.documentNumber,
       documentType: remesa.beneficiary.documentType,
       bankId: remesa.beneficiary.bankId,
+      beneficiaryExtra: remesa.beneficiary.extra,
       description: `Remesa ${remesa.code}`,
       ...(this.config.remesas.raas
         ? {
@@ -695,35 +852,85 @@ function cleanRemitter(input: Remitter): Remitter {
   };
 }
 
-function cleanBeneficiary(input: Beneficiary, corridor: Corridor): Beneficiary {
-  const value = (key: keyof Beneficiary, max: number) => String(input?.[key] ?? "").trim().slice(0, max);
-  const beneficiary: Beneficiary = {
-    firstName: value("firstName", 100),
-    lastName: value("lastName", 100),
-    documentType: value("documentType", 20).toUpperCase(),
-    documentNumber: value("documentNumber", 30),
-    bankName: value("bankName", 100),
-    accountType: value("accountType", 20).toUpperCase(),
-    accountNumber: value("accountNumber", 40).replace(/\s+/g, ""),
-  };
-  if (!beneficiary.firstName || !beneficiary.lastName) throw new PlatformError("Nombre y apellido del beneficiario son requeridos", 400);
-  if (!beneficiary.documentType || !beneficiary.documentNumber) throw new PlatformError("El documento del beneficiario es requerido", 400);
-  if (!beneficiary.bankName) throw new PlatformError("El banco del beneficiario es requerido", 400);
-  if (!corridor.accountTypes.includes(beneficiary.accountType)) {
-    throw new PlatformError(`Tipo de cuenta no válido para ${corridor.countryName}`, 400);
+/** Validates the beneficiary against the Global66 form of the route. */
+function cleanBeneficiary(input: Beneficiary, form: BeneficiaryForm): Beneficiary {
+  const value = (raw: unknown, max: number) => String(raw ?? "").trim().slice(0, max);
+  const firstName = value(input?.firstName, 100);
+  const lastName = value(input?.lastName, 100);
+  if (!firstName || !lastName) throw new PlatformError("Nombre y apellido del beneficiario son requeridos", 400);
+
+  const accountType = value(input?.accountType, 20).toUpperCase();
+  if (!form.accountTypes.some((option) => option.value === accountType)) {
+    throw new PlatformError(`Tipo de cuenta no válido para ${form.countryName}`, 400);
   }
-  if (!/^[0-9A-Za-z-]{4,40}$/.test(beneficiary.accountNumber)) throw new PlatformError("El número de cuenta no es válido", 400);
-  const bankId = Number(input?.bankId);
-  if (input?.bankId !== undefined && input.bankId !== null && String(input.bankId) !== "") {
-    if (!Number.isSafeInteger(bankId) || bankId <= 0) throw new PlatformError("El código de banco no es válido", 400);
-    beneficiary.bankId = bankId;
+  const accountNumber = value(input?.accountNumber, 50).replace(/\s+/g, "");
+  if (!/^[0-9A-Za-z-]{4,50}$/.test(accountNumber)) throw new PlatformError("El número de cuenta no es válido", 400);
+
+  let bankId: number | undefined;
+  let bankName = value(input?.bankName, 50);
+  if (form.banks.length) {
+    const bank = form.banks.find((item) => item.id === Number(input?.bankId));
+    if (!bank) throw new PlatformError(`Elige un banco de ${form.countryName}`, 400);
+    bankId = bank.id;
+    bankName = bank.name.slice(0, 50);
+  } else if (!bankName) {
+    throw new PlatformError("El banco del beneficiario es requerido", 400);
   }
-  const email = String(input?.email ?? "").trim();
+
+  const documentType = value(input?.documentType, 20).toUpperCase();
+  const documentNumber = value(input?.documentNumber, 30).replace(/[\s.]/g, "");
+  if (!documentType || !documentNumber) throw new PlatformError("El documento del beneficiario es requerido", 400);
+  if (form.documents.length) {
+    const document = form.documents.find((item) => item.value.toUpperCase() === documentType);
+    if (!document) throw new PlatformError(`Tipo de documento no válido para ${form.countryName}`, 400);
+    const tooShort = document.minSize !== null && documentNumber.length < document.minSize;
+    const tooLong = document.maxSize !== null && documentNumber.length > document.maxSize;
+    if (tooShort || tooLong || !matches(document.pattern, documentNumber)) {
+      throw new PlatformError(`El ${document.label} no tiene el formato que pide Global66`, 400);
+    }
+  }
+
+  const extra: Record<string, string> = {};
+  const given = (input?.extra ?? {}) as Record<string, unknown>;
+  for (const field of form.extraFields) {
+    const text = value(given[field.field], field.maxLength ?? 200);
+    if (field.required && !text) throw new PlatformError(`${field.label} es requerido`, 400);
+    if (text) extra[field.field] = text;
+  }
+
+  const beneficiary: Beneficiary = { firstName, lastName, documentType, documentNumber, bankName, accountType, accountNumber };
+  if (bankId !== undefined) beneficiary.bankId = bankId;
+  if (Object.keys(extra).length) beneficiary.extra = extra;
+  const email = value(input?.email, 100);
   if (email) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new PlatformError("El correo del beneficiario no es válido", 400);
-    beneficiary.email = email.slice(0, 100);
+    beneficiary.email = email;
   }
   return beneficiary;
+}
+
+function extraFields(fields: CatalogField[]): BeneficiaryForm["extraFields"] {
+  const result: BeneficiaryForm["extraFields"] = [];
+  for (const field of fields) {
+    const name = EXTRA_FIELDS[field.field];
+    if (!name || result.some((item) => item.field === name)) continue;
+    result.push({ field: name, label: field.label, required: field.required, maxLength: field.maxLength });
+  }
+  return result;
+}
+
+/** Global66 patterns come from its catalog. A bad pattern does not block the form. */
+function matches(pattern: string | null, text: string): boolean {
+  if (!pattern) return true;
+  try {
+    return new RegExp(pattern).test(text);
+  } catch {
+    return true;
+  }
+}
+
+function ownerKey(actor: RemesaActor): string {
+  return actor.companyId ? `company:${actor.companyId}` : `user:${actor.id}`;
 }
 
 /** Returns the RUT as 12345678-9 when the check digit is right, or an empty string. */
