@@ -23,9 +23,30 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   const app = express();
   app.set("trust proxy", "loopback");
   const platform = new Platform(config);
+  app.locals.platform = platform;
   const pilotPlanner = new PilotPlanner(config);
   const pilotRequestTimes = new Map<string, number>();
   const publicContactWindows = new Map<string, { count: number; resetAt: number }>();
+
+  // Operación sees the whole platform. Every other role only sees what it owns:
+  // its Connect accounts (by email), their Treasury accounts and cards, and its own exits.
+  const ownConnect = (user: SessionUser) => {
+    const email = user.email.toLowerCase();
+    return platform.connect
+      .list(user)
+      .filter((account) => user.role === "operacion" || account.email.toLowerCase() === email);
+  };
+  const ownTreasury = (user: SessionUser) => {
+    if (user.role === "operacion") return platform.treasury.list();
+    const ids = new Set(ownConnect(user).map((account) => account.id));
+    return platform.treasury.list().filter((account) => account.connectedId !== undefined && ids.has(account.connectedId));
+  };
+  const ownCards = (user: SessionUser) => {
+    if (user.role === "operacion") return platform.tarjetas.list();
+    const email = user.email.toLowerCase();
+    const cardIds = new Set(ownConnect(user).flatMap((account) => (account.cardId ? [account.cardId] : [])));
+    return platform.tarjetas.list().filter((card) => card.email.toLowerCase() === email || cardIds.has(card.id));
+  };
 
   // Stripe webhooks need the raw body for signature verification, so this
   // route is registered before the JSON body parser.
@@ -203,7 +224,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       next();
       return;
     }
-    const user = platform.auth.userFromCookie(readCookie(req.headers.cookie, "pr_session"));
+    const user = platform.auth.userFromCookie(sessionToken(req));
     if (!user) {
       res.status(401).json({ error: "Inicia sesión" });
       return;
@@ -226,19 +247,21 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     try {
       const result = platform.auth.login(String(body.email ?? ""), String(body.password ?? ""));
       writeSessionCookie(res, result.token, config);
-      res.status(201).json({ user: result.user });
+      // API clients (Appsmith) send the token back as "Authorization: Bearer"; browsers keep the cookie.
+      const apiClient = req.headers["x-client"] === "api";
+      res.status(201).json({ user: result.user, ...(apiClient ? { token: result.token } : {}) });
     } catch (error) {
       handleError(error, res);
     }
   });
 
   app.get("/api/session", (req: Request, res: Response) => {
-    const user = platform.auth.userFromCookie(readCookie(req.headers.cookie, "pr_session"));
+    const user = platform.auth.userFromCookie(sessionToken(req));
     res.json({ user });
   });
 
   app.delete("/api/session", (req: Request, res: Response) => {
-    platform.auth.logout(readCookie(req.headers.cookie, "pr_session"));
+    platform.auth.logout(sessionToken(req));
     writeSessionCookie(res, "", config, true);
     res.json({ user: null });
   });
@@ -247,7 +270,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     const body = req.body ?? {};
     try {
       const user = platform.auth.changePassword(
-        readCookie(req.headers.cookie, "pr_session"),
+        sessionToken(req),
         String(body.currentPassword ?? ""),
         String(body.newPassword ?? ""),
       );
@@ -272,10 +295,16 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   app.get("/api/stripe/events", (_req: Request, res: Response) => {
-    res.json({ events: platform.listWebhookEvents() });
+    const user = res.locals.user as SessionUser;
+    res.json({ events: user.role === "operacion" ? platform.listWebhookEvents() : [] });
   });
 
   app.get("/api/payments", (_req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    if (user.role !== "operacion") {
+      res.json({ currency: config.currency, payments: [], modules: platform.listModules() });
+      return;
+    }
     const wallet = platform.floatAccount;
     res.json({
       currency: config.currency,
@@ -296,7 +325,10 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     const user = res.locals.user as SessionUser;
     const options = new Set(user.options);
     const body: Record<string, unknown> = { currency: config.currency };
-    if (options.has("payments")) {
+    if (options.has("payments") && user.role !== "operacion") {
+      body.payments = [];
+      body.modules = platform.listModules();
+    } else if (options.has("payments")) {
       const floatAccount = platform.floatAccount;
       body.float = {
         balance: floatAccount.balance,
@@ -313,9 +345,9 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     if (options.has("cobros")) body.cobros = platform.cobros.list();
     if (options.has("policies")) body.policies = platform.listPolicies();
     if (options.has("claims")) body.claims = platform.listClaims();
-    if (options.has("connect")) body.connect = platform.connect.list(user);
-    if (options.has("treasury")) body.treasury = platform.treasury.list();
-    if (options.has("cards")) body.cards = platform.tarjetas.list();
+    if (options.has("connect")) body.connect = ownConnect(user);
+    if (options.has("treasury")) body.treasury = ownTreasury(user);
+    if (options.has("cards")) body.cards = ownCards(user);
     if (options.has("design")) body.design = platform.diseno.current();
     if (options.has("apps")) body.app = platform.apps.current();
     if (options.has("empresas")) body.empresas = platform.empresas.list(companyActor(res));
@@ -450,7 +482,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
 
   app.get("/api/connect", (_req: Request, res: Response) => {
     const user = res.locals.user as SessionUser;
-    res.json({ accounts: platform.connect.list(user) });
+    res.json({ accounts: ownConnect(user) });
   });
 
   app.post("/api/connect", async (req: Request, res: Response) => {
@@ -476,6 +508,10 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
     try {
       const user = res.locals.user as SessionUser;
+      if (!ownConnect(user).some((account) => account.id === String(req.params.id))) {
+        res.status(404).json({ error: `Cuenta Connect desconocida: ${String(req.params.id)}` });
+        return;
+      }
       const result = platform.connect.payout({
         accountId: String(req.params.id),
         amount: Number(body.amount),
@@ -1099,15 +1135,21 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   app.get("/api/treasury", (_req: Request, res: Response) => {
-    res.json({ accounts: platform.treasury.list() });
+    res.json({ accounts: ownTreasury(res.locals.user as SessionUser) });
   });
 
   app.post("/api/treasury", async (req: Request, res: Response) => {
     const body = req.body ?? {};
+    const user = res.locals.user as SessionUser;
+    const connectedId = body.connectedId ? String(body.connectedId) : undefined;
+    if (user.role !== "operacion" && (!connectedId || !ownConnect(user).some((account) => account.id === connectedId))) {
+      res.status(403).json({ error: "La cuenta financiera tiene que pertenecer a una de tus cuentas Connect" });
+      return;
+    }
     try {
       const account = await platform.treasury.open({
         nickname: String(body.nickname ?? ""),
-        connectedId: body.connectedId ? String(body.connectedId) : undefined,
+        connectedId,
       });
       res.status(201).json({ account });
     } catch (error) {
@@ -1136,7 +1178,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
 
   app.get("/api/tarjetas", async (_req: Request, res: Response) => {
     const issuing = await platform.tarjetas.issuingStatus();
-    res.json({ cards: platform.tarjetas.list(), issuing });
+    res.json({ cards: ownCards(res.locals.user as SessionUser), issuing });
   });
 
   app.post("/api/tarjetas", async (req: Request, res: Response) => {
@@ -1451,7 +1493,11 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   app.get("/api/salidas", (_req: Request, res: Response) => {
-    res.json({ exits: platform.listExits().filter((exit) => exit.status === "pending") });
+    const user = res.locals.user as SessionUser;
+    const exits = platform
+      .listExits()
+      .filter((exit) => exit.status === "pending" && (user.role === "operacion" || exit.requestedBy === user.id));
+    res.json({ exits });
   });
 
   app.post("/api/salidas/:id/confirmar", async (req: Request, res: Response) => {
@@ -1557,6 +1603,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   const publicDir = path.join(__dirname, "..", "public");
+  const trackingUrl = (token: string) => `${config.publicBaseUrl.replace(/\/+$/, "")}/seguimiento/${token}`;
   app.get("/aplicacion", (_req: Request, res: Response) => {
     res.sendFile(path.join(publicDir, "aplicacion.html"));
   });
@@ -1872,6 +1919,222 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   // Portal UI
+  // Remesas: the POS TUU app (inter-app) charges the card and Global66 sends the money.
+  app.post("/webhooks/global66", (req: Request, res: Response) => {
+    const key = req.headers["x-api-key"];
+    const accepted = platform.remesas.handleWebhook(typeof key === "string" ? key : undefined, req.body);
+    res.status(accepted ? 200 : 401).json({ received: accepted });
+  });
+
+  app.get("/api/seguimiento/:token", (req: Request, res: Response) => {
+    try {
+      res.json(platform.remesas.tracking(String(req.params.token)));
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/remesas/config", async (_req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    try {
+      res.json({
+        settings: platform.remesas.settings(),
+        corridors: await platform.remesas.listCorridors(user.role === "operacion"),
+        canConfigure: user.role === "operacion",
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/remesas/formulario/:country", async (req: Request, res: Response) => {
+    try {
+      res.json({ form: await platform.remesas.form(String(req.params.country)) });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/remesas/beneficiarios", (req: Request, res: Response) => {
+    const rut = typeof req.query.rut === "string" ? req.query.rut : "";
+    const country = typeof req.query.country === "string" ? req.query.country : undefined;
+    res.json({ beneficiaries: platform.remesas.savedBeneficiaries(companyActor(res), rut, country) });
+  });
+
+  app.put("/api/remesas/corredores/:country", async (req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    if (user.role !== "operacion") {
+      res.status(403).json({ error: "Solo Operación puede cambiar tasas y comisiones" });
+      return;
+    }
+    const body = req.body ?? {};
+    const num = (value: unknown) => (value === undefined || value === "" ? undefined : Number(value));
+    try {
+      const corridor = await platform.remesas.updateCorridor(String(req.params.country), {
+        rate: num(body.rate),
+        conversionPct: num(body.conversionPct),
+        commissionPct: num(body.commissionPct),
+        commissionFixed: num(body.commissionFixed),
+        posPct: num(body.posPct),
+        minAmount: num(body.minAmount),
+        maxAmount: num(body.maxAmount),
+        enabled: body.enabled === undefined ? undefined : body.enabled === true,
+      });
+      res.json({ corridor });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/remesas/cotizar", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      res.json({ quote: await platform.remesas.quote({ country: String(body.country ?? ""), sendAmount: Number(body.sendAmount) }) });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/remesas", (_req: Request, res: Response) => {
+    res.json({ remesas: platform.remesas.list(companyActor(res)) });
+  });
+
+  app.get("/api/remesas/saldo", async (_req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    if (user.role !== "operacion") {
+      res.status(403).json({ error: "Solo Operación ve el saldo de Global66" });
+      return;
+    }
+    try {
+      res.json(await platform.remesas.balance());
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/remesas/pos", (_req: Request, res: Response) => {
+    res.json({ devices: platform.remesas.listDevices(companyActor(res)) });
+  });
+
+  app.put("/api/remesas/pos/:serial", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const device = platform.remesas.saveDevice(companyActor(res), {
+        serialNumber: String(req.params.serial),
+        label: body.label === undefined ? undefined : String(body.label),
+        companyId: body.companyId === undefined ? undefined : String(body.companyId),
+        active: body.active === undefined ? undefined : body.active === true,
+      });
+      res.json({ device });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/remesas/ledger", (_req: Request, res: Response) => {
+    const actor = companyActor(res);
+    res.json({ lines: platform.remesas.ledgerLines(actor), balances: platform.remesas.ledgerBalances(actor) });
+  });
+
+  app.post("/api/remesas/conciliar", async (req: Request, res: Response) => {
+    try {
+      res.json(await platform.remesas.reconcile(companyActor(res), String(req.body?.date ?? "")));
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/remesas/export", (_req: Request, res: Response) => {
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="remesas.csv"');
+    res.send(platform.remesas.exportCsv(companyActor(res)));
+  });
+
+  app.post("/api/remesas", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const result = await platform.remesas.create({
+        country: String(body.country ?? ""),
+        sendAmount: Number(body.sendAmount),
+        remitter: body.remitter ?? {},
+        beneficiary: body.beneficiary ?? {},
+        actor: companyActor(res),
+      });
+      res.status(201).json({ ...result, trackingUrl: trackingUrl(result.remesa.trackingToken) });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/remesas/:id", (req: Request, res: Response) => {
+    try {
+      const remesa = platform.remesas.get(String(req.params.id), companyActor(res));
+      res.json({ remesa, tuuPayment: platform.remesas.tuuPayment(remesa), trackingUrl: trackingUrl(remesa.trackingToken) });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/remesas/:id/pago", async (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const remesa = await platform.remesas.reportPayment(String(req.params.id), companyActor(res), {
+        approved: body.approved === true,
+        sequenceNumber: body.sequenceNumber === undefined ? undefined : String(body.sequenceNumber),
+        serialNumber: body.serialNumber === undefined ? undefined : String(body.serialNumber),
+        method: body.method === undefined ? undefined : String(body.method),
+        errorMessage: body.errorMessage === undefined ? undefined : String(body.errorMessage),
+      });
+      res.json({ remesa, trackingUrl: trackingUrl(remesa.trackingToken) });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/remesas/:id/actualizar", async (req: Request, res: Response) => {
+    try {
+      const remesa = await platform.remesas.refresh(String(req.params.id), companyActor(res));
+      res.json({ remesa, trackingUrl: trackingUrl(remesa.trackingToken) });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/remesas/:id/aprobar", async (req: Request, res: Response) => {
+    try {
+      const remesa = await platform.remesas.approve(String(req.params.id), companyActor(res));
+      res.json({ remesa });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/remesas/:id/retener", (req: Request, res: Response) => {
+    try {
+      const remesa = platform.remesas.hold(String(req.params.id), companyActor(res), String(req.body?.reason ?? ""));
+      res.json({ remesa });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/remesas/:id/enviar-ahora", async (req: Request, res: Response) => {
+    try {
+      const remesa = await platform.remesas.sendNow(String(req.params.id), companyActor(res));
+      res.json({ remesa });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/remesas", (_req: Request, res: Response) => {
+    res.sendFile(path.join(publicDir, "remesas.html"));
+  });
+
+  app.get("/seguimiento/:token", (_req: Request, res: Response) => {
+    res.sendFile(path.join(publicDir, "seguimiento.html"));
+  });
+
   app.get("/portal", (_req: Request, res: Response) => {
     res.sendFile(path.join(publicDir, "portal.html"));
   });
@@ -2060,6 +2323,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
 
 function isPublicApi(req: Request): boolean {
   if (req.path === "/api/onboarding" || req.path === "/api/public-contact") return true;
+  if (req.method === "GET" && /^\/api\/seguimiento\/[0-9a-f]{32}$/.test(req.path)) return true;
   return req.path === "/api/session" && (req.method === "GET" || req.method === "POST" || req.method === "DELETE");
 }
 
@@ -2068,6 +2332,13 @@ function writeSessionCookie(res: Response, token: string, config: AppConfig, cle
   const value = clear ? "" : encodeURIComponent(token);
   const maxAge = clear ? 0 : 43200;
   res.setHeader("Set-Cookie", `pr_session=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure}`);
+}
+
+/** Session token from "Authorization: Bearer" (API clients) or the pr_session cookie (browser). */
+function sessionToken(req: Request): string | undefined {
+  const auth = req.headers.authorization;
+  if (typeof auth === "string" && /^Bearer [0-9a-f]{64}$/.test(auth.trim())) return auth.trim().slice(7);
+  return readCookie(req.headers.cookie, "pr_session");
 }
 
 function readCookie(header: string | undefined, name: string): string | undefined {

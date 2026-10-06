@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script de configuración inicial del VPS
+# Script de configuración inicial del VPS (se ejecuta EN el VPS, una sola vez)
 # Uso: ./scripts/setup-vps.sh
 
 set -e
@@ -16,19 +16,13 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Verificar que estamos en el directorio correcto
-if [ ! -f "package.json" ]; then
-    echo -e "${RED}Error: Ejecuta este script desde el directorio raiz del proyecto${NC}"
-    exit 1
-fi
+APP_DIR=${APP_DIR:-"/var/www/instripe"}
 
 echo -e "${YELLOW}[1/6]${NC} Installing system dependencies..."
 
-# Actualizar sistema
 sudo apt-get update -y
 sudo apt-get upgrade -y
 
-# Instalar dependencias necesarias
 sudo apt-get install -y \
     curl \
     git \
@@ -40,99 +34,79 @@ sudo apt-get install -y \
     python3-certbot-nginx
 
 echo ""
-echo -e "${YELLOW}[2/6]${NC} Installing Node.js 20..."
+echo -e "${YELLOW}[2/6]${NC} Installing Node.js 22..."
 
-# Instalar Node.js usando nvm
+# node:sqlite requiere Node >= 22.5
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.5/install.sh | bash
-source ~/.bashrc
-nvm install 20
-nvm use 20
+export NVM_DIR="$HOME/.nvm"
+# shellcheck disable=SC1091
+. "$NVM_DIR/nvm.sh"
+nvm install 22
+nvm alias default 22
 node --version
 npm --version
 
 echo ""
 echo -e "${YELLOW}[3/6]${NC} Setting up application directory..."
 
-# Crear directorio de la aplicación
-sudo mkdir -p /var/www/instripe
-sudo chown -R $USER:$USER /var/www/instripe
+sudo mkdir -p "$APP_DIR"
+sudo chown -R "$USER:$USER" "$APP_DIR"
 
-# Clonar repositorio (si no existe)
-if [ ! -d "/var/www/instripe/.git" ]; then
-    git clone https://github.com/Houmeecl/instripe.git /var/www/instripe
+if [ ! -d "$APP_DIR/.git" ]; then
+    git clone https://github.com/Houmeecl/instripe.git "$APP_DIR"
 fi
 
-cd /var/www/instripe
+cd "$APP_DIR"
+mkdir -p data logs
 
-# Configurar entorno
 echo -e "${YELLOW}[4/6]${NC} Setting up environment..."
 
-# Crear archivo .env si no existe
+# Parte de .env.example. Las credenciales se completan a mano en el VPS.
 if [ ! -f ".env" ]; then
-    cat > .env << 'EOF'
-# Stripe Configuration
-STRIPE_SECRET_KEY=
-STRIPE_PUBLISHABLE_KEY=
-STRIPE_WEBHOOK_SECRET=
-
-# Global66 Configuration
-GLOBAL66_API_KEY=
-GLOBAL66_MERCHANT_ID=
-
-# Application Configuration
-NODE_ENV=production
-PORT=3000
-PUBLIC_BASE_URL=http://localhost:3000
-SEED_PASSWORD=Antofagasta.183
-CURRENCY=CLP
-DATABASE_PATH=/var/www/instripe/data/instripe.db
-
-# Default Gateway
-defaultGateway=chile
-EOF
-    echo "  -> Created .env file. Please edit with your credentials."
+    cp .env.example .env
+    sed -i "s|^DATABASE_PATH=.*|DATABASE_PATH=$APP_DIR/data/platform.db|" .env
+    echo "NODE_ENV=production" >> .env
+    echo "  -> Created .env from .env.example. Edit it with your credentials"
+    echo "     (AUTH_SEED_PASSWORD, Stripe, etc.) before exposing the app."
 fi
 
-# Instalar dependencias
-echo -e "${YELLOW}[5/6]${NC} Installing npm dependencies..."
-npm install --production
+echo -e "${YELLOW}[5/6]${NC} Installing npm dependencies and building..."
 
-# Build TypeScript
-echo -e "${YELLOW}  Building TypeScript...${NC}"
+# tsc es devDependency: instalar todo, compilar y luego podar.
+npm ci
 npm run build
+npm prune --omit=dev
 
-# Configurar PM2
 echo -e "${YELLOW}[6/6]${NC} Setting up PM2 process manager..."
 
-# Instalar PM2 global
 npm install -g pm2
 
-# Crear ecosystem file
-cat > ecosystem.config.js << 'EOF'
+# Una sola instancia en modo fork: SQLite no admite varios procesos escritores.
+cat > ecosystem.config.cjs << EOF
 module.exports = {
   apps: [{
     name: 'instripe',
-    script: './dist/app.js',
-    instances: 'max',
-    exec_mode: 'cluster',
+    script: './dist/index.js',
+    cwd: '$APP_DIR',
+    instances: 1,
+    exec_mode: 'fork',
+    node_args: '--env-file=.env',
     env: {
-      NODE_ENV: 'production',
-      PORT: 3000
+      NODE_ENV: 'production'
     },
-    error_file: '/var/log/instripe-error.log',
-    out_file: '/var/log/instripe-out.log',
+    error_file: '$APP_DIR/logs/instripe-error.log',
+    out_file: '$APP_DIR/logs/instripe-out.log',
     log_date_format: 'YYYY-MM-DD HH:mm Z',
     merge_logs: true
   }]
 }
 EOF
 
-# Iniciar aplicación con PM2
-pm2 start ecosystem.config.js
+pm2 start ecosystem.config.cjs
 pm2 save
-pm2 startup
+# Imprime el comando sudo que registra PM2 al arranque; ejecútalo.
+pm2 startup || true
 
-# Configurar Nginx
 echo ""
 echo -e "${YELLOW}Setting up Nginx reverse proxy...${NC}"
 
@@ -142,15 +116,15 @@ server {
     server_name your-domain.com;
 
     location / {
-        proxy_pass http://localhost:3000;
+        proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_cache_bypass \$http_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
     }
 }
 EOF'
@@ -164,15 +138,10 @@ echo -e "${GREEN}=========================================="
 echo "  ✅ VPS Setup completed successfully!"
 echo ""
 echo "  Next steps:"
-echo "  1. Edit /var/www/instripe/.env with your credentials"
-echo "  2. Configure DNS to point to your VPS IP"
-echo "  3. Run: certbot --nginx -d your-domain.com"
-echo "  4. Update PUBLIC_BASE_URL in .env to https://your-domain.com"
-echo "  5. Restart: pm2 restart instripe"
-echo ""
-echo "  Access your app at: http://your-domain.com"
-echo "  PM2 commands:"
-echo "    - pm2 list"
-echo "    - pm2 logs instripe"
-echo "    - pm2 restart instripe"
+echo "  1. Edit $APP_DIR/.env with your credentials"
+echo "  2. Run the command printed by 'pm2 startup'"
+echo "  3. Configure DNS to point to your VPS IP"
+echo "  4. Run: sudo certbot --nginx -d your-domain.com"
+echo "  5. Update PUBLIC_BASE_URL in .env to https://your-domain.com"
+echo "  6. Restart: pm2 restart instripe --update-env"
 echo "==========================================${NC}"

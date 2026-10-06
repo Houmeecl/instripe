@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isValidAmount } from "../money.js";
 import type { PlatformStore } from "../store/db.js";
 
 export type TxKind = "credit" | "debit";
@@ -63,8 +64,8 @@ export class Ledger {
     if (!account) {
       throw new Error(`Unknown account: ${accountId}`);
     }
-    if (amount <= 0) {
-      throw new Error("Amount must be positive");
+    if (!isValidAmount(amount)) {
+      throw new Error("Amount must be a positive whole number");
     }
     if (kind === "debit" && account.balance < amount) {
       throw new Error("Insufficient funds for disbursement");

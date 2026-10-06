@@ -60,6 +60,7 @@ const NAV = [
       { route: "configuracion", label: "Configuración", icon: "file", title: "Configuración", sub: "SICR3P es un sitio externo. Este panel no reenvía su tráfico." },
       { route: "actuarial", label: "Tasas", icon: "activity", title: "Vista actuarial", sub: "Clases de riesgo de Frosting. Aparte de los cursos." },
       { route: "pilot", label: "Plan piloto IA", icon: "activity", title: "Plan de piloto con IA", sub: "Borrador y checklist; no ejecuta acciones." },
+      { route: "remesas", label: "Remesas", icon: "arrow", title: "Remesas", sub: "Cobradas en POS TUU y enviadas desde Global66 SICR3P tras 30 minutos de aprobación de fondos." },
     ],
   },
   {
@@ -478,6 +479,15 @@ async function refresh() {
     state.courses = [];
     state.courseSubmissions = [];
   }
+  if (allowed("remesas")) {
+    state.remesas = (await api("/api/remesas")).remesas || [];
+    state.remesasBalance = state.user && state.user.role === "operacion"
+      ? await api("/api/remesas/saldo").catch((error) => ({ error: error.message }))
+      : null;
+  } else {
+    state.remesas = [];
+    state.remesasBalance = null;
+  }
   state.sicr3p = allowed("configuracion") ? (await api("/api/configuracion")).sicr3p || null : null;
   state.actuarial = allowed("actuarial") ? (await api("/api/actuarial")).classes || [] : [];
   if (allowed("design")) {
@@ -574,6 +584,7 @@ const VIEWS = {
   apps: viewApps,
   payments: viewPayments,
   pilot: viewPilotPlanner,
+  remesas: viewRemesas,
 };
 
 function movementLabel(p) {
@@ -798,7 +809,7 @@ function viewOperacionHome() {
   const activePolicies = (o.policies || []).filter((p) => p.status === "active").length;
   const pendingCobros = state.cobros.filter((c) => c.status === "pending_payment").length;
   const kpis = [];
-  if (allowed("payments")) {
+  if (allowed("payments") && o.float) {
     kpis.push(`<div class="kpi"><div class="kpi-top"><div class="kpi-ico">${icon("wallet")}</div></div><div class="kpi-label">Dinero en la plataforma</div><div class="kpi-value">${o.float.displayBalance}</div><div class="kpi-hint">Puede salir por Stripe: ${o.transferable ? o.transferable.displayBalance : "—"}</div></div>`);
   }
   if (allowed("accounts")) {
@@ -1716,6 +1727,77 @@ async function generatePilotPlan(form) {
     submit.disabled = false;
   }
 }
+
+const REMESA_LABEL = {
+  awaiting_payment: "Esperando pago en POS", payment_failed: "Pago no aprobado", payment_unverified: "Pago en verificación",
+  funds_hold: "Aprobación de fondos", pending_review: "Retenida", paid: "Fondos aprobados", processing: "Conversión en Global66",
+  sent: "Enviada al banco", successful: "Recibida", rejected: "Rechazada", transfer_failed: "Envío no aceptado",
+};
+const REMESA_PILL = { funds_hold: "amber", pending_review: "amber", payment_unverified: "amber", awaiting_payment: "gray", payment_failed: "gray", rejected: "gray", transfer_failed: "gray" };
+
+function remesaWhen(iso) {
+  return iso ? new Date(iso).toLocaleString("es-CL", { timeZone: "America/Santiago", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
+}
+
+function remesaCountdown(iso) {
+  const ms = Date.parse(iso || "") - Date.now();
+  if (!Number.isFinite(ms)) return "—";
+  if (ms <= 0) return "Saliendo…";
+  const minutes = Math.floor(ms / 60000);
+  const seconds = Math.floor((ms % 60000) / 1000);
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function viewRemesas() {
+  const rows = state.remesas || [];
+  const isOp = state.user && state.user.role === "operacion";
+  const hold = rows.filter((r) => r.status === "funds_hold");
+  const review = rows.filter((r) => ["pending_review", "payment_unverified"].includes(r.status));
+  const moving = rows.filter((r) => ["paid", "processing", "sent"].includes(r.status));
+  const totalHold = hold.reduce((sum, r) => sum + r.quote.amountToConvert, 0);
+  const b = state.remesasBalance;
+  const balance = !isOp ? "" : b && b.error
+    ? `<div class="kpi amber"><div class="kpi-label">Global66 SICR3P</div><div class="kpi-value">—</div><div class="kpi-hint">${escapeAttr(b.error)}</div></div>`
+    : `<div class="kpi green"><div class="kpi-top"><div class="kpi-ico">${icon("wallet")}</div></div><div class="kpi-label">Saldo Global66 SICR3P (CLP)</div><div class="kpi-value">${b && b.balance !== null ? money(Math.floor(b.balance), "clp") : b && b.mode === "demo" ? "Demo" : "—"}</div><div class="kpi-hint">${b && b.mode === "live" ? `Wallet ${escapeAttr(b.walletId ?? "—")}${b.alias ? " · " + escapeAttr(b.alias) : ""}` : "Sin credenciales Global66"}</div></div>`;
+  const kpis = `<div class="grid-kpi">${balance}
+    <div class="kpi amber"><div class="kpi-top"><div class="kpi-ico">${icon("activity")}</div></div><div class="kpi-label">En aprobación de fondos</div><div class="kpi-value">${hold.length}</div><div class="kpi-hint">${money(totalHold, "clp")} por convertir</div></div>
+    <div class="kpi"><div class="kpi-top"><div class="kpi-ico">${icon("arrow")}</div></div><div class="kpi-label">En camino</div><div class="kpi-value">${moving.length}</div><div class="kpi-hint">Global66 → banco de destino</div></div>
+    <div class="kpi"><div class="kpi-top"><div class="kpi-ico">${icon("check")}</div></div><div class="kpi-label">Recibidas</div><div class="kpi-value">${rows.filter((r) => r.status === "successful").length}</div><div class="kpi-hint">${review.length ? review.length + " retenidas por revisar" : "Sin retenidas"}</div></div></div>`;
+  const row = (r, actions) => `<tr>
+      <td><b>${escapeAttr(r.code)}</b><div class="hint">${escapeAttr(r.remitter.name)} → ${escapeAttr(r.beneficiary.firstName)} ${escapeAttr(r.beneficiary.lastName)} · ${escapeAttr(r.quote.country)}</div></td>
+      <td>${money(r.quote.total, "clp")}<div class="hint">Convierte ${money(r.quote.amountToConvert, "clp")}</div></td>
+      <td>${escapeAttr(Number(r.global66 && r.global66.destinationAmount || r.quote.receiveAmount).toLocaleString("es-CL", { minimumFractionDigits: 2 }))} ${escapeAttr(r.quote.currency)}</td>
+      <td><span class="pill ${REMESA_PILL[r.status] || ""}">${escapeAttr(REMESA_LABEL[r.status] || r.status)}</span>${r.timeline.length && r.timeline[r.timeline.length - 1].detail ? `<div class="hint">${escapeAttr(r.timeline[r.timeline.length - 1].detail)}</div>` : ""}</td>
+      <td>${r.status === "funds_hold" ? `<b data-countdown="${escapeAttr(r.sendAt)}">${remesaCountdown(r.sendAt)}</b><div class="hint">Sale ${remesaWhen(r.sendAt)}</div>` : remesaWhen(r.sendAt)}</td>
+      <td>${remesaWhen(r.estimatedArrival)}</td>
+      <td>${actions}</td></tr>`;
+  const table = (title, list, actionsFor, empty) => `<div class="card"><div class="card-head"><h3>${title}</h3><span class="pill gray">${list.length}</span></div><div class="card-body flush">
+      ${list.length ? `<table class="tbl"><thead><tr><th>Remesa</th><th>Cobrado</th><th>Recibe</th><th>Estado</th><th>Salida Global66</th><th>Llegada estimada</th><th></th></tr></thead><tbody>${list.map((r) => row(r, actionsFor(r))).join("")}</tbody></table>` : `<div class="empty">${icon("inbox")}<div>${empty}</div></div>`}
+    </div></div>`;
+  const holdActions = (r) => isOp ? `<button class="btn btn-ghost btn-sm" data-remesa-hold="${escapeAttr(r.id)}">Retener</button> <button class="btn btn-primary btn-sm" data-remesa-now="${escapeAttr(r.id)}">Enviar ahora</button>` : "";
+  const reviewActions = (r) => isOp ? `<button class="btn btn-primary btn-sm" data-remesa-approve="${escapeAttr(r.id)}">Aprobar y enviar</button>` : "";
+  const refreshAction = (r) => `<button class="btn btn-ghost btn-sm" data-remesa-refresh="${escapeAttr(r.id)}">Actualizar</button>`;
+  const history = rows.filter((r) => !["funds_hold", "pending_review", "payment_unverified", "paid", "processing", "sent"].includes(r.status));
+  return `${kpis}
+    ${table("En aprobación de fondos (30 min)", hold, holdActions, "No hay remesas esperando aprobación de fondos.")}
+    ${review.length ? table("Retenidas", review, reviewActions, "") : ""}
+    ${table("En camino", moving, refreshAction, "No hay envíos en curso.")}
+    ${table("Historial", history, () => "", "Todavía no hay remesas cerradas.")}
+    <div class="card"><div class="card-body"><a class="btn btn-ghost btn-sm" href="/api/remesas/export">${icon("file")} CSV para contabilidad</a> <a class="btn btn-ghost btn-sm" href="/remesas" target="_blank" rel="noopener">${icon("arrow")} Pantalla POS</a></div></div>`;
+}
+
+async function remesaAction(path, body) {
+  try {
+    await api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    state.remesas = (await api("/api/remesas")).remesas || [];
+    toast("Remesa actualizada");
+    route();
+  } catch (error) {
+    toast(escapeAttr(error.message), "error");
+  }
+}
+
+let remesaTimer = null;
 
 function viewConfiguracion() {
   const sicr = state.sicr3p || { url: null, configured: false, secretStored: false };
@@ -2660,6 +2742,36 @@ function wireView(r) {
         postCourseForum(form, form.dataset.parentId);
       };
     });
+  }
+  if (remesaTimer) {
+    window.clearInterval(remesaTimer);
+    remesaTimer = null;
+  }
+  if (r === "remesas") {
+    document.querySelectorAll("[data-remesa-hold]").forEach((btn) => {
+      btn.onclick = () => {
+        const reason = window.prompt("Motivo de la retención (por ejemplo, pago anulado en TUU):", "");
+        if (reason !== null) remesaAction(`/api/remesas/${encodeURIComponent(btn.dataset.remesaHold)}/retener`, { reason });
+      };
+    });
+    document.querySelectorAll("[data-remesa-now]").forEach((btn) => {
+      btn.onclick = () => remesaAction(`/api/remesas/${encodeURIComponent(btn.dataset.remesaNow)}/enviar-ahora`);
+    });
+    document.querySelectorAll("[data-remesa-approve]").forEach((btn) => {
+      btn.onclick = () => remesaAction(`/api/remesas/${encodeURIComponent(btn.dataset.remesaApprove)}/aprobar`);
+    });
+    document.querySelectorAll("[data-remesa-refresh]").forEach((btn) => {
+      btn.onclick = () => remesaAction(`/api/remesas/${encodeURIComponent(btn.dataset.remesaRefresh)}/actualizar`);
+    });
+    let ticks = 0;
+    remesaTimer = window.setInterval(async () => {
+      document.querySelectorAll("[data-countdown]").forEach((el) => { el.textContent = remesaCountdown(el.dataset.countdown); });
+      ticks += 1;
+      if (ticks % 30 === 0 && currentRoute() === "remesas") {
+        state.remesas = (await api("/api/remesas").catch(() => ({ remesas: state.remesas }))).remesas || [];
+        route();
+      }
+    }, 1000);
   }
   if (r === "pilot") {
     const form = document.querySelector("[data-pilot-plan]");

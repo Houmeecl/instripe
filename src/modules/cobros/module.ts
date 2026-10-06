@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { GatewayName } from "../../config.js";
 import { PlatformError } from "../../errors.js";
+import { isValidAmount } from "../../money.js";
 import type { Payments } from "../../payments/service.js";
 import type { ChargeResult } from "../../gateways/types.js";
 import type { PlatformStore } from "../../store/db.js";
@@ -59,7 +60,7 @@ export class CobrosModule {
     if (!concept || !payerName || !email) {
       throw new PlatformError("concept, payerName y email son requeridos", 400);
     }
-    if (input.amount <= 0) throw new PlatformError("El monto del cobro debe ser positivo", 400);
+    if (!isValidAmount(input.amount)) throw new PlatformError("El monto del cobro debe ser un entero positivo", 400);
 
     const cobro: Cobro = {
       id: `cob_${randomUUID().slice(0, 8)}`,

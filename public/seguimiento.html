@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Seguimiento de envío</title>
+  <style>
+    :root { --bg: #f3f5fa; --card: #fff; --ink: #0e1a3a; --muted: #5d6785; --line: #e2e6f0; --brand: #1f5eff; --brand-soft: #edf2ff; --ok: #14a352; --bad: #c62828; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 480px; margin: 0 auto; padding: 20px 16px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 12px; }
+    h1 { font-size: 20px; margin: 0; } .code { color: var(--brand); font-weight: 700; margin-top: 2px; }
+    .muted { color: var(--muted); font-size: 13px; }
+    ol { list-style: none; margin: 14px 0 0; padding: 0; }
+    li { position: relative; display: grid; grid-template-columns: 30px 1fr; gap: 12px; padding: 0 0 18px; }
+    li:not(:last-child)::before { content: ""; position: absolute; left: 14px; top: 30px; bottom: 0; width: 2px; background: var(--line); }
+    li.done:not(:last-child)::before { background: var(--ok); }
+    .dot { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line); background: #fff; display: grid; place-items: center; font-size: 15px; color: #fff; z-index: 1; }
+    li.done .dot { background: var(--ok); border-color: var(--ok); }
+    li.bad .dot { background: var(--bad); border-color: var(--bad); }
+    li:not(.done):not(.bad) b { color: var(--muted); }
+    .receive { background: var(--brand-soft); border: 0; }
+    .big { font-size: 28px; font-weight: 800; color: var(--brand); }
+  </style>
+</head>
+<body>
+  <main id="app"><div class="card">Cargando…</div></main>
+  <script>
+    const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+    const token = location.pathname.split("/").pop();
+    const app = document.getElementById("app");
+    const BAD = ["payment_failed", "rejected", "transfer_failed"];
+    // The four milestones of the operation, as on the voucher.
+    const STEPS = [
+      { title: "Pago aprobado", by: "TUU", reached: ["funds_hold", "paid", "processing", "sent", "successful"], detail: "Tu pago con tarjeta fue aprobado y se emitió la boleta." },
+      { title: "Aprobación de fondos", by: "", reached: ["paid", "processing", "sent", "successful"], detail: "Fondos aprobados para el envío.", waiting: "funds_hold" },
+      { title: "Conversión realizada", by: "Global66", reached: ["processing", "sent", "successful"], detail: "Se realizó la conversión a la moneda de destino." },
+      { title: "Enviado a banco", by: "Global66", reached: ["sent", "successful"], detail: "El dinero fue enviado al banco del beneficiario." },
+      { title: "Recibido", by: "", reached: ["successful"], detail: "El dinero ya está disponible en la cuenta." },
+    ];
+    const when = (t, statuses) => {
+      const event = t.timeline.find((e) => statuses.includes(e.status));
+      return event ? new Date(event.at).toLocaleString("es-CL", { timeZone: "America/Santiago", dateStyle: "short", timeStyle: "short" }) : "";
+    };
+    async function load() {
+      try {
+        const res = await fetch(`/api/seguimiento/${encodeURIComponent(token)}`);
+        const t = await res.json();
+        if (!res.ok) throw new Error(t.error || "No encontrado");
+        const failed = BAD.includes(t.status);
+        const amount = Number(t.receiveAmount).toLocaleString("es-CL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const steps = STEPS.map((step, i) => {
+          const done = step.reached.includes(t.status);
+          const bad = failed && !done && (i === 0 || STEPS[i - 1].reached.includes(t.timeline.map((e) => e.status).filter((s) => !BAD.includes(s)).pop()));
+          const at = done ? when(t, step.reached) : "";
+          const pendingText = step.waiting === t.status && t.sendAt ? `Sale a las ${new Date(t.sendAt).toLocaleTimeString("es-CL", { timeZone: "America/Santiago", hour: "2-digit", minute: "2-digit" })}` : "Pendiente";
+          return `<li class="${done ? "done" : bad ? "bad" : ""}"><span class="dot">${done ? "✓" : bad ? "!" : ""}</span>
+            <span><b>${esc(bad ? t.statusLabel : step.title)}</b>${step.by ? ` <span class="muted">· ${esc(step.by)}</span>` : ""}<br>
+            <span class="muted">${esc(at)}${at ? " · " : ""}${esc(done ? step.detail : bad ? "Contáctanos con tu número de operación." : pendingText)}</span></span></li>`;
+        }).join("");
+        app.innerHTML = `<div class="card"><h1>Seguimiento de envío</h1><div class="code">${esc(t.code)}</div><ol>${steps}</ol></div>
+          <div class="card receive"><div class="muted">${esc(t.beneficiary)} recibe${t.receiveEstimated ? " (estimado)" : ""}</div>
+          <div class="big">${esc(amount)} ${esc(t.currency)}</div><div class="muted">${esc(t.bank)} · ${esc(t.account)}</div>
+          ${t.estimatedArrival && t.status !== "successful" && !failed ? `<div class="muted" style="margin-top:6px">Llega aprox. el <b>${esc(new Date(t.estimatedArrival).toLocaleString("es-CL", { timeZone: "America/Santiago", dateStyle: "short", timeStyle: "short" }))}</b></div>` : ""}</div>`;
+        if (t.status !== "successful" && !failed) setTimeout(load, 30000);
+      } catch (e) {
+        app.innerHTML = `<div class="card">${esc(e.message)}</div>`;
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

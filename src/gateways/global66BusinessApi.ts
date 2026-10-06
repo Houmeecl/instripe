@@ -45,6 +45,48 @@ export interface Global66BankTransferInput {
   externalReferenceId: string;
 }
 
+/** Final customer on whose behalf a remittance is sent (RaaS). */
+export interface Global66Remitter {
+  name: string;
+  identificationType: string;
+  identificationNumber: string;
+  countryCode?: string;
+  contactNumber?: string;
+  email?: string;
+  address?: string;
+  city?: string;
+}
+
+export interface Global66RemittanceInput extends Global66BankTransferInput {
+  description?: string;
+  /** walletId the money leaves from (GET /b2b/accounts). */
+  originAccountId?: number;
+  bankId?: number;
+  /** BANK_TRANSFER fields some destinations require: state, postalCode, residenceCity, address, branchCode. */
+  beneficiaryExtra?: Record<string, string>;
+  remitter?: Global66Remitter;
+}
+
+export interface Global66Account {
+  walletId: number;
+  currency: string;
+  balance: number;
+  alias: string | null;
+  isPrincipal: boolean;
+}
+
+export interface Global66TransactionDetail {
+  externalReferenceId: string;
+  transactionId: string | null;
+  /** PENDING, PROCESSING, COMPLETED or FAILED. */
+  apiStatus: string;
+  /** Status reported by the remittance product, when COMPLETED. */
+  status: string | null;
+  destinationAmount: number | null;
+  destinationCurrency: string | null;
+  exchangeRate: number | null;
+}
+
 export interface Global66TransferResult {
   externalReferenceId: string;
   transactionId: string | null;
@@ -143,6 +185,64 @@ export class Global66BusinessApi {
     credentials: Global66Credentials,
     input: Global66BankTransferInput,
   ): Promise<Global66TransferResult> {
+    return this.submitPayment(credentials, input, "/b2b/transactions/payments");
+  }
+
+  /**
+   * A remittance on behalf of a final customer. With `remitter` it uses the RaaS endpoint,
+   * which Global66 enables per company (403 otherwise).
+   */
+  async createRemittance(credentials: Global66Credentials, input: Global66RemittanceInput): Promise<Global66TransferResult> {
+    return this.submitPayment(
+      credentials,
+      input,
+      input.remitter ? "/b2b/transactions/raas/payments" : "/b2b/transactions/payments",
+    );
+  }
+
+  /** Company wallets with their available balance. */
+  async accounts(credentials: Global66Credentials): Promise<Global66Account[]> {
+    const tokens = await this.accessTokens(credentials);
+    const data = await this.authenticatedRequest<{ accounts?: unknown }>("/b2b/accounts", tokens, (token) =>
+      this.request("/b2b/accounts", { method: "GET", headers: { Authorization: token } }),
+    );
+    if (!Array.isArray(data.accounts)) throw new PlatformError("Global66 respondió con un formato de cuentas no válido", 502);
+    return data.accounts.flatMap((item) => {
+      const account = item as Record<string, unknown> | null;
+      const walletId = numericField(account?.walletId);
+      const balance = numericField(account?.balance);
+      const currency = stringField(account?.currency);
+      if (walletId === null || balance === null || !currency) return [];
+      return [{ walletId, currency: currency.toUpperCase(), balance, alias: stringField(account?.alias), isPrincipal: account?.isPrincipal === true }];
+    });
+  }
+
+  /** Status of a payment created by API, looked up by our own reference. */
+  async transactionDetail(credentials: Global66Credentials, externalReferenceId: string): Promise<Global66TransactionDetail> {
+    const tokens = await this.accessTokens(credentials);
+    const path = `/b2b/transactions/detail?externalReferenceId=${encodeURIComponent(externalReferenceId)}`;
+    const data = await this.authenticatedRequest<Record<string, unknown>>(path, tokens, (token) =>
+      this.request(path, { method: "GET", headers: { Authorization: token } }),
+    );
+    const detail = data.detail && typeof data.detail === "object" ? (data.detail as Record<string, unknown>) : undefined;
+    const destination =
+      detail?.destination && typeof detail.destination === "object" ? (detail.destination as Record<string, unknown>) : undefined;
+    return {
+      externalReferenceId,
+      transactionId: identifierField(data.transactionId),
+      apiStatus: stringField(data.apiStatus) ?? "PENDING",
+      status: stringField(detail?.status),
+      destinationAmount: numericField(destination?.amount),
+      destinationCurrency: stringField(destination?.currency),
+      exchangeRate: numericField(detail?.exchangeRate),
+    };
+  }
+
+  private async submitPayment(
+    credentials: Global66Credentials,
+    input: Global66RemittanceInput,
+    path: string,
+  ): Promise<Global66TransferResult> {
     const tokens = await this.accessTokens(credentials);
     const request = {
       externalReferenceId: input.externalReferenceId,
@@ -150,8 +250,11 @@ export class Global66BusinessApi {
       originCurrency: input.originCurrency,
       amount: input.amount,
       way: "ORIGIN",
+      ...(input.originAccountId !== undefined ? { originAccountId: input.originAccountId } : {}),
+      ...(input.description ? { description: input.description.slice(0, 140) } : {}),
       paymentType: "WIRE_TRANSFER",
-      purposeCode: input.purposeCode,
+      // Documented shape: [{ purposeCode: 64, amount?: 100.00 }].
+      purposeCode: input.purposeCode.map((purposeCode) => ({ purposeCode })),
       beneficiary: {
         operationType: "BANK_TRANSFER",
         destinationCurrency: input.destinationCurrency,
@@ -159,18 +262,21 @@ export class Global66BusinessApi {
         beneficiaryLastName: input.beneficiaryLastName,
         typeBeneficiary: "INDIVIDUAL",
         countryCode: input.countryCode,
-        typeAccount: input.accountType,
+        accountType: input.accountType,
         accountNumber: input.accountNumber,
         documentNumber: input.documentNumber,
         documentType: input.documentType,
+        ...(input.bankId !== undefined ? { bankId: input.bankId } : {}),
+        ...(input.beneficiaryExtra ?? {}),
       },
+      ...(input.remitter ? { remitter: input.remitter } : {}),
     };
     const form = new FormData();
     form.set("request", JSON.stringify(request));
     const result = await this.authenticatedRequest<Record<string, unknown>>(
-      "/b2b/transactions/payments",
+      path,
       tokens,
-      (token) => this.request("/b2b/transactions/payments", {
+      (token) => this.request(path, {
         method: "POST",
         headers: { Authorization: token },
         body: form,
@@ -185,9 +291,7 @@ export class Global66BusinessApi {
       status: result.status,
       valid: result.valid,
       violations: Array.isArray(result.violations)
-        ? result.violations.map((violation) =>
-            typeof violation === "string" ? violation : JSON.stringify(violation),
-          )
+        ? result.violations.map(describeViolation)
         : result.valid
           ? []
           : ["Global66 rechazó la validación de la transferencia"],
@@ -260,7 +364,12 @@ export class Global66BusinessApi {
       throw new PlatformError(`Global66 respondió con contenido no JSON (HTTP ${response.status})`, 502);
     }
     if (!response.ok) {
-      throw new PlatformError(`Global66 respondió HTTP ${response.status}`, response.status === 401 ? 401 : 502);
+      const body = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
+      // Payload validation errors come back as 400 with the same shape as a 200 { valid: false }.
+      if (response.status === 400 && body.valid === false) return body as T;
+      const code = stringField(body.code) ?? stringField(body.rule);
+      const status = [401, 403, 409].includes(response.status) ? response.status : 502;
+      throw new PlatformError(`Global66 respondió HTTP ${response.status}${code ? ` (${code})` : ""}`, status);
     }
     if (!data || typeof data !== "object" || Array.isArray(data)) {
       throw new PlatformError("Global66 respondió con un formato no válido", 502);
@@ -303,6 +412,17 @@ function parseMovement(value: unknown): Global66Movement {
     accountBalance: numericField(movement.accountBalance),
     destinationName: stringField(movement.destinationName),
   };
+}
+
+function describeViolation(violation: unknown): string {
+  if (typeof violation === "string") return violation;
+  if (violation && typeof violation === "object") {
+    const item = violation as Record<string, unknown>;
+    const field = stringField(item.field);
+    const message = stringField(item.message) ?? stringField(item.rule);
+    if (message) return field ? `${field}: ${message}` : message;
+  }
+  return JSON.stringify(violation);
 }
 
 function stringField(value: unknown): string | null {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Role } from "../../auth/module.js";
 import type { GatewayName } from "../../config.js";
 import { PlatformError } from "../../errors.js";
+import { isValidAmount } from "../../money.js";
 import type { Account } from "../../payments/ledger.js";
 import type { Payments } from "../../payments/service.js";
 import type { ChargeResult } from "../../gateways/types.js";
@@ -226,7 +227,7 @@ export class SegurosModule {
     if (policy.planId === FROSTING.id || policy.cupo <= 0) {
       throw new PlatformError("Frosting no abre crédito", 422);
     }
-    if (input.amount <= 0) throw new PlatformError("El monto del siniestro debe ser positivo", 400);
+    if (!isValidAmount(input.amount)) throw new PlatformError("El monto del siniestro debe ser un entero positivo", 400);
     if (input.amount > policy.coverage) {
       throw new PlatformError("El monto supera el crédito asegurado de la tarjeta", 422);
     }

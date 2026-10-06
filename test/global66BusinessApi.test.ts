@@ -137,7 +137,8 @@ describe("Global66BusinessApi", () => {
     expect(sentForm).toBeInstanceOf(FormData);
     const request = JSON.parse(String(sentForm?.get("request")));
     expect(request.externalReferenceId).toBe("ref-123");
-    expect(request.purposeCode).toEqual([1]);
+    expect(request.purposeCode).toEqual([{ purposeCode: 1 }]);
+    expect(request.beneficiary.accountType).toBe("CA");
     expect(result.valid).toBe(false);
     expect(result.status).toBe("FAILED");
     expect(result.violations).toEqual(["Monto fuera de rango"]);

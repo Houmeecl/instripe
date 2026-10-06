@@ -24,3 +24,8 @@ export function formatAmount(amount: number, currency: string): string {
     return `${toMajorUnits(amount, currency)} ${currency.toUpperCase()}`;
   }
 }
+
+/** Amounts are stored in the smallest currency unit, so only positive whole numbers are valid. */
+export function isValidAmount(amount: number): boolean {
+  return Number.isSafeInteger(amount) && amount > 0;
+}

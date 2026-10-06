@@ -1,0 +1,43 @@
+# Despliegue en Coolify: "New resource → Docker Compose" apuntando a este repositorio.
+# Coolify asigna dominio y certificado SSL a cada servicio con las variables SERVICE_FQDN_*.
+# Las credenciales (Global66, TUU, AUTH_SEED_PASSWORD…) se cargan en la pestaña Environment de Coolify.
+services:
+  instripe:
+    build: .
+    environment:
+      - SERVICE_FQDN_INSTRIPE_3000
+      - PUBLIC_BASE_URL=${SERVICE_FQDN_INSTRIPE}
+      - NODE_ENV=production
+      - AUTH_SEED_PASSWORD=${AUTH_SEED_PASSWORD:?Define AUTH_SEED_PASSWORD}
+      - TUU_API_KEY=${TUU_API_KEY:-}
+      - TUU_DTE_TYPE=${TUU_DTE_TYPE:-48}
+      - REMESAS_DTE_EXEMPT=${REMESAS_DTE_EXEMPT:-send}
+      - REMESAS_SEND_DELAY_MINUTES=${REMESAS_SEND_DELAY_MINUTES:-30}
+      - REMESAS_AUTO_SEND_MAX=${REMESAS_AUTO_SEND_MAX:-}
+      - GLOBAL66_B2B_CLIENT_ID=${GLOBAL66_B2B_CLIENT_ID:-}
+      - GLOBAL66_B2B_CLIENT_SECRET=${GLOBAL66_B2B_CLIENT_SECRET:-}
+      - GLOBAL66_B2B_ACCOUNT_ID=${GLOBAL66_B2B_ACCOUNT_ID:-}
+      - GLOBAL66_WEBHOOK_API_KEY=${GLOBAL66_WEBHOOK_API_KEY:-}
+      - GLOBAL66_REMITTANCE_PURPOSE_CODE=${GLOBAL66_REMITTANCE_PURPOSE_CODE:-1}
+      - GLOBAL66_RAAS=${GLOBAL66_RAAS:-1}
+      - GLOBAL66_CREDENTIALS_ENCRYPTION_KEY=${GLOBAL66_CREDENTIALS_ENCRYPTION_KEY:-}
+      - MAIL_HOST=${MAIL_HOST:-}
+      - MAIL_USER=${MAIL_USER:-}
+      - MAIL_PASSWORD=${MAIL_PASSWORD:-}
+    volumes:
+      - instripe-data:/app/data
+    restart: unless-stopped
+
+  # Backoffice en Appsmith. Llama a la API de instripe por la red interna: http://instripe:3000
+  appsmith:
+    image: index.docker.io/appsmith/appsmith-ce:latest
+    environment:
+      - SERVICE_FQDN_APPSMITH_80
+      - APPSMITH_DISABLE_TELEMETRY=true
+    volumes:
+      - appsmith-stacks:/appsmith-stacks
+    restart: unless-stopped
+
+volumes:
+  instripe-data:
+  appsmith-stacks:

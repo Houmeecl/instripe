@@ -1,11 +1,18 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createApp } from "./app.js";
+import type { Platform } from "./platform.js";
 import { loadConfig, isStripeConfigured, isChileConfigured } from "./config.js";
 
 loadDotEnv();
 
 const config = loadConfig();
 const app = createApp(config);
+
+// Remesas: sends the ones whose funds approval window ended.
+const platform = app.locals.platform as Platform;
+setInterval(() => {
+  platform.remesas.processDue().catch((error: unknown) => console.error("[remesas]", error));
+}, 60_000).unref();
 
 app.listen(config.port, config.bindHost, () => {
   const stripe = isStripeConfigured(config) ? "live" : "demo";

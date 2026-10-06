@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
 import type { AppConfig, GatewayName } from "../../config.js";
 import { PlatformError } from "../../errors.js";
+import { isValidAmount } from "../../money.js";
 import type { Payments } from "../../payments/service.js";
 import { createStripe, platformAccount, stripeMessage } from "../../stripe/client.js";
 import type { PlatformStore } from "../../store/db.js";
@@ -318,7 +319,7 @@ export class ConnectModule {
   }): { account: ConnectedAccount; exitId: string } {
     const account = this.accounts.get(input.accountId);
     if (!account) throw new PlatformError(`Cuenta Connect desconocida: ${input.accountId}`, 404);
-    if (input.amount <= 0) throw new PlatformError("El monto del pago debe ser positivo", 400);
+    if (!isValidAmount(input.amount)) throw new PlatformError("El monto del pago debe ser un entero positivo", 400);
     const destination = input.gateway === "stripe" ? account.stripeAccountId : account.id;
     if (!destination) throw new PlatformError("El pago real necesita una cuenta conectada acct_", 422);
     const exit = this.payments.requestExit({

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
 import type { GatewayName } from "../../config.js";
 import { PlatformError } from "../../errors.js";
+import { isValidAmount } from "../../money.js";
 import type { Payments } from "../../payments/service.js";
 import type { ChargeResult } from "../../gateways/types.js";
 import { createStripe, stripeMessage } from "../../stripe/client.js";
@@ -106,7 +107,7 @@ export class TreasuryModule {
   }): Promise<{ account: FinancialAccount; inbound: TreasuryInbound; charge: ChargeResult }> {
     const account = this.accounts.get(input.accountId);
     if (!account) throw new PlatformError(`Cuenta Treasury desconocida: ${input.accountId}`, 404);
-    if (input.amount <= 0) throw new PlatformError("El abono debe ser positivo", 400);
+    if (!isValidAmount(input.amount)) throw new PlatformError("El abono debe ser un entero positivo", 400);
     const inbound: TreasuryInbound = {
       id: `tin_${randomUUID().slice(0, 8)}`,
       financialAccountId: account.id,
