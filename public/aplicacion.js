@@ -1,3 +1,5 @@
+if (window.IntercomSDK) IntercomSDK({ app_id: "gev0e855" });
+
 const stage = document.getElementById("stage");
 const mode = document.getElementById("app-mode");
 

@@ -202,9 +202,13 @@ async function boot() {
   try {
     const session = await api("/api/session");
     if (session.user) await enter(session.user);
-    else document.getElementById("gate").hidden = false;
+    else {
+      document.getElementById("gate").hidden = false;
+      if (window.IntercomSDK) IntercomSDK({ app_id: "gev0e855" });
+    }
   } catch (err) {
     document.getElementById("gate").hidden = false;
+    if (window.IntercomSDK) IntercomSDK({ app_id: "gev0e855" });
     showLoginError(err.message);
   }
 }
@@ -245,6 +249,10 @@ async function onLogout() {
     return;
   }
   state.user = null;
+  if (window.IntercomSDK) {
+    IntercomSDK.shutdown();
+    IntercomSDK({ app_id: "gev0e855" });
+  }
   document.querySelector(".app").hidden = true;
   document.getElementById("gate").hidden = false;
   document.getElementById("login-password").value = "";
@@ -253,6 +261,14 @@ async function onLogout() {
 
 async function enter(user) {
   state.user = user;
+  if (window.IntercomSDK) {
+    IntercomSDK({
+      app_id: "gev0e855",
+      user_id: user.id,
+      name: user.name,
+      email: user.email,
+    });
+  }
   document.getElementById("gate").hidden = true;
   document.querySelector(".app").hidden = false;
   document.getElementById("who-name").textContent = user.name;

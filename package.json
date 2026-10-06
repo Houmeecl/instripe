@@ -16,6 +16,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@intercom/messenger-js-sdk": "^0.0.20",
     "express": "^4.19.2",
     "stripe": "^22.6.2"
   },

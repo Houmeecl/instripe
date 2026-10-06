@@ -1,3 +1,5 @@
+if (window.IntercomSDK) IntercomSDK({ app_id: "gev0e855" });
+
 const sponsorshipLink = document.getElementById("sponsorship-link");
 const sponsorshipEmail = document.getElementById("sponsorship-email");
 const sponsorshipStatus = document.getElementById("sponsorship-status");
