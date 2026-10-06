@@ -37,54 +37,56 @@ if [ ! -f "$HOME/.ssh/id_rsa" ] && [ ! -f "$HOME/.ssh/id_ed25519" ]; then
 fi
 
 # Paso 1: Build local
-echo -e "${YELLOW}[1/5]${NC} Building TypeScript..."
+echo -e "${YELLOW}[1/4]${NC} Building TypeScript..."
 npm run build
 
-# Paso 2: Ejecutar tests
-echo -e "${YELLOW}[2/5]${NC} Running tests..."
-npm test || echo -e "${YELLOW}Tests fallaron pero continuando...${NC}"
+# Paso 2: Ejecutar tests (si fallan, no se despliega)
+echo -e "${YELLOW}[2/4]${NC} Running tests..."
+npm test
 
-# Paso 3: Deploy via SSH
-echo -e "${YELLOW}[3/5]${NC} Deploying to VPS..."
-ssh -o StrictHostKeyChecking=no -p $VPS_PORT $VPS_USER@$VPS_HOST << 'EOF'
+# Paso 3: Deploy via SSH. Las variables se pasan al shell remoto.
+echo -e "${YELLOW}[3/4]${NC} Deploying to VPS..."
+ssh -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
+    "APP_DIR='$APP_DIR' BRANCH='$BRANCH' bash -s" << 'EOF'
     set -e
+    export NVM_DIR="$HOME/.nvm"
+    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+
     echo "  -> Changing to app directory"
-    cd $APP_DIR
-    
+    cd "$APP_DIR"
+
     echo "  -> Pulling latest changes"
-    git fetch origin $BRANCH
-    git reset --hard origin/$BRANCH
-    
-    echo "  -> Installing dependencies"
-    npm install --production
-    
-    echo "  -> Building TypeScript"
+    git fetch origin "$BRANCH"
+    git reset --hard "origin/$BRANCH"
+
+    echo "  -> Installing dependencies and building"
+    npm ci
     npm run build
-    
+    npm prune --omit=dev
+
     echo "  -> Restarting application"
     pm2 restart instripe --update-env
-    
-    echo "  -> Checking status"
-    pm2 list
-    
-    echo ""
-    echo "  Deployment completed successfully!"
-    echo "  Time: $(date)"
+
+    echo "  -> Checking health"
+    HOST=$(grep -E '^BIND_HOST=' .env 2>/dev/null | cut -d= -f2)
+    case "$HOST" in ""|0.0.0.0) HOST=127.0.0.1 ;; esac
+    PORT=$(grep -E '^PORT=' .env 2>/dev/null | cut -d= -f2)
+    for attempt in $(seq 1 10); do
+        if curl --fail --silent "http://$HOST:${PORT:-3000}/health" >/dev/null; then
+            echo "  Deployment healthy at $(date)"
+            exit 0
+        fi
+        sleep 3
+    done
+    echo "  Health check failed" >&2
+    pm2 logs instripe --lines 30 --nostream
+    exit 1
 EOF
 
-# Paso 4: Verificar despliegue
-echo -e "${YELLOW}[4/5]${NC} Verifying deployment..."
-sleep 5
-
-# Intentar hacer ping a la aplicación
-if command -v curl &> /dev/null; then
-    echo "  -> Checking application health..."
-    curl -s -o /dev/null -w "  HTTP Status: %{http_code}\n" http://$VPS_HOST:3000/api/payments || true
-fi
-
-# Paso 5: Mostrar logs
-echo -e "${YELLOW}[5/5]${NC} Showing application logs..."
-ssh -o StrictHostKeyChecking=no -p $VPS_PORT $VPS_USER@$VPS_HOST "pm2 logs instripe --lines 30"
+# Paso 4: Estado
+echo -e "${YELLOW}[4/4]${NC} PM2 status..."
+ssh -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
+    'export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; pm2 list'
 
 echo ""
 echo -e "${GREEN}=========================================="

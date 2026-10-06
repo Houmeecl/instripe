@@ -223,6 +223,21 @@ En producción, mueve las llaves a los Secrets del entorno en lugar de `.env`.
 La llave secreta no debe commitearse. Si se pegó en un chat, rótala en el
 Dashboard de Stripe.
 
+## Despliegue en VPS
+
+1. **Instalación inicial (una vez, en el VPS):** clona el repo y ejecuta
+   `./scripts/setup-vps.sh`. Instala Node 22 (nvm), PM2 en una sola instancia
+   (SQLite no admite varios procesos escritores) y Nginx. Luego completa
+   `/var/www/instripe/.env` y ejecuta el comando que imprime `pm2 startup`.
+2. **Conexión desde GitHub:** en *Settings → Secrets and variables → Actions*
+   define `VPS_HOST`, `VPS_USERNAME`, `VPS_SSH_KEY` (clave privada cuya pública
+   está en `~/.ssh/authorized_keys` del VPS) y, si no es 22, `VPS_PORT`.
+3. **Desplegar:** *Actions → Deploy to VPS → Run workflow*. Compila, prueba,
+   entra por SSH, actualiza a `origin/main`, reinicia PM2 y verifica `/health`
+   (usa `BIND_HOST`/`PORT` del `.env` del servidor).
+
+Alternativa manual desde tu equipo: `VPS_HOST=… VPS_USER=… ./scripts/deploy-vps.sh`.
+
 ## Producción / próximos pasos
 
 - Integración real: SDK de Transbank (Webpay Plus), Khipu o Flow para Chile, y
