@@ -3,6 +3,7 @@ import type { AppConfig } from "../../config.js";
 import { PlatformError } from "../../errors.js";
 import {
   Global66BusinessApi,
+  type Global66Account,
   type Global66Credentials,
   type Global66RemittanceInput,
   type Global66TransferResult,
@@ -21,6 +22,7 @@ export type RemesaStatus =
   | "awaiting_payment" // Quote accepted; the POS has to charge the card.
   | "payment_failed" // TUU did not approve the card or the flow was canceled.
   | "payment_unverified" // The POS reported a payment that TUU reports do not show yet.
+  | "funds_hold" // Paid and confirmed. Funds approval window before the Global66 transfer.
   | "pending_review" // Paid, waiting for Operación before sending.
   | "paid" // Paid and confirmed, about to be sent (or a send failed transiently).
   | "processing" // Accepted by Global66.
@@ -159,6 +161,14 @@ export interface Remesa {
     lastError?: string;
   };
   reviewedBy?: string;
+  /** When the funds approval window ends and the transfer leaves Global66. */
+  sendAt?: string;
+  /** sendAt plus the Global66 delivery estimate. */
+  estimatedArrival?: string | null;
+  /** SICR3P Global66 wallet the transfer leaves from. */
+  originAccountId?: number;
+  /** Held only for lack of Global66 balance: retried automatically. */
+  retry?: "balance";
   timeline: RemesaEvent[];
   createdAt: string;
   updatedAt: string;
@@ -198,6 +208,7 @@ const STATUS_LABEL: Record<RemesaStatus, string> = {
   awaiting_payment: "Esperando pago en el POS",
   payment_failed: "Pago no aprobado",
   payment_unverified: "Pago en verificación",
+  funds_hold: "Aprobación de fondos",
   pending_review: "En revisión",
   paid: "Pago aprobado",
   processing: "Conversión en proceso",
@@ -223,14 +234,17 @@ export class RemesasModule {
   /** Demo progress of a Global66 transfer: processing → sent → successful. */
   private readonly demoSteps = new Map<string, number>();
   private syncedAt = 0;
+  private readonly now: () => number;
+  private processing = false;
   /** Where the customer rate comes from. Manual today; a Global66 quote endpoint can replace it. */
   private readonly rates: RateSource = { name: "manual", rate: async (corridor) => corridor.rate };
 
   constructor(
     private readonly config: AppConfig,
     private readonly store: PlatformStore,
-    deps: { tuu?: TuuReports; global66?: Global66BusinessApi; catalog?: Global66Catalog } = {},
+    deps: { tuu?: TuuReports; global66?: Global66BusinessApi; catalog?: Global66Catalog; now?: () => number } = {},
   ) {
+    this.now = deps.now ?? Date.now;
     this.tuu = deps.tuu ?? new TuuReports(config.remesas.tuuApiKey);
     this.global66 = deps.global66 ?? new Global66BusinessApi();
     this.catalog = deps.catalog ?? new Global66Catalog(config.remesas.global66CatalogUrl, store);
@@ -487,7 +501,8 @@ export class RemesasModule {
       dteType: this.config.remesas.tuuDteType,
       extraData: {
         taxIdnValidation: "",
-        exemptAmount: 0,
+        // The remitted amount is not a sale: only the commission is taxed on the boleta.
+        exemptAmount: this.config.remesas.dteExempt === "send" && this.config.remesas.tuuDteType !== 0 ? remesa.quote.sendAmount : 0,
         netAmount: 0,
         sourceName: "instripe remesas",
         sourceVersion: "1",
@@ -551,6 +566,7 @@ export class RemesasModule {
   async refresh(id: string, actor: RemesaActor): Promise<Remesa> {
     const remesa = this.get(id, actor);
     if (remesa.status === "payment_unverified") await this.verifyPayment(remesa);
+    else if (this.due(remesa)) await this.release(remesa);
     else if (remesa.status === "paid") await this.send(remesa);
     else if (remesa.status === "processing" || remesa.status === "sent") await this.pollGlobal66(remesa);
     return remesa;
@@ -566,9 +582,56 @@ export class RemesasModule {
     if (remesa.createdBy === actor.id) throw new PlatformError("Otro usuario de Operación tiene que aprobarla", 403);
     if (remesa.payment) remesa.payment.verified = true;
     remesa.reviewedBy = actor.id;
-    this.transition(remesa, "paid", "Aprobada por Operación");
-    await this.send(remesa);
+    await this.release(remesa, { skipTuu: true, detail: "Aprobada por Operación" });
     return remesa;
+  }
+
+  /** Operación sends a remittance before its funds approval window ends. */
+  async sendNow(id: string, actor: RemesaActor): Promise<Remesa> {
+    if (actor.role !== "operacion") throw new PlatformError("Solo Operación puede adelantar un envío", 403);
+    const remesa = this.get(id, actor);
+    if (remesa.status !== "funds_hold") throw new PlatformError("Esa remesa no está en aprobación de fondos", 409);
+    if (remesa.createdBy === actor.id) throw new PlatformError("Otro usuario de Operación tiene que adelantarla", 403);
+    remesa.reviewedBy = actor.id;
+    await this.release(remesa, { detail: "Enviada antes por Operación" });
+    return remesa;
+  }
+
+  /** Operación stops a remittance before it leaves (for example, the card payment was voided in TUU). */
+  hold(id: string, actor: RemesaActor, reason: string): Remesa {
+    if (actor.role !== "operacion") throw new PlatformError("Solo Operación puede retener una remesa", 403);
+    const remesa = this.get(id, actor);
+    if (remesa.status !== "funds_hold" && !(remesa.status === "pending_review" && remesa.retry)) {
+      throw new PlatformError("Solo se retiene una remesa que todavía no salió", 409);
+    }
+    delete remesa.retry;
+    this.transition(remesa, "pending_review", `Retenida por Operación: ${reason.trim().slice(0, 200) || "sin motivo"}`);
+    return remesa;
+  }
+
+  /** Sends every remittance whose funds approval window ended. Called by the scheduler every minute. */
+  async processDue(): Promise<number> {
+    if (this.processing) return 0;
+    this.processing = true;
+    let released = 0;
+    try {
+      for (const remesa of [...this.remesas.values()]) {
+        if (!this.due(remesa)) continue;
+        await this.release(remesa);
+        released += 1;
+      }
+    } finally {
+      this.processing = false;
+    }
+    return released;
+  }
+
+  /** Available balance of the SICR3P Global66 wallet the remittances leave from. */
+  async balance(): Promise<{ mode: "live" | "demo"; walletId: number | null; currency: string; balance: number | null; alias: string | null }> {
+    const credentials = this.global66Credentials();
+    if (!credentials) return { mode: "demo", walletId: null, currency: "CLP", balance: null, alias: null };
+    const wallet = await this.wallet(credentials);
+    return { mode: "live", walletId: wallet?.walletId ?? null, currency: "CLP", balance: wallet?.balance ?? null, alias: wallet?.alias ?? null };
   }
 
   /** Global66 remittance webhook. Returns false when the key does not match. */
@@ -609,6 +672,8 @@ export class RemesasModule {
       beneficiary: `${remesa.beneficiary.firstName} ${remesa.beneficiary.lastName.charAt(0)}.`.trim(),
       bank: remesa.beneficiary.bankName,
       account: maskAccount(remesa.beneficiary.accountNumber),
+      sendAt: remesa.sendAt ?? null,
+      estimatedArrival: remesa.estimatedArrival ?? null,
       timeline: remesa.timeline.map((event) => ({ ...event, label: STATUS_LABEL[event.status] })),
     };
   }
@@ -619,7 +684,7 @@ export class RemesasModule {
       "fecha", "codigo", "estado", "remitente", "rut_remitente", "pais", "moneda",
       "monto_enviado_clp", "costo_conversion_clp", "monto_convertido_clp", "comision_clp", "total_cobrado_clp",
       "comision_pos_estimada_clp", "tasa_clp", "monto_destino_estimado", "monto_destino_global66",
-      "secuencia_tuu", "pos_serie", "transaccion_global66",
+      "secuencia_tuu", "pos_serie", "transaccion_global66", "salida_global66", "llegada_estimada",
     ];
     const rows = this.list(actor).map((remesa) => [
       remesa.createdAt, remesa.code, remesa.status, remesa.remitter.name, remesa.remitter.rut,
@@ -627,6 +692,7 @@ export class RemesasModule {
       remesa.quote.amountToConvert, remesa.quote.commission, remesa.quote.total, remesa.quote.posFeeEstimated,
       remesa.quote.rate, remesa.quote.receiveAmount, remesa.global66?.destinationAmount ?? "",
       remesa.payment?.sequenceNumber ?? "", remesa.payment?.serialNumber ?? "", remesa.global66?.transactionId ?? "",
+      remesa.sendAt ?? "", remesa.estimatedArrival ?? "",
     ]);
     return [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
   }
@@ -676,14 +742,87 @@ export class RemesasModule {
     await this.afterPaid(remesa);
   }
 
+  /** Confirmed card payment: the funds approval window starts. */
   private async afterPaid(remesa: Remesa): Promise<void> {
+    const sendAt = this.now() + this.config.remesas.sendDelayMinutes * 60_000;
+    remesa.sendAt = new Date(sendAt).toISOString();
+    const sla = remesa.quote.slaHours;
+    remesa.estimatedArrival = sla ? new Date(sendAt + sla * 3_600_000).toISOString() : null;
+    this.transition(remesa, "funds_hold", `Sale de Global66 a las ${chileTime(remesa.sendAt)}`);
+    if (this.config.remesas.sendDelayMinutes === 0) await this.release(remesa);
+  }
+
+  private due(remesa: Remesa): boolean {
+    const ready = remesa.status === "funds_hold" || (remesa.status === "pending_review" && remesa.retry === "balance");
+    return ready && Date.parse(remesa.sendAt ?? "") <= this.now();
+  }
+
+  /**
+   * End of the funds approval window: the TUU sale still approved, the automatic limit and
+   * the SICR3P wallet balance. Then the transfer leaves Global66.
+   */
+  private async release(remesa: Remesa, options: { skipTuu?: boolean; detail?: string } = {}): Promise<void> {
+    delete remesa.retry;
+    const payment = remesa.payment;
+    if (!payment?.verified) return;
+    if (this.tuu.configured && !options.skipTuu) {
+      try {
+        const sale = await this.tuu.findSale({
+          serialNumber: payment.serialNumber,
+          sequenceNumber: payment.sequenceNumber,
+          date: chileDate(payment.reportedAt),
+        });
+        if (!sale || sale.amount !== remesa.quote.total || !tuuSaleApproved(sale)) {
+          this.transition(remesa, "pending_review", "La venta TUU ya no figura aprobada (¿anulada?)");
+          return;
+        }
+      } catch (error) {
+        remesa.retry = "balance";
+        payment.detail = error instanceof Error ? error.message : "No se pudo consultar TUU";
+        this.transition(remesa, "pending_review", "No se pudo confirmar la venta en TUU; se reintenta");
+        return;
+      }
+    }
     const limit = this.config.remesas.autoSendMax;
-    if (limit !== undefined && remesa.quote.total > limit) {
+    if (!remesa.reviewedBy && limit !== undefined && remesa.quote.total > limit) {
       this.transition(remesa, "pending_review", `Supera el envío automático de ${formatClp(limit)}`);
       return;
     }
-    this.transition(remesa, "paid", remesa.payment?.detail);
+    const credentials = this.global66Credentials();
+    if (credentials) {
+      let wallet: Global66Account | undefined;
+      try {
+        wallet = await this.wallet(credentials);
+      } catch (error) {
+        remesa.retry = "balance";
+        this.transition(remesa, "pending_review", error instanceof Error ? error.message : "No se pudo consultar el saldo en Global66");
+        return;
+      }
+      if (!wallet) {
+        remesa.retry = "balance";
+        this.transition(remesa, "pending_review", "No se encontró la wallet CLP de Global66 SICR3P");
+        return;
+      }
+      if (wallet.balance < remesa.quote.amountToConvert) {
+        remesa.retry = "balance";
+        this.transition(remesa, "pending_review", `Saldo insuficiente en Global66 SICR3P (${formatClp(Math.floor(wallet.balance))}); se reintenta`);
+        return;
+      }
+      remesa.originAccountId = wallet.walletId;
+    }
+    this.transition(remesa, "paid", options.detail ?? "Fondos aprobados");
     await this.send(remesa);
+  }
+
+  private async wallet(credentials: Global66Credentials): Promise<Global66Account | undefined> {
+    const accounts = (await this.global66.accounts(credentials)).filter((account) => account.currency === "CLP");
+    const configured = this.config.remesas.global66AccountId;
+    if (configured) return accounts.find((account) => String(account.walletId) === configured);
+    return (
+      accounts.find((account) => /sicr3?p/i.test(account.alias ?? "")) ??
+      accounts.find((account) => account.isPrincipal) ??
+      accounts[0]
+    );
   }
 
   private async send(remesa: Remesa): Promise<void> {
@@ -703,6 +842,7 @@ export class RemesasModule {
       documentNumber: remesa.beneficiary.documentNumber,
       documentType: remesa.beneficiary.documentType,
       bankId: remesa.beneficiary.bankId,
+      ...(remesa.originAccountId !== undefined ? { originAccountId: remesa.originAccountId } : {}),
       beneficiaryExtra: remesa.beneficiary.extra,
       description: `Remesa ${remesa.code}`,
       ...(this.config.remesas.raas
@@ -960,6 +1100,10 @@ function maskAccount(account: string): string {
 
 function formatClp(amount: number): string {
   return `$${amount.toLocaleString("es-CL")}`;
+}
+
+function chileTime(iso: string): string {
+  return new Intl.DateTimeFormat("es-CL", { timeZone: "America/Santiago", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
 }
 
 function chileDate(iso: string): string {

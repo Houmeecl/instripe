@@ -23,6 +23,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   const app = express();
   app.set("trust proxy", "loopback");
   const platform = new Platform(config);
+  app.locals.platform = platform;
   const pilotPlanner = new PilotPlanner(config);
   const pilotRequestTimes = new Map<string, number>();
   const publicContactWindows = new Map<string, { count: number; resetAt: number }>();
@@ -1996,6 +1997,19 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     res.json({ remesas: platform.remesas.list(companyActor(res)) });
   });
 
+  app.get("/api/remesas/saldo", async (_req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    if (user.role !== "operacion") {
+      res.status(403).json({ error: "Solo Operación ve el saldo de Global66" });
+      return;
+    }
+    try {
+      res.json(await platform.remesas.balance());
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
   app.get("/api/remesas/export", (_req: Request, res: Response) => {
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="remesas.csv"');
@@ -2055,6 +2069,24 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   app.post("/api/remesas/:id/aprobar", async (req: Request, res: Response) => {
     try {
       const remesa = await platform.remesas.approve(String(req.params.id), companyActor(res));
+      res.json({ remesa });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/remesas/:id/retener", (req: Request, res: Response) => {
+    try {
+      const remesa = platform.remesas.hold(String(req.params.id), companyActor(res), String(req.body?.reason ?? ""));
+      res.json({ remesa });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.post("/api/remesas/:id/enviar-ahora", async (req: Request, res: Response) => {
+    try {
+      const remesa = await platform.remesas.sendNow(String(req.params.id), companyActor(res));
       res.json({ remesa });
     } catch (error) {
       handleError(error, res);

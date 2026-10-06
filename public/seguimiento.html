@@ -34,14 +34,15 @@
     const BAD = ["payment_failed", "rejected", "transfer_failed"];
     // The four milestones of the operation, as on the voucher.
     const STEPS = [
-      { title: "Pago aprobado", by: "TUU", reached: ["paid", "processing", "sent", "successful"], detail: "Tu pago con tarjeta fue aprobado." },
+      { title: "Pago aprobado", by: "TUU", reached: ["funds_hold", "paid", "processing", "sent", "successful"], detail: "Tu pago con tarjeta fue aprobado y se emitió la boleta." },
+      { title: "Aprobación de fondos", by: "", reached: ["paid", "processing", "sent", "successful"], detail: "Fondos aprobados para el envío.", waiting: "funds_hold" },
       { title: "Conversión realizada", by: "Global66", reached: ["processing", "sent", "successful"], detail: "Se realizó la conversión a la moneda de destino." },
       { title: "Enviado a banco", by: "Global66", reached: ["sent", "successful"], detail: "El dinero fue enviado al banco del beneficiario." },
       { title: "Recibido", by: "", reached: ["successful"], detail: "El dinero ya está disponible en la cuenta." },
     ];
     const when = (t, statuses) => {
       const event = t.timeline.find((e) => statuses.includes(e.status));
-      return event ? new Date(event.at).toLocaleString("es-CL", { dateStyle: "short", timeStyle: "short" }) : "";
+      return event ? new Date(event.at).toLocaleString("es-CL", { timeZone: "America/Santiago", dateStyle: "short", timeStyle: "short" }) : "";
     };
     async function load() {
       try {
@@ -54,13 +55,15 @@
           const done = step.reached.includes(t.status);
           const bad = failed && !done && (i === 0 || STEPS[i - 1].reached.includes(t.timeline.map((e) => e.status).filter((s) => !BAD.includes(s)).pop()));
           const at = done ? when(t, step.reached) : "";
+          const pendingText = step.waiting === t.status && t.sendAt ? `Sale a las ${new Date(t.sendAt).toLocaleTimeString("es-CL", { timeZone: "America/Santiago", hour: "2-digit", minute: "2-digit" })}` : "Pendiente";
           return `<li class="${done ? "done" : bad ? "bad" : ""}"><span class="dot">${done ? "✓" : bad ? "!" : ""}</span>
             <span><b>${esc(bad ? t.statusLabel : step.title)}</b>${step.by ? ` <span class="muted">· ${esc(step.by)}</span>` : ""}<br>
-            <span class="muted">${esc(at)}${at ? " · " : ""}${esc(done ? step.detail : bad ? "Contáctanos con tu número de operación." : "Pendiente")}</span></span></li>`;
+            <span class="muted">${esc(at)}${at ? " · " : ""}${esc(done ? step.detail : bad ? "Contáctanos con tu número de operación." : pendingText)}</span></span></li>`;
         }).join("");
         app.innerHTML = `<div class="card"><h1>Seguimiento de envío</h1><div class="code">${esc(t.code)}</div><ol>${steps}</ol></div>
           <div class="card receive"><div class="muted">${esc(t.beneficiary)} recibe${t.receiveEstimated ? " (estimado)" : ""}</div>
-          <div class="big">${esc(amount)} ${esc(t.currency)}</div><div class="muted">${esc(t.bank)} · ${esc(t.account)}</div></div>`;
+          <div class="big">${esc(amount)} ${esc(t.currency)}</div><div class="muted">${esc(t.bank)} · ${esc(t.account)}</div>
+          ${t.estimatedArrival && t.status !== "successful" && !failed ? `<div class="muted" style="margin-top:6px">Llega aprox. el <b>${esc(new Date(t.estimatedArrival).toLocaleString("es-CL", { timeZone: "America/Santiago", dateStyle: "short", timeStyle: "short" }))}</b></div>` : ""}</div>`;
         if (t.status !== "successful" && !failed) setTimeout(load, 30000);
       } catch (e) {
         app.innerHTML = `<div class="card">${esc(e.message)}</div>`;

@@ -23,7 +23,7 @@ const OPERACION = { id: "usr_operacion", role: "operacion" };
 const CONTROL = { id: "usr_control", role: "operacion" };
 
 function app(env: NodeJS.ProcessEnv = {}) {
-  return createApp(loadConfig({ DATABASE_PATH: ":memory:", GLOBAL66_CATALOG_URL: "", ...env }));
+  return createApp(loadConfig({ DATABASE_PATH: ":memory:", GLOBAL66_CATALOG_URL: "", REMESAS_SEND_DELAY_MINUTES: "0", ...env }));
 }
 
 async function signedIn(server: ReturnType<typeof app>, email = "operacion@proveedorregional.cl") {
@@ -145,9 +145,18 @@ describe("remesas TUU + Global66", () => {
       return jsonResponse({ data: [{ saleId: "s1", sequenceNumber: "000000004321", posSerialNumber: "POS-9", status: "Aprobada", amount: saleAmount, typeTransaction: "DEBIT" }] });
     });
     const g66Calls: Array<{ url: string; body: unknown }> = [];
+    let walletBalance = 100_000;
+    let clock = Date.parse("2026-10-06T15:00:00Z");
+    const now = () => clock;
     const global66 = new Global66BusinessApi("https://g66.test", async (url, init) => {
       const path = String(url);
       if (path.endsWith("/b2b/auth")) return jsonResponse({ token: "t", refreshToken: "r" });
+      if (path.endsWith("/b2b/accounts")) {
+        return jsonResponse({ accounts: [
+          { walletId: 10, currency: "USD", balance: 9_999_999, isPrincipal: false },
+          { walletId: 20, currency: "CLP", balance: walletBalance, alias: "SICR3P", isPrincipal: true },
+        ] });
+      }
       const form = init?.body as FormData;
       g66Calls.push({ url: path, body: JSON.parse(String(form.get("request"))) });
       return jsonResponse({ valid: true, status: "PROCESSING", transactionId: 777, externalReferenceId: "x", violations: [] });
@@ -175,10 +184,24 @@ describe("remesas TUU + Global66", () => {
     expect(String(sent)).toMatch(/otra remesa/);
 
     const third = (await remesas.create({ country: "PE", sendAmount: 500_000, remitter: REMITTER, beneficiary: BENEFICIARY, actor: CONTROL })).remesa;
-    const fresh = new RemesasModule(config, new PlatformStore(":memory:"), { tuu, global66 });
+    const fresh = new RemesasModule(config, new PlatformStore(":memory:"), { tuu, global66, now });
     const own = (await fresh.create({ country: "PE", sendAmount: 500_000, remitter: REMITTER, beneficiary: BENEFICIARY, actor: OPERACION })).remesa;
-    const ok = await fresh.reportPayment(own.id, OPERACION, { approved: true, sequenceNumber: "000000004321", serialNumber: "POS-9" });
+    const held = await fresh.reportPayment(own.id, OPERACION, { approved: true, sequenceNumber: "000000004321", serialNumber: "POS-9" });
     expect(third.status).toBe("awaiting_payment");
+    // 30-minute funds approval window: nothing leaves Global66 yet.
+    expect(held.status).toBe("funds_hold");
+    expect(held.sendAt).toBe("2026-10-06T15:30:00.000Z");
+    clock += 29 * 60_000;
+    expect(await fresh.processDue()).toBe(0);
+    expect(g66Calls).toHaveLength(0);
+    // Window ended but the SICR3P wallet cannot cover the 494.000 CLP: held and retried.
+    clock += 2 * 60_000;
+    await fresh.processDue();
+    expect(fresh.get(own.id, OPERACION)).toMatchObject({ status: "pending_review", retry: "balance" });
+    expect(g66Calls).toHaveLength(0);
+    walletBalance = 2_000_000;
+    await fresh.processDue();
+    const ok = fresh.get(own.id, OPERACION);
     expect(ok.status).toBe("processing");
     expect(ok.global66?.transactionId).toBe("777");
     expect(g66Calls[0].url).toBe("https://g66.test/b2b/transactions/raas/payments");
@@ -192,6 +215,8 @@ describe("remesas TUU + Global66", () => {
       remitter: { name: "María Soto", identificationType: "RUT", identificationNumber: "12345678-5", countryCode: "CL" },
     });
     expect((g66Calls[0].body as { beneficiary: { bankId: number; documentType: string } }).beneficiary).toMatchObject({ bankId: 3, documentType: "DNI" });
+    // Leaves from the SICR3P CLP wallet.
+    expect(g66Calls[0].body).toMatchObject({ originAccountId: 20 });
 
     expect(fresh.handleWebhook("wrong", {})).toBe(false);
     expect(fresh.handleWebhook("hook-key", { event: "RMT - Transaction", payload: { transactionId: 777, status: "successful", destinyAmount: 1801.5 } })).toBe(true);
@@ -296,5 +321,52 @@ describe("remesas TUU + Global66", () => {
     expect(saved.body.beneficiaries).toHaveLength(1);
     expect(saved.body.beneficiaries[0]).toMatchObject({ firstName: "Juan", accountNumber: "1234567890", bankId: 3 });
     expect((await norte.get("/api/remesas/beneficiarios").query({ rut: "12345678-5" })).body.beneficiaries).toEqual([]);
+  });
+
+  it("keeps the money in the funds approval window until it ends, and lets Operación hold or send early", async () => {
+    let clock = Date.parse("2026-10-06T15:00:00Z");
+    const sales: Record<string, { status: string; amount: number }> = {};
+    const tuu = new TuuReports("tuu-key", "https://tuu.test", async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { SerialNumber: string };
+      return jsonResponse({ data: Object.entries(sales).map(([sequenceNumber, sale]) => ({ sequenceNumber, posSerialNumber: body.SerialNumber, ...sale })) });
+    });
+    const catalog = new Global66Catalog("https://g66.test", undefined, async (url) =>
+      String(url).includes("/sla?") ? jsonResponse({ slaHours: 2 }) : jsonResponse({}, 404),
+    );
+    const remesas = new RemesasModule(
+      loadConfig({ TUU_API_KEY: "tuu-key", GLOBAL66_CATALOG_URL: "" }),
+      new PlatformStore(":memory:"),
+      { tuu, catalog, now: () => clock },
+    );
+    const base = { country: "PE", sendAmount: 100_000, remitter: REMITTER, beneficiary: BENEFICIARY };
+
+    // Boleta: dteType 48 and the remitted amount as exempt, so only the commission is taxed.
+    const created = await remesas.create({ ...base, actor: OPERACION });
+    expect(created.tuuPayment).toMatchObject({ dteType: 48, extraData: { exemptAmount: 100_000 } });
+
+    // A sale voided in TUU during the window does not leave.
+    sales["000000000001"] = { status: "Aprobada", amount: created.remesa.quote.total };
+    await remesas.reportPayment(created.remesa.id, OPERACION, { approved: true, sequenceNumber: "000000000001", serialNumber: "POS-1" });
+    expect(remesas.get(created.remesa.id, OPERACION).status).toBe("funds_hold");
+    sales["000000000001"] = { status: "Anulada", amount: created.remesa.quote.total };
+    clock += 31 * 60_000;
+    await remesas.processDue();
+    expect(remesas.get(created.remesa.id, OPERACION).status).toBe("pending_review");
+
+    // Operación holds one, and sends another one early (a second Operación user).
+    const toHold = (await remesas.create({ ...base, actor: OPERACION })).remesa;
+    sales["000000000002"] = { status: "Aprobada", amount: toHold.quote.total };
+    await remesas.reportPayment(toHold.id, OPERACION, { approved: true, sequenceNumber: "000000000002", serialNumber: "POS-1" });
+    expect(remesas.get(toHold.id, OPERACION).estimatedArrival).toBe(new Date(clock + 30 * 60_000 + 2 * 3_600_000).toISOString());
+    expect(() => remesas.hold(toHold.id, { id: "usr_taller", role: "comercio" }, "x")).toThrow(/Solo Operación/);
+    expect(remesas.hold(toHold.id, CONTROL, "Cliente anuló en caja").status).toBe("pending_review");
+    clock += 31 * 60_000;
+    expect(await remesas.processDue()).toBe(0);
+
+    const early = (await remesas.create({ ...base, actor: OPERACION })).remesa;
+    sales["000000000003"] = { status: "Aprobada", amount: early.quote.total };
+    await remesas.reportPayment(early.id, OPERACION, { approved: true, sequenceNumber: "000000000003", serialNumber: "POS-1" });
+    await expect(remesas.sendNow(early.id, OPERACION)).rejects.toThrow(/Otro usuario/);
+    expect((await remesas.sendNow(early.id, CONTROL)).status).toBe("processing");
   });
 });

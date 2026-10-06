@@ -59,10 +59,20 @@ export interface Global66Remitter {
 
 export interface Global66RemittanceInput extends Global66BankTransferInput {
   description?: string;
+  /** walletId the money leaves from (GET /b2b/accounts). */
+  originAccountId?: number;
   bankId?: number;
   /** BANK_TRANSFER fields some destinations require: state, postalCode, residenceCity, address, branchCode. */
   beneficiaryExtra?: Record<string, string>;
   remitter?: Global66Remitter;
+}
+
+export interface Global66Account {
+  walletId: number;
+  currency: string;
+  balance: number;
+  alias: string | null;
+  isPrincipal: boolean;
 }
 
 export interface Global66TransactionDetail {
@@ -190,6 +200,23 @@ export class Global66BusinessApi {
     );
   }
 
+  /** Company wallets with their available balance. */
+  async accounts(credentials: Global66Credentials): Promise<Global66Account[]> {
+    const tokens = await this.accessTokens(credentials);
+    const data = await this.authenticatedRequest<{ accounts?: unknown }>("/b2b/accounts", tokens, (token) =>
+      this.request("/b2b/accounts", { method: "GET", headers: { Authorization: token } }),
+    );
+    if (!Array.isArray(data.accounts)) throw new PlatformError("Global66 respondió con un formato de cuentas no válido", 502);
+    return data.accounts.flatMap((item) => {
+      const account = item as Record<string, unknown> | null;
+      const walletId = numericField(account?.walletId);
+      const balance = numericField(account?.balance);
+      const currency = stringField(account?.currency);
+      if (walletId === null || balance === null || !currency) return [];
+      return [{ walletId, currency: currency.toUpperCase(), balance, alias: stringField(account?.alias), isPrincipal: account?.isPrincipal === true }];
+    });
+  }
+
   /** Status of a payment created by API, looked up by our own reference. */
   async transactionDetail(credentials: Global66Credentials, externalReferenceId: string): Promise<Global66TransactionDetail> {
     const tokens = await this.accessTokens(credentials);
@@ -223,6 +250,7 @@ export class Global66BusinessApi {
       originCurrency: input.originCurrency,
       amount: input.amount,
       way: "ORIGIN",
+      ...(input.originAccountId !== undefined ? { originAccountId: input.originAccountId } : {}),
       ...(input.description ? { description: input.description.slice(0, 140) } : {}),
       paymentType: "WIRE_TRANSFER",
       // Documented shape: [{ purposeCode: 64, amount?: 100.00 }].

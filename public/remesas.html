@@ -102,10 +102,13 @@
 
     const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
     const clp = (n) => "$" + Number(n || 0).toLocaleString("es-CL");
+    const when = (iso, opts) => (iso ? new Date(iso).toLocaleString("es-CL", { timeZone: "America/Santiago", ...opts }) : "");
+    const hhmm = (iso) => when(iso, { hour: "2-digit", minute: "2-digit" });
+    const dayTime = (iso) => when(iso, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
     const dest = (n, cur) => Number(n || 0).toLocaleString("es-CL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " " + esc(cur);
     const flag = (cc) => String(cc || "").toUpperCase().replace(/[A-Z]/g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0)));
     const CHIP = { successful: "ok", sent: "ok", payment_unverified: "warn", pending_review: "warn", payment_failed: "bad", rejected: "bad", transfer_failed: "bad" };
-    const LABEL = { awaiting_payment: "Esperando pago", payment_failed: "Pago no aprobado", payment_unverified: "Pago en verificación", pending_review: "En revisión", paid: "Pago aprobado", processing: "Conversión en proceso", sent: "Enviado al banco", successful: "Recibido", rejected: "Rechazado", transfer_failed: "Envío no aceptado" };
+    const LABEL = { awaiting_payment: "Esperando pago", payment_failed: "Pago no aprobado", payment_unverified: "Pago en verificación", funds_hold: "Aprobación de fondos", pending_review: "En revisión", paid: "Pago aprobado", processing: "Conversión en proceso", sent: "Enviado al banco", successful: "Recibido", rejected: "Rechazado", transfer_failed: "Envío no aceptado" };
 
     async function api(path, options = {}) {
       const res = await fetch(path, { credentials: "same-origin", headers: { "Content-Type": "application/json" }, ...options, body: options.body ? JSON.stringify(options.body) : undefined });
@@ -377,20 +380,24 @@
       const last = r.timeline[r.timeline.length - 1] || {};
       const received = { ...r.quote, receiveAmount: g.destinationAmount || r.quote.receiveAmount };
       app.innerHTML = `<div class="card center noprint">${failed || held ? "" : `<div class="check">✓</div>`}
-          <div class="money" style="font-size:22px">${failed ? "No se pudo completar" : held ? "Pago recibido, en revisión" : "¡Envío realizado!"}</div>
+          <div class="money" style="font-size:22px">${failed ? "No se pudo completar" : held ? "Pago recibido, en revisión" : r.status === "funds_hold" ? "Remesa gestionada" : "¡Envío realizado!"}</div>
+          ${r.payment && !failed ? `<p class="muted">Boleta emitida en el POS</p>` : ""}
           <p><span class="chip ${CHIP[r.status] || ""}">${esc(LABEL[r.status] || r.status)}</span></p>
           ${last.detail ? `<p class="muted">${esc(last.detail)}</p>` : ""}
           ${receiveBox(received, g.destinationAmount ? "Tu contacto recibe" : "Tu contacto recibe (estimado)")}
+          ${r.sendAt && !failed ? `<table><tr><td>${r.status === "funds_hold" ? "Sale de Global66" : "Salida Global66"}</td><td><b>${esc(dayTime(r.sendAt))}</b></td></tr>
+            ${r.estimatedArrival ? `<tr><td>Llega aprox.</td><td><b>${esc(dayTime(r.estimatedArrival))}</b></td></tr>` : ""}</table>` : ""}
           <p class="muted">Número de operación<br><b style="color:var(--ink)">${esc(r.code)}</b></p></div>
         <button class="btn" id="print">Imprimir voucher</button>
         <button class="btn soft" id="new">Nuevo envío</button>
         <button class="btn ghost" id="refresh">Actualizar estado</button>
         <div class="card voucher" id="voucher" style="margin-top:12px">
-          <div class="center"><b>COMPROBANTE DE ENVÍO</b><br>${esc(r.code)}<br>${esc(new Date(r.createdAt).toLocaleString("es-CL"))}</div>
+          <div class="center"><b>COMPROBANTE DE ENVÍO</b><br>${esc(r.code)}<br>${esc(when(r.createdAt, {}))}</div>
           <p class="section" style="margin-top:12px">Origen</p><table><tr><td>Monto enviado</td><td>${clp(r.quote.sendAmount)}</td></tr><tr><td>Total pagado (tarjeta)</td><td>${clp(r.quote.total)}</td></tr></table>
           <p class="section" style="margin-top:12px">Conversión / costos</p><table><tr><td>Tipo de cambio</td><td>${esc(r.quote.rateText)}</td></tr><tr><td>Monto a convertir</td><td>${clp(r.quote.amountToConvert)}</td></tr><tr><td>Costo de conversión</td><td>${clp(r.quote.conversionCost)}</td></tr><tr><td>Cargo de servicio</td><td>${clp(r.quote.serviceFee)}</td></tr><tr><td>Comisión remesa</td><td>${clp(r.quote.commission)}</td></tr></table>
           <p class="section" style="margin-top:12px">Destino</p><table><tr><td>Beneficiario</td><td>${esc(r.beneficiary.firstName)} ${esc(r.beneficiary.lastName)}</td></tr><tr><td>Banco</td><td>${esc(r.beneficiary.bankName)}</td></tr><tr><td>Cuenta</td><td>••••${esc(String(r.beneficiary.accountNumber).slice(-4))}</td></tr><tr><td>Moneda</td><td>${esc(r.quote.currency)}</td></tr><tr><td>Tu contacto recibe</td><td>${dest(received.receiveAmount, r.quote.currency)}</td></tr></table>
-          <p class="section" style="margin-top:12px">Pago</p><table><tr><td>Secuencia TUU</td><td>${esc(r.payment ? r.payment.sequenceNumber : "—")}</td></tr><tr><td>Referencia Global66</td><td>${esc(g.transactionId || "—")}</td></tr><tr><td>Estado</td><td>${esc(LABEL[r.status] || r.status)}</td></tr></table>
+          <p class="section" style="margin-top:12px">Pago</p><table><tr><td>Secuencia TUU</td><td>${esc(r.payment ? r.payment.sequenceNumber : "—")}</td></tr><tr><td>Referencia Global66</td><td>${esc(g.transactionId || "—")}</td></tr><tr><td>Estado</td><td>${esc(LABEL[r.status] || r.status)}</td></tr>
+            ${r.sendAt ? `<tr><td>Salida Global66</td><td>${esc(dayTime(r.sendAt))}</td></tr>` : ""}${r.estimatedArrival ? `<tr><td>Llegada estimada</td><td>${esc(dayTime(r.estimatedArrival))}</td></tr>` : ""}</table>
           <div id="qr"></div><div class="center muted">Escanea para ver el estado de tu envío</div></div>`;
       if (window.QRCode && state.trackingUrl) new QRCode(document.getElementById("qr"), { text: state.trackingUrl, width: 132, height: 132 });
       document.getElementById("print").onclick = () => window.print();
@@ -442,7 +449,7 @@
           <div class="pair"><div><label>Tasa (CLP)</label><input name="rate" inputmode="decimal" value="${esc(c.rate)}" /></div><div><label>Costo conversión</label><input name="conversionPct" inputmode="decimal" value="${esc(c.conversionPct)}" /></div></div>
           <div class="pair"><div><label>Comisión remesa</label><input name="commissionPct" inputmode="decimal" value="${esc(c.commissionPct)}" /></div><div><label>Comisión fija (CLP)</label><input name="commissionFixed" inputmode="numeric" value="${esc(c.commissionFixed)}" /></div></div>
           <label><input type="checkbox" name="enabled" ${c.enabled ? "checked" : ""} style="width:auto;min-height:0"> Habilitado</label>
-          <button class="btn soft">Guardar</button><div class="error"></div><div class="muted">${c.rateUpdatedAt ? "Tasa actualizada " + esc(new Date(c.rateUpdatedAt).toLocaleString("es-CL")) : "Sin tasa"} · Global66 USD ${esc(c.minUsd)}–${esc(Number(c.maxUsd).toLocaleString("es-CL"))}</div></div>`).join("");
+          <button class="btn soft">Guardar</button><div class="error"></div><div class="muted">${c.rateUpdatedAt ? "Tasa actualizada " + esc(when(c.rateUpdatedAt, {})) : "Sin tasa"} · Global66 USD ${esc(c.minUsd)}–${esc(Number(c.maxUsd).toLocaleString("es-CL"))}</div></div>`).join("");
         rows.querySelectorAll("[data-cc]").forEach((card) => {
           card.querySelector("button").onclick = async () => {
             const f2 = (n) => card.querySelector(`[name=${n}]`);
