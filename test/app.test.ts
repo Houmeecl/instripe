@@ -2124,4 +2124,65 @@ describe("instripe BaaS platform", () => {
     expect(panel.text).toContain("Conectar wallet Global66");
   });
 
+  it("rejects amounts that are not positive whole numbers before they reach the ledger", async () => {
+    const server = app();
+    const operacion = await signedIn(server);
+    for (const amount of ["abc", 10.5, 1e300, -5, 0]) {
+      const cobro = await operacion.post("/api/cobros").send({
+        concept: "Cuota",
+        payerName: "Ana",
+        email: "ana@demo.cl",
+        amount,
+        gateway: "chile",
+      });
+      expect(cobro.status).toBe(400);
+    }
+    const opened = await operacion.post("/api/cuentas").send({ name: "Wallet", email: "wallet@demo.cl" });
+    const accountId = opened.body.account.id;
+    const topup = await operacion.post(`/api/cuentas/${accountId}/recarga`).send({ amount: "abc", gateway: "chile" });
+    expect(topup.status).toBe(400);
+    const accounts = await operacion.get("/api/cuentas");
+    const account = accounts.body.accounts.find((item: { id: string }) => item.id === accountId);
+    expect(account.balance).toBe(0);
+  });
+
+  it("keeps a company user out of other companies' Connect, Treasury, cards, payments and exits", async () => {
+    const server = app();
+    const operacion = await signedIn(server);
+    const other = await operacion.post("/api/connect").send({ businessName: "Otra SpA", email: "otra@demo.cl" });
+    expect(other.status).toBe(201);
+    expect((await operacion.post("/api/treasury").send({ nickname: "Tesorería Op" })).status).toBe(201);
+    const opExit = await operacion.post(`/api/connect/${other.body.account.id}/pago`).send({ amount: 1000, gateway: "chile" });
+    expect(opExit.status).toBe(202);
+
+    const comercio = await signedIn(server, "caja@taller.cl");
+    expect((await comercio.get("/api/connect")).body.accounts).toEqual([]);
+    expect((await comercio.get("/api/treasury")).body.accounts).toEqual([]);
+    expect((await comercio.get("/api/tarjetas")).body.cards).toEqual([]);
+    expect((await comercio.get("/api/salidas")).body.exits).toEqual([]);
+    const payments = await comercio.get("/api/payments");
+    expect(payments.body.payments).toEqual([]);
+    expect(payments.body.wallet).toBeUndefined();
+    const overview = await comercio.get("/api/overview");
+    expect(overview.body.float).toBeUndefined();
+    expect(overview.body.connect).toEqual([]);
+
+    const payout = await comercio.post(`/api/connect/${other.body.account.id}/pago`).send({ amount: 1000, gateway: "chile" });
+    expect(payout.status).toBe(404);
+    const treasury = await comercio.post("/api/treasury").send({ nickname: "Ajena", connectedId: other.body.account.id });
+    expect(treasury.status).toBe(403);
+
+    const own = await comercio.post("/api/connect").send({ businessName: "Taller Sur", email: "caja@taller.cl" });
+    expect(own.status).toBe(201);
+    expect((await comercio.get("/api/connect")).body.accounts.map((item: { id: string }) => item.id)).toEqual([own.body.account.id]);
+    expect((await comercio.post(`/api/connect/${own.body.account.id}/pago`).send({ amount: 1000, gateway: "chile" })).status).toBe(202);
+    expect((await comercio.get("/api/salidas")).body.exits).toHaveLength(1);
+  });
+
+  it("refuses to create the initial users with the public password in production", () => {
+    expect(() => new Platform(loadConfig({ DATABASE_PATH: ":memory:", NODE_ENV: "production" }))).toThrow(/AUTH_SEED_PASSWORD/);
+    expect(
+      () => new Platform(loadConfig({ DATABASE_PATH: ":memory:", AUTH_SEED_PASSWORD: "Una.Clave.Propia.2026" })),
+    ).not.toThrow();
+  });
 });

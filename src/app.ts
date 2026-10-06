@@ -27,6 +27,26 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   const pilotRequestTimes = new Map<string, number>();
   const publicContactWindows = new Map<string, { count: number; resetAt: number }>();
 
+  // Operación sees the whole platform. Every other role only sees what it owns:
+  // its Connect accounts (by email), their Treasury accounts and cards, and its own exits.
+  const ownConnect = (user: SessionUser) => {
+    const email = user.email.toLowerCase();
+    return platform.connect
+      .list(user)
+      .filter((account) => user.role === "operacion" || account.email.toLowerCase() === email);
+  };
+  const ownTreasury = (user: SessionUser) => {
+    if (user.role === "operacion") return platform.treasury.list();
+    const ids = new Set(ownConnect(user).map((account) => account.id));
+    return platform.treasury.list().filter((account) => account.connectedId !== undefined && ids.has(account.connectedId));
+  };
+  const ownCards = (user: SessionUser) => {
+    if (user.role === "operacion") return platform.tarjetas.list();
+    const email = user.email.toLowerCase();
+    const cardIds = new Set(ownConnect(user).flatMap((account) => (account.cardId ? [account.cardId] : [])));
+    return platform.tarjetas.list().filter((card) => card.email.toLowerCase() === email || cardIds.has(card.id));
+  };
+
   // Stripe webhooks need the raw body for signature verification, so this
   // route is registered before the JSON body parser.
   app.post(
@@ -272,10 +292,16 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   app.get("/api/stripe/events", (_req: Request, res: Response) => {
-    res.json({ events: platform.listWebhookEvents() });
+    const user = res.locals.user as SessionUser;
+    res.json({ events: user.role === "operacion" ? platform.listWebhookEvents() : [] });
   });
 
   app.get("/api/payments", (_req: Request, res: Response) => {
+    const user = res.locals.user as SessionUser;
+    if (user.role !== "operacion") {
+      res.json({ currency: config.currency, payments: [], modules: platform.listModules() });
+      return;
+    }
     const wallet = platform.floatAccount;
     res.json({
       currency: config.currency,
@@ -296,7 +322,10 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     const user = res.locals.user as SessionUser;
     const options = new Set(user.options);
     const body: Record<string, unknown> = { currency: config.currency };
-    if (options.has("payments")) {
+    if (options.has("payments") && user.role !== "operacion") {
+      body.payments = [];
+      body.modules = platform.listModules();
+    } else if (options.has("payments")) {
       const floatAccount = platform.floatAccount;
       body.float = {
         balance: floatAccount.balance,
@@ -313,9 +342,9 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     if (options.has("cobros")) body.cobros = platform.cobros.list();
     if (options.has("policies")) body.policies = platform.listPolicies();
     if (options.has("claims")) body.claims = platform.listClaims();
-    if (options.has("connect")) body.connect = platform.connect.list(user);
-    if (options.has("treasury")) body.treasury = platform.treasury.list();
-    if (options.has("cards")) body.cards = platform.tarjetas.list();
+    if (options.has("connect")) body.connect = ownConnect(user);
+    if (options.has("treasury")) body.treasury = ownTreasury(user);
+    if (options.has("cards")) body.cards = ownCards(user);
     if (options.has("design")) body.design = platform.diseno.current();
     if (options.has("apps")) body.app = platform.apps.current();
     if (options.has("empresas")) body.empresas = platform.empresas.list(companyActor(res));
@@ -450,7 +479,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
 
   app.get("/api/connect", (_req: Request, res: Response) => {
     const user = res.locals.user as SessionUser;
-    res.json({ accounts: platform.connect.list(user) });
+    res.json({ accounts: ownConnect(user) });
   });
 
   app.post("/api/connect", async (req: Request, res: Response) => {
@@ -476,6 +505,10 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
     try {
       const user = res.locals.user as SessionUser;
+      if (!ownConnect(user).some((account) => account.id === String(req.params.id))) {
+        res.status(404).json({ error: `Cuenta Connect desconocida: ${String(req.params.id)}` });
+        return;
+      }
       const result = platform.connect.payout({
         accountId: String(req.params.id),
         amount: Number(body.amount),
@@ -1099,15 +1132,21 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   app.get("/api/treasury", (_req: Request, res: Response) => {
-    res.json({ accounts: platform.treasury.list() });
+    res.json({ accounts: ownTreasury(res.locals.user as SessionUser) });
   });
 
   app.post("/api/treasury", async (req: Request, res: Response) => {
     const body = req.body ?? {};
+    const user = res.locals.user as SessionUser;
+    const connectedId = body.connectedId ? String(body.connectedId) : undefined;
+    if (user.role !== "operacion" && (!connectedId || !ownConnect(user).some((account) => account.id === connectedId))) {
+      res.status(403).json({ error: "La cuenta financiera tiene que pertenecer a una de tus cuentas Connect" });
+      return;
+    }
     try {
       const account = await platform.treasury.open({
         nickname: String(body.nickname ?? ""),
-        connectedId: body.connectedId ? String(body.connectedId) : undefined,
+        connectedId,
       });
       res.status(201).json({ account });
     } catch (error) {
@@ -1136,7 +1175,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
 
   app.get("/api/tarjetas", async (_req: Request, res: Response) => {
     const issuing = await platform.tarjetas.issuingStatus();
-    res.json({ cards: platform.tarjetas.list(), issuing });
+    res.json({ cards: ownCards(res.locals.user as SessionUser), issuing });
   });
 
   app.post("/api/tarjetas", async (req: Request, res: Response) => {
@@ -1451,7 +1490,11 @@ export function createApp(config: AppConfig = loadConfig()): Express {
   });
 
   app.get("/api/salidas", (_req: Request, res: Response) => {
-    res.json({ exits: platform.listExits().filter((exit) => exit.status === "pending") });
+    const user = res.locals.user as SessionUser;
+    const exits = platform
+      .listExits()
+      .filter((exit) => exit.status === "pending" && (user.role === "operacion" || exit.requestedBy === user.id));
+    res.json({ exits });
   });
 
   app.post("/api/salidas/:id/confirmar", async (req: Request, res: Response) => {

@@ -782,7 +782,7 @@ function viewOperacionHome() {
   const activePolicies = (o.policies || []).filter((p) => p.status === "active").length;
   const pendingCobros = state.cobros.filter((c) => c.status === "pending_payment").length;
   const kpis = [];
-  if (allowed("payments")) {
+  if (allowed("payments") && o.float) {
     kpis.push(`<div class="kpi"><div class="kpi-top"><div class="kpi-ico">${icon("wallet")}</div></div><div class="kpi-label">Dinero en la plataforma</div><div class="kpi-value">${o.float.displayBalance}</div><div class="kpi-hint">Puede salir por Stripe: ${o.transferable ? o.transferable.displayBalance : "—"}</div></div>`);
   }
   if (allowed("accounts")) {

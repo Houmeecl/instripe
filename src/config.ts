@@ -40,6 +40,8 @@ export interface AppConfig {
   databasePath: string;
   /** Initial password used only when the user table is still empty. */
   seedPassword: string;
+  /** NODE_ENV=production. The public default seed password is refused there. */
+  production: boolean;
   /** Company mailbox on the VPS. The panel reads it; Mailcow's webmail stays unused. */
   mail: {
     host: string;
@@ -93,6 +95,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     appManifestPath: env.APP_MANIFEST_PATH?.trim() || "stripe-app.json",
     databasePath: env.DATABASE_PATH?.trim() || "data/platform.db",
     seedPassword: env.AUTH_SEED_PASSWORD?.trim() || DEFAULT_SEED_PASSWORD,
+    production: env.NODE_ENV === "production",
     mail: {
       host: env.MAIL_HOST?.trim() || "mail.proveedorregional.cl",
       user: env.MAIL_USER?.trim() || undefined,

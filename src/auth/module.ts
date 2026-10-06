@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual, type ScryptOptions } from "node:crypto";
+import { DEFAULT_SEED_PASSWORD } from "../config.js";
 import { PlatformError } from "../errors.js";
 import type { PlatformStore } from "../store/db.js";
 
@@ -152,11 +153,22 @@ export class AuthModule {
   constructor(
     private readonly store: PlatformStore,
     seedPassword: string,
+    production = false,
   ) {
     const existing = store.list<AuthUserRecord>("auth_users");
     const known = new Set(existing.map((user) => user.email.toLowerCase()));
-    for (const row of SEED) {
-      if (known.has(row.email.toLowerCase())) continue;
+    const missing = SEED.filter((row) => !known.has(row.email.toLowerCase()));
+    if (production && missing.length > 0 && seedPassword === DEFAULT_SEED_PASSWORD) {
+      // The default is public in this repository: anyone could sign in as Operación.
+      throw new Error("Define AUTH_SEED_PASSWORD con una clave propia antes de crear los usuarios iniciales en producción");
+    }
+    if (production) {
+      const exposed = existing.filter((user) => user.mustChangePassword !== false && passwordMatches(DEFAULT_SEED_PASSWORD, user));
+      for (const user of exposed) {
+        console.warn(`[auth] ${user.email} todavía acepta la clave inicial pública. Cámbiala ahora.`);
+      }
+    }
+    for (const row of missing) {
       const salt = randomBytes(16);
       const passwordHash = scryptSync(seedPassword, salt, KEYLEN, SCRYPT).toString("hex");
       this.store.put("auth_users", row.id, {

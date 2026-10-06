@@ -69,7 +69,7 @@ export class Platform {
     this.portal = new PortalModule(this.payments, config, this.store);
     this.automation = new AutomationModule(this.payments, config, this.store);
     this.suscripcion = new SuscripcionModule(this.payments, config, this.store);
-    this.auth = new AuthModule(this.store, config.seedPassword);
+    this.auth = new AuthModule(this.store, config.seedPassword, config.production);
   }
 
   listModules() {

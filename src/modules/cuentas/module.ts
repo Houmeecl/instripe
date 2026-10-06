@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { GatewayName } from "../../config.js";
 import { PlatformError } from "../../errors.js";
+import { isValidAmount } from "../../money.js";
 import type { Payments } from "../../payments/service.js";
 import type { ChargeResult } from "../../gateways/types.js";
 import type { PlatformStore } from "../../store/db.js";
@@ -108,7 +109,7 @@ export class CuentasModule {
     charge: ChargeResult;
   }> {
     const account = this.requireOwned(input.accountId, input.actor);
-    if (input.amount <= 0) throw new PlatformError("El monto de la recarga debe ser positivo", 400);
+    if (!isValidAmount(input.amount)) throw new PlatformError("El monto de la recarga debe ser un entero positivo", 400);
     const topup: Topup = {
       id: `top_${randomUUID().slice(0, 8)}`,
       accountId: account.id,
@@ -146,7 +147,7 @@ export class CuentasModule {
     actor: { role: string; memberId?: string };
   }): { account: CustomerAccount & { balance: number }; exitId: string } {
     const account = this.requireOwned(input.accountId, input.actor);
-    if (input.amount <= 0) throw new PlatformError("El monto del retiro debe ser positivo", 400);
+    if (!isValidAmount(input.amount)) throw new PlatformError("El monto del retiro debe ser un entero positivo", 400);
     if (!input.destination.trim()) throw new PlatformError("destination es requerido", 400);
     if (this.balanceOf(account) < input.amount) {
       throw new PlatformError("Saldo insuficiente en la cuenta", 422);

@@ -4,6 +4,7 @@ import { PlatformError } from "../errors.js";
 import { GatewayRegistry } from "../gateways/registry.js";
 import type { ChargeResult, PayoutResult } from "../gateways/types.js";
 import { Ledger, type Account } from "./ledger.js";
+import { isValidAmount } from "../money.js";
 import type { PlatformStore } from "../store/db.js";
 
 export interface MoneyMovement {
@@ -242,7 +243,7 @@ export class Payments {
   }
 
   reverseCollection(reference: string | undefined, amount: number, eventKey: string): boolean {
-    if (!reference || amount <= 0) return false;
+    if (!reference || !isValidAmount(amount)) return false;
     const movement = this.findCollect(reference, "paid");
     if (!movement || movement.adjustments?.includes(eventKey)) return false;
     const room = movement.amount - (movement.reversedAmount ?? 0);
