@@ -129,6 +129,7 @@ describe("remesas TUU + Global66", () => {
     );
     expect(await remesas.listCorridors()).toEqual([]);
     await remesas.updateCorridor("PE", { rate: 274.31, enabled: true });
+    remesas.saveDevice(OPERACION, { serialNumber: "POS-1", label: "Caja 1" });
     const { remesa } = (await remesas.create({ country: "PE", sendAmount: 200_000, remitter: REMITTER, beneficiary: BENEFICIARY, actor: OPERACION }));
     const held = await remesas.reportPayment(remesa.id, OPERACION, { approved: true, sequenceNumber: "1", serialNumber: "POS-1" });
     expect(held.status).toBe("pending_review");
@@ -368,5 +369,95 @@ describe("remesas TUU + Global66", () => {
     await remesas.reportPayment(early.id, OPERACION, { approved: true, sequenceNumber: "000000000003", serialNumber: "POS-1" });
     await expect(remesas.sendNow(early.id, OPERACION)).rejects.toThrow(/Otro usuario/);
     expect((await remesas.sendNow(early.id, CONTROL)).status).toBe("processing");
+  });
+
+  it("posts balanced double-entry lines per remittance and reconciles the TUU deposit", async () => {
+    const server = app();
+    const operacion = await signedIn(server);
+    const created = await operacion.post("/api/remesas").send({ country: "PE", sendAmount: 100_000, remitter: REMITTER, beneficiary: BENEFICIARY });
+    const id = created.body.remesa.id;
+    const quote = created.body.remesa.quote;
+    await operacion.post(`/api/remesas/${id}/pago`).send({ approved: true, sequenceNumber: "000000000777", serialNumber: "POS-1" });
+
+    const ledger = await operacion.get("/api/remesas/ledger");
+    const despacho = ledger.body.lines.filter((line: { event: string }) => line.event === "despacho");
+    expect(despacho).toEqual([
+      expect.objectContaining({ account: "cxc_tuu", debit: quote.total, credit: 0 }),
+      expect.objectContaining({ account: "fondo_global66", debit: 0, credit: quote.amountToConvert }),
+      expect.objectContaining({ account: "ingreso_comision", debit: 0, credit: quote.total - quote.amountToConvert }),
+    ]);
+    const sum = (rows: Array<{ debit: number; credit: number }>) => rows.reduce((total, row) => total + row.debit - row.credit, 0);
+    expect(sum(ledger.body.lines)).toBe(0);
+
+    // Retrying the step does not post twice.
+    await operacion.post(`/api/remesas/${id}/actualizar`);
+    expect((await operacion.get("/api/remesas/ledger")).body.lines.filter((line: { event: string }) => line.event === "despacho")).toHaveLength(3);
+
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago" }).format(new Date());
+    const reconciled = await operacion.post("/api/remesas/conciliar").send({ date: today });
+    expect(reconciled.status).toBe(200);
+    expect(reconciled.body).toMatchObject({ reconciled: [created.body.remesa.code], gross: quote.total, fees: quote.posFeeEstimated });
+    const after = await operacion.get("/api/remesas/ledger");
+    const balance = (account: string) => after.body.balances.find((row: { account: string }) => row.account === account).balance;
+    expect(balance("cxc_tuu")).toBe(0);
+    expect(balance("banco")).toBe(quote.total - quote.posFeeEstimated);
+    expect(balance("gasto_comision_tuu")).toBe(quote.posFeeEstimated);
+    expect(sum(after.body.lines)).toBe(0);
+    expect((await operacion.post("/api/remesas/conciliar").send({ date: today })).body.reconciled).toEqual([]);
+
+    const comercio = await signedIn(server, "caja@taller.cl");
+    expect((await comercio.post("/api/remesas/conciliar").send({ date: today })).status).toBe(403);
+  });
+
+  it("reverses the dispatch when Global66 rejects the transfer", async () => {
+    const remesas = new RemesasModule(
+      loadConfig({ GLOBAL66_CATALOG_URL: "", GLOBAL66_WEBHOOK_API_KEY: "k", REMESAS_SEND_DELAY_MINUTES: "0" }),
+      new PlatformStore(":memory:"),
+    );
+    const { remesa } = await remesas.create({ country: "PE", sendAmount: 100_000, remitter: REMITTER, beneficiary: BENEFICIARY, actor: OPERACION });
+    const sent = await remesas.reportPayment(remesa.id, OPERACION, { approved: true, sequenceNumber: "1", serialNumber: "POS-1" });
+    remesas.handleWebhook("k", { payload: { transactionId: sent.global66?.transactionId, status: "rejected" } });
+    const balances = Object.fromEntries(remesas.ledgerBalances(OPERACION).map((row) => [row.account, row.balance]));
+    expect(balances.fondo_global66).toBe(0);
+    expect(balances.devolucion_cliente).toBe(-remesa.quote.amountToConvert);
+  });
+
+  it("only accepts payments from registered, active POS terminals of the company", async () => {
+    const server = app({ NODE_ENV: "production", AUTH_SEED_PASSWORD: "Clave.Segura.2026" });
+    const login = async (email: string) => {
+      const agent = request.agent(server);
+      await agent.post("/api/session").send({ email, password: "Clave.Segura.2026" });
+      await agent.post("/api/session/password").send({ currentPassword: "Clave.Segura.2026", newPassword: "Remesas.2026" });
+      return agent;
+    };
+    const operacion = await login("operacion@proveedorregional.cl");
+    const comercio = await login("caja@taller.cl");
+    await operacion.put("/api/remesas/corredores/PE").send({ rate: 274.31, enabled: true });
+    const created = await comercio.post("/api/remesas").send({ country: "PE", sendAmount: 100_000, remitter: REMITTER, beneficiary: BENEFICIARY });
+    const pay = (serial: string) => comercio.post(`/api/remesas/${created.body.remesa.id}/pago`).send({ approved: true, sequenceNumber: "000000000001", serialNumber: serial });
+
+    expect((await pay("POS-X")).status).toBe(403);
+    expect((await comercio.put("/api/remesas/pos/POS-1").send({ label: "Caja 1" })).status).toBe(403);
+    await operacion.put("/api/remesas/pos/POS-OTRO").send({ label: "Otro comercio", companyId: "cmp_otro" });
+    expect((await pay("POS-OTRO")).status).toBe(403);
+    await operacion.put("/api/remesas/pos/POS-1").send({ label: "Caja 1", active: false });
+    expect((await pay("POS-1")).status).toBe(403);
+    await operacion.put("/api/remesas/pos/POS-1").send({ active: true });
+    const ok = await pay("POS-1");
+    expect(ok.status).toBe(200);
+    expect(ok.body.remesa.status).toBe("pending_review");
+    expect((await operacion.get("/api/remesas/pos")).body.devices.map((d: { serialNumber: string }) => d.serialNumber).sort()).toEqual(["POS-1", "POS-OTRO"]);
+  });
+
+  it("lets an API client such as Appsmith use the session as a Bearer token", async () => {
+    const server = app();
+    await signedIn(server, "caja@taller.cl");
+    const browser = await request(server).post("/api/session").send({ email: "caja@taller.cl", password: "Remesas.2026" });
+    expect(browser.body.token).toBeUndefined();
+    const api = await request(server).post("/api/session").set("X-Client", "api").send({ email: "caja@taller.cl", password: "Remesas.2026" });
+    expect(api.body.token).toMatch(/^[0-9a-f]{64}$/);
+    const list = await request(server).get("/api/remesas").set("Authorization", `Bearer ${api.body.token}`);
+    expect(list.status).toBe(200);
+    expect((await request(server).get("/api/remesas").set("Authorization", "Bearer nope")).status).toBe(401);
   });
 });

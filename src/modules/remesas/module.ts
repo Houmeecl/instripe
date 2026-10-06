@@ -11,6 +11,7 @@ import {
 import { Global66Catalog, type CatalogBank, type CatalogDocument, type CatalogField } from "../../gateways/global66Catalog.js";
 import { TuuReports, tuuSaleApproved } from "../../gateways/tuuReports.js";
 import { isValidAmount } from "../../money.js";
+import { ACCOUNTS, RemesasLedger } from "./ledger.js";
 import type { PlatformStore } from "../../store/db.js";
 
 const MODULE = "remesas";
@@ -123,6 +124,16 @@ export interface SavedBeneficiary extends Beneficiary {
   lastUsedAt: string;
 }
 
+/** POS TUU terminal allowed to report payments, assigned to a company. */
+export interface PosDevice {
+  serialNumber: string;
+  label: string;
+  companyId?: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RateSource {
   readonly name: string;
   rate(corridor: Corridor): Promise<number>;
@@ -165,6 +176,8 @@ export interface Remesa {
   sendAt?: string;
   /** sendAt plus the Global66 delivery estimate. */
   estimatedArrival?: string | null;
+  /** TUU deposit of the sale, once reconciled. */
+  settlement?: { status: "liquidado"; date: string; net: number; fee: number; at: string };
   /** SICR3P Global66 wallet the transfer leaves from. */
   originAccountId?: number;
   /** Held only for lack of Global66 balance: retried automatically. */
@@ -235,6 +248,7 @@ export class RemesasModule {
   private readonly demoSteps = new Map<string, number>();
   private syncedAt = 0;
   private readonly now: () => number;
+  readonly ledger: RemesasLedger;
   private processing = false;
   /** Where the customer rate comes from. Manual today; a Global66 quote endpoint can replace it. */
   private readonly rates: RateSource = { name: "manual", rate: async (corridor) => corridor.rate };
@@ -245,6 +259,7 @@ export class RemesasModule {
     deps: { tuu?: TuuReports; global66?: Global66BusinessApi; catalog?: Global66Catalog; now?: () => number } = {},
   ) {
     this.now = deps.now ?? Date.now;
+    this.ledger = new RemesasLedger(store);
     this.tuu = deps.tuu ?? new TuuReports(config.remesas.tuuApiKey);
     this.global66 = deps.global66 ?? new Global66BusinessApi();
     this.catalog = deps.catalog ?? new Global66Catalog(config.remesas.global66CatalogUrl, store);
@@ -546,6 +561,7 @@ export class RemesasModule {
     const serialNumber = String(input.serialNumber ?? "").trim();
     if (!/^\d{1,20}$/.test(sequenceNumber)) throw new PlatformError("Falta el número de secuencia del pago TUU", 400);
     if (!serialNumber) throw new PlatformError("Falta el número de serie del POS", 400);
+    this.checkDevice(serialNumber, actor);
     const duplicate = [...this.remesas.values()].find(
       (other) => other.id !== remesa.id && other.payment?.sequenceNumber === sequenceNumber && other.payment.serialNumber === serialNumber,
     );
@@ -684,7 +700,7 @@ export class RemesasModule {
       "fecha", "codigo", "estado", "remitente", "rut_remitente", "pais", "moneda",
       "monto_enviado_clp", "costo_conversion_clp", "monto_convertido_clp", "comision_clp", "total_cobrado_clp",
       "comision_pos_estimada_clp", "tasa_clp", "monto_destino_estimado", "monto_destino_global66",
-      "secuencia_tuu", "pos_serie", "transaccion_global66", "salida_global66", "llegada_estimada",
+      "secuencia_tuu", "pos_serie", "transaccion_global66", "salida_global66", "llegada_estimada", "liquidacion_tuu", "deposito_neto_tuu", "comision_tuu",
     ];
     const rows = this.list(actor).map((remesa) => [
       remesa.createdAt, remesa.code, remesa.status, remesa.remitter.name, remesa.remitter.rut,
@@ -693,8 +709,93 @@ export class RemesasModule {
       remesa.quote.rate, remesa.quote.receiveAmount, remesa.global66?.destinationAmount ?? "",
       remesa.payment?.sequenceNumber ?? "", remesa.payment?.serialNumber ?? "", remesa.global66?.transactionId ?? "",
       remesa.sendAt ?? "", remesa.estimatedArrival ?? "",
+      remesa.settlement ? remesa.settlement.date : this.ledger.has(remesa.id, "despacho") ? "pendiente_deposito_banco" : "",
+      remesa.settlement?.net ?? "", remesa.settlement?.fee ?? "",
     ]);
     return [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
+  }
+
+  listDevices(actor: RemesaActor): PosDevice[] {
+    return this.store
+      .list<PosDevice>("remesas_pos")
+      .filter((device) => actor.role === "operacion" || (actor.companyId && device.companyId === actor.companyId));
+  }
+
+  saveDevice(actor: RemesaActor, input: { serialNumber: string; label?: string; companyId?: string; active?: boolean }): PosDevice {
+    if (actor.role !== "operacion") throw new PlatformError("Solo Operación administra los equipos POS", 403);
+    const serialNumber = String(input.serialNumber ?? "").trim();
+    if (!/^[A-Za-z0-9-]{3,40}$/.test(serialNumber)) throw new PlatformError("Número de serie no válido", 400);
+    const current = this.store.get<PosDevice>("remesas_pos", serialNumber);
+    const now = new Date(this.now()).toISOString();
+    const device: PosDevice = {
+      serialNumber,
+      label: String(input.label ?? current?.label ?? serialNumber).trim().slice(0, 80) || serialNumber,
+      companyId: input.companyId === undefined ? current?.companyId : String(input.companyId).trim() || undefined,
+      active: input.active === undefined ? current?.active ?? true : Boolean(input.active),
+      createdAt: current?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.store.put("remesas_pos", serialNumber, device);
+    return device;
+  }
+
+  ledgerLines(actor: RemesaActor) {
+    const ids = new Set(this.list(actor).map((remesa) => remesa.id));
+    return this.ledger.lines({ remesaIds: ids }).map((line) => ({ ...line, accountName: ACCOUNTS[line.account] }));
+  }
+
+  ledgerBalances(actor: RemesaActor) {
+    return this.ledger.balances({ remesaIds: new Set(this.list(actor).map((remesa) => remesa.id)) });
+  }
+
+  /**
+   * Daily reconciliation: for each dispatched remittance paid that day, take TUU's net deposit and
+   * fee from its report and post bank / fee against the receivable. Without TUU_API_KEY it uses the
+   * estimated fee (demo only).
+   */
+  async reconcile(actor: RemesaActor, date: string) {
+    if (actor.role !== "operacion") throw new PlatformError("Solo Operación concilia", 403);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new PlatformError("Fecha no válida (AAAA-MM-DD)", 400);
+    const result = { date, reconciled: [] as string[], pending: [] as Array<{ code: string; reason: string }>, gross: 0, fees: 0, net: 0 };
+    const at = new Date(this.now()).toISOString();
+    for (const remesa of this.remesas.values()) {
+      const payment = remesa.payment;
+      if (!payment || remesa.settlement || !this.ledger.has(remesa.id, "despacho")) continue;
+      if (chileDate(payment.reportedAt) !== date) continue;
+      let fee: number;
+      let net: number;
+      if (this.tuu.configured) {
+        const sale = await this.tuu.findSale({ serialNumber: payment.serialNumber, sequenceNumber: payment.sequenceNumber, date });
+        if (!sale || sale.amount !== remesa.quote.total) {
+          result.pending.push({ code: remesa.code, reason: "La venta no aparece en el reporte TUU con ese monto" });
+          continue;
+        }
+        fee = Math.round(sale.commission ?? (sale.net !== null ? sale.amount - sale.net : NaN));
+        if (!Number.isFinite(fee)) {
+          result.pending.push({ code: remesa.code, reason: "TUU no informa la comisión de la venta" });
+          continue;
+        }
+        net = sale.amount - fee;
+      } else if (this.config.production) {
+        result.pending.push({ code: remesa.code, reason: "Falta TUU_API_KEY para conciliar" });
+        continue;
+      } else {
+        fee = remesa.quote.posFeeEstimated;
+        net = remesa.quote.total - fee;
+      }
+      this.ledger.post(remesa, "deposito_tuu", [
+        { account: "banco", debit: net },
+        { account: "gasto_comision_tuu", debit: fee },
+        { account: "cxc_tuu", credit: remesa.quote.total },
+      ], at);
+      remesa.settlement = { status: "liquidado", date, net, fee, at };
+      this.save(remesa);
+      result.reconciled.push(remesa.code);
+      result.gross += remesa.quote.total;
+      result.fees += fee;
+      result.net += net;
+    }
+    return result;
   }
 
   statusLabel(status: RemesaStatus): string {
@@ -958,6 +1059,38 @@ export class RemesasModule {
     remesa.status = status;
     remesa.updatedAt = now;
     this.save(remesa);
+    if (status === "processing") this.postDispatch(remesa, now);
+    if (status === "rejected") this.postRejection(remesa, now);
+  }
+
+  /** Global66 accepted the transfer: the sale is owed by TUU, the float pays out, the fee is income. */
+  private postDispatch(remesa: Remesa, at: string): void {
+    const q = remesa.quote;
+    this.ledger.post(remesa, "despacho", [
+      { account: "cxc_tuu", debit: q.total },
+      { account: "fondo_global66", credit: q.amountToConvert },
+      { account: "ingreso_comision", credit: q.total - q.amountToConvert },
+    ], at);
+  }
+
+  /** Global66 returned the transfer to the float: that amount is now owed to the customer. */
+  private postRejection(remesa: Remesa, at: string): void {
+    if (!this.ledger.has(remesa.id, "despacho")) return;
+    this.ledger.post(remesa, "rechazo", [
+      { account: "fondo_global66", debit: remesa.quote.amountToConvert },
+      { account: "devolucion_cliente", credit: remesa.quote.amountToConvert },
+    ], at);
+  }
+
+  private checkDevice(serialNumber: string, actor: RemesaActor): void {
+    const devices = this.store.list<PosDevice>("remesas_pos");
+    // Demo without registered terminals accepts any serial; production needs the terminal registered.
+    if (!devices.length && !this.config.production) return;
+    const device = devices.find((item) => item.serialNumber === serialNumber);
+    if (!device || !device.active) throw new PlatformError(`El POS ${serialNumber} no está registrado o está inactivo`, 403);
+    if (actor.role !== "operacion" && device.companyId && device.companyId !== actor.companyId) {
+      throw new PlatformError(`El POS ${serialNumber} pertenece a otro comercio`, 403);
+    }
   }
 
   private save(remesa: Remesa): void {

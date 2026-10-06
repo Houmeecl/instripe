@@ -224,7 +224,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
       next();
       return;
     }
-    const user = platform.auth.userFromCookie(readCookie(req.headers.cookie, "pr_session"));
+    const user = platform.auth.userFromCookie(sessionToken(req));
     if (!user) {
       res.status(401).json({ error: "Inicia sesión" });
       return;
@@ -247,19 +247,21 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     try {
       const result = platform.auth.login(String(body.email ?? ""), String(body.password ?? ""));
       writeSessionCookie(res, result.token, config);
-      res.status(201).json({ user: result.user });
+      // API clients (Appsmith) send the token back as "Authorization: Bearer"; browsers keep the cookie.
+      const apiClient = req.headers["x-client"] === "api";
+      res.status(201).json({ user: result.user, ...(apiClient ? { token: result.token } : {}) });
     } catch (error) {
       handleError(error, res);
     }
   });
 
   app.get("/api/session", (req: Request, res: Response) => {
-    const user = platform.auth.userFromCookie(readCookie(req.headers.cookie, "pr_session"));
+    const user = platform.auth.userFromCookie(sessionToken(req));
     res.json({ user });
   });
 
   app.delete("/api/session", (req: Request, res: Response) => {
-    platform.auth.logout(readCookie(req.headers.cookie, "pr_session"));
+    platform.auth.logout(sessionToken(req));
     writeSessionCookie(res, "", config, true);
     res.json({ user: null });
   });
@@ -268,7 +270,7 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     const body = req.body ?? {};
     try {
       const user = platform.auth.changePassword(
-        readCookie(req.headers.cookie, "pr_session"),
+        sessionToken(req),
         String(body.currentPassword ?? ""),
         String(body.newPassword ?? ""),
       );
@@ -2010,6 +2012,38 @@ export function createApp(config: AppConfig = loadConfig()): Express {
     }
   });
 
+  app.get("/api/remesas/pos", (_req: Request, res: Response) => {
+    res.json({ devices: platform.remesas.listDevices(companyActor(res)) });
+  });
+
+  app.put("/api/remesas/pos/:serial", (req: Request, res: Response) => {
+    const body = req.body ?? {};
+    try {
+      const device = platform.remesas.saveDevice(companyActor(res), {
+        serialNumber: String(req.params.serial),
+        label: body.label === undefined ? undefined : String(body.label),
+        companyId: body.companyId === undefined ? undefined : String(body.companyId),
+        active: body.active === undefined ? undefined : body.active === true,
+      });
+      res.json({ device });
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
+  app.get("/api/remesas/ledger", (_req: Request, res: Response) => {
+    const actor = companyActor(res);
+    res.json({ lines: platform.remesas.ledgerLines(actor), balances: platform.remesas.ledgerBalances(actor) });
+  });
+
+  app.post("/api/remesas/conciliar", async (req: Request, res: Response) => {
+    try {
+      res.json(await platform.remesas.reconcile(companyActor(res), String(req.body?.date ?? "")));
+    } catch (error) {
+      handleError(error, res);
+    }
+  });
+
   app.get("/api/remesas/export", (_req: Request, res: Response) => {
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="remesas.csv"');
@@ -2298,6 +2332,13 @@ function writeSessionCookie(res: Response, token: string, config: AppConfig, cle
   const value = clear ? "" : encodeURIComponent(token);
   const maxAge = clear ? 0 : 43200;
   res.setHeader("Set-Cookie", `pr_session=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure}`);
+}
+
+/** Session token from "Authorization: Bearer" (API clients) or the pr_session cookie (browser). */
+function sessionToken(req: Request): string | undefined {
+  const auth = req.headers.authorization;
+  if (typeof auth === "string" && /^Bearer [0-9a-f]{64}$/.test(auth.trim())) return auth.trim().slice(7);
+  return readCookie(req.headers.cookie, "pr_session");
 }
 
 function readCookie(header: string | undefined, name: string): string | undefined {

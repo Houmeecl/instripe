@@ -12,6 +12,10 @@ export interface TuuSale {
   amount: number;
   typeTransaction: string | null;
   paidAt: string | null;
+  /** TUU fee on the sale (extraData.amountCommission), when reported. */
+  commission: number | null;
+  /** What TUU deposits for the sale (extraData.amountWithoutCommission), when reported. */
+  net: number | null;
 }
 
 /**
@@ -101,6 +105,8 @@ function parseSale(value: unknown): TuuSale | null {
   const row = value as Record<string, unknown>;
   const sequenceNumber = text(row.sequenceNumber);
   const amount = typeof row.amount === "number" ? row.amount : Number(row.amount);
+  const extra = row.extraData && typeof row.extraData === "object" ? (row.extraData as Record<string, unknown>) : {};
+  const number = (value: unknown) => (value === undefined || value === null || value === "" || !Number.isFinite(Number(value)) ? null : Number(value));
   if (!sequenceNumber || !Number.isFinite(amount)) return null;
   return {
     saleId: text(row.saleId),
@@ -110,6 +116,8 @@ function parseSale(value: unknown): TuuSale | null {
     amount,
     typeTransaction: text(row.typeTransaction),
     paidAt: text(row.paymentDataTime),
+    commission: number(extra.amountCommission),
+    net: number(extra.amountWithoutCommission),
   };
 }
 
