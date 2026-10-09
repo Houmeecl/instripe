@@ -1,11 +1,11 @@
 {
   "name": "instripe",
   "install": "npm ci",
-  "terminals": [
+  "start": "bash .cursor/start.sh",
+  "ports": [
     {
-      "name": "dev-server",
-      "command": "npm run dev"
+      "name": "instripe",
+      "port": 3000
     }
-  ],
-  "ports": [3000]
+  ]
 }
