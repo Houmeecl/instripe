@@ -1,7 +1,7 @@
 {
   "name": "instripe",
-  "install": "npm ci",
-  "start": "bash .cursor/start.sh",
+  "install": "if [ -f .cursor/install.sh ]; then bash .cursor/install.sh; elif [ -f /agent/repos/instripe/.cursor/install.sh ]; then bash /agent/repos/instripe/.cursor/install.sh; else echo \"No se encontró .cursor/install.sh\" >&2; exit 1; fi",
+  "start": "if [ -f .cursor/start.sh ]; then bash .cursor/start.sh; elif [ -f /agent/repos/instripe/.cursor/start.sh ]; then bash /agent/repos/instripe/.cursor/start.sh; else echo \"No se encontró .cursor/start.sh\" >&2; exit 1; fi",
   "ports": [
     {
       "name": "instripe",

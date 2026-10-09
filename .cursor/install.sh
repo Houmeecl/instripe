@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Arranca el servidor de desarrollo. Si /health ya responde, no abre otro proceso.
+# Instala dependencias de instripe aunque el agente arranque en la raíz del workspace.
 set -euo pipefail
 
 root=""
@@ -16,10 +16,4 @@ if [ -z "$root" ]; then
 fi
 
 cd "$root"
-
-if curl -sf --max-time 2 http://127.0.0.1:3000/health >/dev/null; then
-  echo "instripe already listening on :3000"
-  exit 0
-fi
-
-exec npm run dev
+npm ci
